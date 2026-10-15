@@ -5,42 +5,30 @@ import Supabase
 struct ContentView: View {
     @StateObject private var auth = AuthStore()
     @StateObject private var language = LanguageStore()
-    var body: some View {
-        Group {
-            if auth.isLoading { ProgressView() }
-            else if auth.isAuthenticated { MainAppView(auth: auth, language: language) }
-            else { SignInView(auth: auth, language: language) }
-        }
-    }
+    var body: some View { Group { if auth.isLoading { ProgressView() } else if auth.isAuthenticated { MainAppView(auth: auth, language: language) } else { SignInView(auth: auth, language: language) } } }
 }
 
 private struct SignInView: View {
-    @ObservedObject var auth: AuthStore
-    @ObservedObject var language: LanguageStore
-    @State private var email = ""
-    @State private var password = ""
-    @State private var signingIn = false
-    var body: some View {
-        NavigationStack { VStack(spacing: 22) {
-            HStack { Spacer(); Menu(language.language.title) { ForEach(LanguageStore.Language.allCases) { item in Button(item.title) { language.language = item } } }.buttonStyle(.bordered) }
-            Spacer(); Text("Libérons").font(.system(size: 44, weight: .bold, design: .rounded))
-            Text(language.text("Keep your memories. Free your space.", "Gardez vos souvenirs. Libérez votre espace.")).foregroundStyle(.secondary).multilineTextAlignment(.center)
-            TextField(language.text("Email", "E-mail"), text: $email).textInputAutocapitalization(.never).keyboardType(.emailAddress).padding().background(.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
-            SecureField(language.text("Password", "Mot de passe"), text: $password).padding().background(.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
-            if let error = auth.errorMessage { Text(error).font(.footnote).foregroundStyle(.red) }
-            Button { signingIn = true; Task { await auth.signIn(email: email.trimmingCharacters(in: .whitespacesAndNewlines), password: password); signingIn = false } } label: { Group { if signingIn { ProgressView().tint(.white) } else { Text(language.text("Sign in", "Se connecter")).fontWeight(.semibold) } }.frame(maxWidth: .infinity).frame(height: 54) }.buttonStyle(.borderedProminent).disabled(signingIn || email.isEmpty || password.isEmpty)
-            Spacer()
-        }.padding(24) }
-    }
+    @ObservedObject var auth: AuthStore; @ObservedObject var language: LanguageStore
+    @State private var email = ""; @State private var password = ""; @State private var signingIn = false
+    var body: some View { NavigationStack { VStack(spacing: 22) {
+        HStack { Spacer(); Menu(language.language.title) { ForEach(LanguageStore.Language.allCases) { item in Button(item.title) { language.language = item } } }.buttonStyle(.bordered) }
+        Spacer(); Text("Libérons").font(.system(size: 44, weight: .bold, design: .rounded)); Text(language.text("Keep your memories. Free your space.", "Gardez vos souvenirs. Libérez votre espace.")).foregroundStyle(.secondary).multilineTextAlignment(.center)
+        TextField(language.text("Email", "E-mail"), text: $email).textInputAutocapitalization(.never).keyboardType(.emailAddress).padding().background(.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
+        SecureField(language.text("Password", "Mot de passe"), text: $password).padding().background(.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
+        if let error = auth.errorMessage { Text(error).font(.footnote).foregroundStyle(.red) }
+        Button { signingIn = true; Task { await auth.signIn(email: email.trimmingCharacters(in: .whitespacesAndNewlines), password: password); signingIn = false } } label: { Group { if signingIn { ProgressView().tint(.white) } else { Text(language.text("Sign in", "Se connecter")).fontWeight(.semibold) } }.frame(maxWidth: .infinity).frame(height: 54) }.buttonStyle(.borderedProminent).disabled(signingIn || email.isEmpty || password.isEmpty)
+        Spacer()
+    }.padding(24) } }
 }
 
 private struct MainAppView: View {
     @ObservedObject var auth: AuthStore; @ObservedObject var language: LanguageStore
-    @StateObject private var analyzer = PhotoLibraryAnalyzer(); @StateObject private var preferences = BackupPreferences()
+    @StateObject private var analyzer = PhotoLibraryAnalyzer(); @StateObject private var preferences = BackupPreferences(); @StateObject private var backup = BackupEngine()
     var body: some View { TabView {
         DashboardView(analyzer: analyzer, language: language).tabItem { Label(language.text("Home", "Accueil"), systemImage: "house.fill") }
-        BackupView(analyzer: analyzer, preferences: preferences, language: language).tabItem { Label(language.text("Backup", "Sauvegarde"), systemImage: "icloud.and.arrow.up.fill") }
-        CloudLibraryView(language: language).tabItem { Label(language.text("Library", "Bibliothèque"), systemImage: "photo.on.rectangle.angled") }
+        BackupView(analyzer: analyzer, preferences: preferences, backup: backup, language: language).tabItem { Label(language.text("Backup", "Sauvegarde"), systemImage: "icloud.and.arrow.up.fill") }
+        CloudLibraryView(backup: backup, language: language).tabItem { Label(language.text("Library", "Bibliothèque"), systemImage: "photo.on.rectangle.angled") }
         AccountView(auth: auth, language: language).tabItem { Label(language.text("Account", "Compte"), systemImage: "person.crop.circle.fill") }
     }.task { await analyzer.refreshIfNeeded() } }
 }
@@ -48,74 +36,31 @@ private struct MainAppView: View {
 private struct DashboardView: View {
     @ObservedObject var analyzer: PhotoLibraryAnalyzer; @ObservedObject var language: LanguageStore
     var body: some View { NavigationStack { ScrollView { VStack(alignment: .leading, spacing: 18) {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Libérons").font(.system(size: 34, weight: .bold, design: .rounded))
-            Text(language.text("Your memories, without the storage stress.", "Vos souvenirs, sans le stress du stockage.")).foregroundStyle(.secondary)
-        }.padding(.top, 8)
-        VStack(alignment: .leading, spacing: 18) {
-            HStack { Label(language.text("Photo library", "Photothèque"), systemImage: "photo.stack.fill").font(.headline); Spacer(); if analyzer.isScanning { ProgressView() } }
-            Text(analyzer.formattedSize).font(.system(size: 48, weight: .bold, design: .rounded)).minimumScaleFactor(0.7)
-            Text(language.text("Estimated size of your original photos and videos", "Taille estimée de vos photos et vidéos originales")).foregroundStyle(.secondary)
-            HStack(spacing: 12) { StatTile(icon: "photo.fill", value: analyzer.photoCount.formatted(), title: "Photos"); StatTile(icon: "video.fill", value: analyzer.videoCount.formatted(), title: language.text("Videos", "Vidéos")) }
-            Divider()
-            HStack { VStack(alignment: .leading, spacing: 4) { Text(language.text("Recommended cloud plan", "Forfait cloud recommandé")).font(.caption).foregroundStyle(.secondary); Text(recommendedPlan).font(.title3.bold()) }; Spacer(); Image(systemName: "icloud.fill").font(.title2).foregroundStyle(.blue) }
-            Button { Task { await analyzer.scanNow() } } label: { Label(analyzer.isScanning ? language.text("Analyzing…", "Analyse…") : language.text("Refresh analysis", "Actualiser l'analyse"), systemImage: "arrow.clockwise") }.buttonStyle(.bordered).disabled(analyzer.isScanning)
-        }.premiumCard()
+        VStack(alignment: .leading, spacing: 6) { Text("Libérons").font(.system(size: 34, weight: .bold, design: .rounded)); Text(language.text("Your memories, without the storage stress.", "Vos souvenirs, sans le stress du stockage.")).foregroundStyle(.secondary) }.padding(.top, 8)
+        VStack(alignment: .leading, spacing: 18) { HStack { Label(language.text("Photo library", "Photothèque"), systemImage: "photo.stack.fill").font(.headline); Spacer(); if analyzer.isScanning { ProgressView() } }; Text(analyzer.formattedSize).font(.system(size: 48, weight: .bold, design: .rounded)).minimumScaleFactor(0.7); Text(language.text("Estimated size of your original photos and videos", "Taille estimée de vos photos et vidéos originales")).foregroundStyle(.secondary); HStack(spacing: 12) { StatTile(icon: "photo.fill", value: analyzer.photoCount.formatted(), title: "Photos"); StatTile(icon: "video.fill", value: analyzer.videoCount.formatted(), title: language.text("Videos", "Vidéos")) }; Divider(); HStack { VStack(alignment: .leading, spacing: 4) { Text(language.text("Recommended cloud plan", "Forfait cloud recommandé")).font(.caption).foregroundStyle(.secondary); Text(recommendedPlan).font(.title3.bold()) }; Spacer(); Image(systemName: "icloud.fill").font(.title2).foregroundStyle(.blue) }; Button { Task { await analyzer.scanNow() } } label: { Label(analyzer.isScanning ? language.text("Analyzing…", "Analyse…") : language.text("Refresh analysis", "Actualiser l'analyse"), systemImage: "arrow.clockwise") }.buttonStyle(.bordered).disabled(analyzer.isScanning) }.premiumCard()
         VStack(alignment: .leading, spacing: 10) { Label(language.text("Ready to protect", "Prêt à protéger"), systemImage: "checkmark.shield.fill").font(.headline).foregroundStyle(.green); Text(language.text("Choose a backup percentage and Libérons will show exactly how much cloud space it represents before anything starts.", "Choisissez un pourcentage de sauvegarde et Libérons vous indique l'espace cloud estimé avant de commencer.")).foregroundStyle(.secondary) }.premiumCard()
     }.padding(.horizontal, 20).padding(.bottom, 110) }.toolbar(.hidden, for: .navigationBar) } }
     private var recommendedPlan: String { let gb = Double(analyzer.estimatedBytes) / 1_000_000_000; if gb <= 2 { return "2 GB Free" }; if gb <= 50 { return "50 GB" }; if gb <= 100 { return "100 GB" }; if gb <= 250 { return "250 GB" }; if gb <= 500 { return "500 GB" }; return "1 TB" }
 }
 
 private struct BackupView: View {
-    @ObservedObject var analyzer: PhotoLibraryAnalyzer; @ObservedObject var preferences: BackupPreferences; @ObservedObject var language: LanguageStore
-    @StateObject private var backup = BackupEngine(); @State private var showRemovalExplanation = false
-    var totalItems: Int { analyzer.photoCount + analyzer.videoCount }
-    var protectedBytesEstimate: Int64 { percentBytes(analyzer.estimatedBytes, preferences.backupPercent) }
-    var removableBytesEstimate: Int64 { percentBytes(protectedBytesEstimate, preferences.removalPercent) }
+    @ObservedObject var analyzer: PhotoLibraryAnalyzer; @ObservedObject var preferences: BackupPreferences; @ObservedObject var backup: BackupEngine; @ObservedObject var language: LanguageStore
+    @State private var showRemovalExplanation = false
+    var totalItems: Int { analyzer.photoCount + analyzer.videoCount }; var protectedBytesEstimate: Int64 { percentBytes(analyzer.estimatedBytes, preferences.backupPercent) }; var removableBytesEstimate: Int64 { percentBytes(protectedBytesEstimate, preferences.removalPercent) }
     var body: some View { NavigationStack { ScrollView { VStack(alignment: .leading, spacing: 18) {
         VStack(alignment: .leading, spacing: 5) { Text(language.text("Free your space", "Libérez votre espace")).font(.system(size: 34, weight: .bold, design: .rounded)); Text(language.text("You decide what gets protected and what leaves this iPhone.", "Vous décidez ce qui est protégé et ce qui quitte cet iPhone.")).foregroundStyle(.secondary) }.padding(.top, 8)
-        VStack(alignment: .leading, spacing: 18) {
-            HStack { Image(systemName: "icloud.and.arrow.up.fill").foregroundStyle(.blue); Text(language.text("1. Protect in Libérons Cloud", "1. Protéger dans Libérons Cloud")).font(.headline) }
-            HStack(alignment: .firstTextBaseline) { Text(formatBytes(protectedBytesEstimate)).font(.system(size: 40, weight: .bold, design: .rounded)); Spacer(); Text("\(preferences.backupPercent)%").font(.title3.bold()).foregroundStyle(.blue) }
-            Text(language.text("estimated cloud space • about \(preferences.selectedCount(total: totalItems).formatted()) items", "d'espace cloud estimé • environ \(preferences.selectedCount(total: totalItems).formatted()) éléments")).font(.subheadline).foregroundStyle(.secondary)
-            PercentagePicker(selection: $preferences.backupPercent, choices: BackupPreferences.choices)
-        }.premiumCard()
-        VStack(alignment: .leading, spacing: 18) {
-            HStack { Image(systemName: "iphone.and.arrow.forward").foregroundStyle(.green); Text(language.text("2. Free space on this iPhone", "2. Libérer de l'espace sur cet iPhone")).font(.headline); Spacer(); Button { showRemovalExplanation = true } label: { Image(systemName: "info.circle") } }
-            HStack(alignment: .firstTextBaseline) { Text(formatBytes(removableBytesEstimate)).font(.system(size: 40, weight: .bold, design: .rounded)); Spacer(); Text("\(preferences.removalPercent)%").font(.title3.bold()).foregroundStyle(.green) }
-            Text(language.text("estimated removable space from the protected selection", "d'espace potentiellement libérable parmi la sélection protégée")).font(.subheadline).foregroundStyle(.secondary)
-            PercentagePicker(selection: $preferences.removalPercent, choices: BackupPreferences.choices)
-            Text(language.text("Nothing is removed automatically. iOS asks for confirmation before local originals are deleted.", "Rien n'est retiré automatiquement. iOS demande votre confirmation avant la suppression des originaux locaux.")).font(.caption).foregroundStyle(.secondary)
-        }.premiumCard()
-        VStack(alignment: .leading, spacing: 16) {
-            Text(language.text("Secure backup", "Sauvegarde sécurisée")).font(.headline)
-            HStack(spacing: 0) { PipelineStep(icon: "arrow.up", title: language.text("Upload", "Envoi"), active: backup.isRunning && !backup.message.contains("Verifying"), done: backup.message.contains("Verifying") || backup.message.contains("Protected")); Rectangle().fill(.secondary.opacity(0.2)).frame(height: 1); PipelineStep(icon: "checkmark.shield", title: language.text("Verify", "Vérifier"), active: backup.message.contains("Verifying"), done: backup.message.contains("Protected")); Rectangle().fill(.secondary.opacity(0.2)).frame(height: 1); PipelineStep(icon: "lock.shield.fill", title: language.text("Protected", "Protégé"), active: backup.message.contains("Protected"), done: backup.message.contains("Protected")) }
-            Button { Task { await backup.backupOneNewestAsset() } } label: { HStack { Spacer(); if backup.isRunning { ProgressView().tint(.white) }; Text(backup.isRunning ? language.text("Protecting one item…", "Protection d'un élément…") : language.text("Test with 1 photo or video", "Tester avec 1 photo ou vidéo")).fontWeight(.semibold); Spacer() }.frame(height: 34) }.buttonStyle(.borderedProminent).controlSize(.large).disabled(backup.isRunning || !analyzer.canReadLibrary)
-            if !backup.message.isEmpty { Label(backup.message, systemImage: backup.message.contains("✓") ? "checkmark.circle.fill" : "info.circle").font(.footnote).foregroundStyle(backup.message.contains("✓") ? .green : .secondary) }
-            Text(language.text("Test mode uploads only your newest item. Nothing is removed from the iPhone.", "Le mode test envoie uniquement votre élément le plus récent. Rien n'est retiré de l'iPhone.")).font(.caption).foregroundStyle(.secondary)
-        }.premiumCard()
+        VStack(alignment: .leading, spacing: 18) { HStack { Image(systemName: "icloud.and.arrow.up.fill").foregroundStyle(.blue); Text(language.text("1. Protect in Libérons Cloud", "1. Protéger dans Libérons Cloud")).font(.headline) }; HStack(alignment: .firstTextBaseline) { Text(formatBytes(protectedBytesEstimate)).font(.system(size: 40, weight: .bold, design: .rounded)); Spacer(); Text("\(preferences.backupPercent)%").font(.title3.bold()).foregroundStyle(.blue) }; Text(language.text("estimated cloud space • about \(preferences.selectedCount(total: totalItems).formatted()) items", "d'espace cloud estimé • environ \(preferences.selectedCount(total: totalItems).formatted()) éléments")).font(.subheadline).foregroundStyle(.secondary); PercentagePicker(selection: $preferences.backupPercent, choices: BackupPreferences.choices) }.premiumCard()
+        VStack(alignment: .leading, spacing: 18) { HStack { Image(systemName: "iphone.and.arrow.forward").foregroundStyle(.green); Text(language.text("2. Free space on this iPhone", "2. Libérer de l'espace sur cet iPhone")).font(.headline); Spacer(); Button { showRemovalExplanation = true } label: { Image(systemName: "info.circle") } }; HStack(alignment: .firstTextBaseline) { Text(formatBytes(removableBytesEstimate)).font(.system(size: 40, weight: .bold, design: .rounded)); Spacer(); Text("\(preferences.removalPercent)%").font(.title3.bold()).foregroundStyle(.green) }; Text(language.text("estimated removable space from the protected selection", "d'espace potentiellement libérable parmi la sélection protégée")).font(.subheadline).foregroundStyle(.secondary); PercentagePicker(selection: $preferences.removalPercent, choices: BackupPreferences.choices); Text(language.text("Nothing is removed automatically. iOS asks for confirmation before local originals are deleted.", "Rien n'est retiré automatiquement. iOS demande votre confirmation avant la suppression des originaux locaux.")).font(.caption).foregroundStyle(.secondary) }.premiumCard()
+        VStack(alignment: .leading, spacing: 16) { Text(language.text("Secure backup", "Sauvegarde sécurisée")).font(.headline); HStack(spacing: 0) { PipelineStep(icon: "arrow.up", title: language.text("Upload", "Envoi"), active: backup.isRunning && !backup.message.contains("Verifying"), done: backup.message.contains("Verifying") || backup.message.contains("Protected")); Rectangle().fill(.secondary.opacity(0.2)).frame(height: 1); PipelineStep(icon: "checkmark.shield", title: language.text("Verify", "Vérifier"), active: backup.message.contains("Verifying"), done: backup.message.contains("Protected")); Rectangle().fill(.secondary.opacity(0.2)).frame(height: 1); PipelineStep(icon: "lock.shield.fill", title: language.text("Protected", "Protégé"), active: backup.message.contains("Protected"), done: backup.message.contains("Protected")) }; Button { Task { await backup.backupOneNewestAsset() } } label: { HStack { Spacer(); if backup.isRunning { ProgressView().tint(.white) }; Text(backup.isRunning ? language.text("Protecting one item…", "Protection d'un élément…") : language.text("Test with 1 photo or video", "Tester avec 1 photo ou vidéo")).fontWeight(.semibold); Spacer() }.frame(height: 34) }.buttonStyle(.borderedProminent).controlSize(.large).disabled(backup.isRunning || !analyzer.canReadLibrary); if !backup.message.isEmpty { Label(backup.message, systemImage: backup.message.contains("✓") ? "checkmark.circle.fill" : "info.circle").font(.footnote).foregroundStyle(backup.message.contains("✓") ? .green : .secondary) }; if let name = backup.lastProtectedFilename { HStack(spacing: 12) { LocalAssetThumbnail(localIdentifier: backup.lastProtectedLocalIdentifier, isVideo: backup.lastProtectedIsVideo).frame(width: 72, height: 72).clipShape(RoundedRectangle(cornerRadius: 14)); VStack(alignment: .leading, spacing: 4) { Text(name).font(.subheadline.bold()).lineLimit(1); Text(backup.lastProtectedIsVideo ? language.text("Video", "Vidéo") : "Photo").font(.caption).foregroundStyle(.secondary); Text(ByteCountFormatter.string(fromByteCount: backup.lastProtectedBytes, countStyle: .file)).font(.caption).foregroundStyle(.secondary); Label(language.text("Protected in Libérons Cloud", "Protégé dans Libérons Cloud"), systemImage: "checkmark.shield.fill").font(.caption2.bold()).foregroundStyle(.green) }; Spacer() } }; Text(language.text("Test mode uploads only your newest item. Nothing is removed from the iPhone.", "Le mode test envoie uniquement votre élément le plus récent. Rien n'est retiré de l'iPhone.")).font(.caption).foregroundStyle(.secondary) }.premiumCard()
     }.padding(.horizontal, 20).padding(.bottom, 110) }.toolbar(.hidden, for: .navigationBar) }.alert(language.text("Freeing iPhone space", "Libérer l'espace de l'iPhone"), isPresented: $showRemovalExplanation) { Button("OK", role: .cancel) {} } message: { Text(language.text("The percentage applies only to originals already protected in Libérons Cloud. The cloud copies stay available after local removal.", "Le pourcentage s'applique uniquement aux originaux déjà protégés dans Libérons Cloud. Les copies cloud restent disponibles après leur retrait local.")) } }
-    private func percentBytes(_ bytes: Int64, _ percent: Int) -> Int64 { Int64((Double(bytes) * Double(percent) / 100.0).rounded()) }
-    private func formatBytes(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file) }
+    private func percentBytes(_ bytes: Int64, _ percent: Int) -> Int64 { Int64((Double(bytes) * Double(percent) / 100.0).rounded()) }; private func formatBytes(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file) }
 }
 
+private struct LocalAssetThumbnail: View { let localIdentifier: String?; let isVideo: Bool; @State private var image: UIImage?; var body: some View { ZStack { Rectangle().fill(Color.secondary.opacity(0.10)); if let image { Image(uiImage: image).resizable().scaledToFill() } else { Image(systemName: isVideo ? "video.fill" : "photo.fill").foregroundStyle(.secondary) }; if isVideo { Image(systemName: "play.fill").font(.caption).padding(7).background(.ultraThinMaterial, in: Circle()) } }.clipped().task(id: localIdentifier) { guard let id = localIdentifier else { return }; let result = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil); guard let asset = result.firstObject else { return }; let options = PHImageRequestOptions(); options.deliveryMode = .highQualityFormat; options.resizeMode = .fast; options.isNetworkAccessAllowed = true; PHImageManager.default().requestImage(for: asset, targetSize: CGSize(width: 240, height: 240), contentMode: .aspectFill, options: options) { value, _ in if let value { Task { @MainActor in image = value } } } } } }
 private struct PercentagePicker: View { @Binding var selection: Int; let choices: [Int]; var body: some View { HStack(spacing: 7) { ForEach(choices, id: \.self) { value in Button("\(value)%") { withAnimation(.easeInOut(duration: 0.15)) { selection = value } }.font(.subheadline.bold()).frame(maxWidth: .infinity).padding(.vertical, 11).background(selection == value ? Color.accentColor : Color.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: 13, style: .continuous)).foregroundStyle(selection == value ? .white : .primary).buttonStyle(.plain) } } } }
 private struct PipelineStep: View { let icon: String; let title: String; let active: Bool; let done: Bool; var body: some View { VStack(spacing: 7) { ZStack { Circle().fill(done ? Color.green.opacity(0.14) : active ? Color.blue.opacity(0.14) : Color.secondary.opacity(0.10)).frame(width: 42, height: 42); Image(systemName: done ? "checkmark" : icon).foregroundStyle(done ? .green : active ? .blue : .secondary) }; Text(title).font(.caption2).foregroundStyle(done || active ? .primary : .secondary) }.frame(minWidth: 70) } }
 private struct StatTile: View { let icon: String; let value: String; let title: String; var body: some View { VStack(alignment: .leading, spacing: 7) { Image(systemName: icon).foregroundStyle(.blue); Text(value).font(.title2.bold()); Text(title).font(.footnote).foregroundStyle(.secondary) }.padding(16).frame(maxWidth: .infinity, alignment: .leading).background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous)) } }
-private struct CloudLibraryView: View { @ObservedObject var language: LanguageStore; var body: some View { NavigationStack { ContentUnavailableView(language.text("Your cloud library", "Votre bibliothèque cloud"), systemImage: "photo.stack", description: Text(language.text("Protected memories will appear here.", "Vos souvenirs protégés apparaîtront ici."))).navigationTitle(language.text("Library", "Bibliothèque")) } } }
-private struct AccountView: View {
-    @ObservedObject var auth: AuthStore
-    @ObservedObject var language: LanguageStore
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section(language.text("Storage plan", "Forfait de stockage")) { HStack { Text(language.text("Current plan", "Forfait actuel")); Spacer(); Text("2 GB Free") } }
-                Section(language.text("Language", "Langue")) { Picker(language.text("Language", "Langue"), selection: $language.language) { ForEach(LanguageStore.Language.allCases) { Text($0.title).tag($0) } } }
-                Section { Button(language.text("Sign out", "Se déconnecter"), role: .destructive) { Task { await auth.signOut() } } }
-            }
-            .navigationTitle(language.text("Account", "Compte"))
-        }
-    }
-}
+private struct CloudLibraryView: View { @ObservedObject var backup: BackupEngine; @ObservedObject var language: LanguageStore; var body: some View { NavigationStack { Group { if let name = backup.lastProtectedFilename { ScrollView { VStack(alignment: .leading, spacing: 16) { Text(language.text("Protected memories", "Souvenirs protégés")).font(.title2.bold()); HStack(spacing: 14) { LocalAssetThumbnail(localIdentifier: backup.lastProtectedLocalIdentifier, isVideo: backup.lastProtectedIsVideo).frame(width: 108, height: 108).clipShape(RoundedRectangle(cornerRadius: 20)); VStack(alignment: .leading, spacing: 7) { Text(name).font(.headline).lineLimit(2); Label(backup.lastProtectedIsVideo ? language.text("Video", "Vidéo") : "Photo", systemImage: backup.lastProtectedIsVideo ? "video.fill" : "photo.fill").font(.subheadline); Text(ByteCountFormatter.string(fromByteCount: backup.lastProtectedBytes, countStyle: .file)).foregroundStyle(.secondary); Label(language.text("Protected", "Protégé"), systemImage: "checkmark.shield.fill").font(.caption.bold()).foregroundStyle(.green) }; Spacer() }.padding(16).background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 24)) }.padding(20) } } else { ContentUnavailableView(language.text("Your cloud library", "Votre bibliothèque cloud"), systemImage: "photo.stack", description: Text(language.text("Protected memories will appear here.", "Vos souvenirs protégés apparaîtront ici."))) } }.navigationTitle(language.text("Library", "Bibliothèque")) } } }
+private struct AccountView: View { @ObservedObject var auth: AuthStore; @ObservedObject var language: LanguageStore; var body: some View { NavigationStack { Form { Section(language.text("Storage plan", "Forfait de stockage")) { HStack { Text(language.text("Current plan", "Forfait actuel")); Spacer(); Text("2 GB Free") } }; Section(language.text("Language", "Langue")) { Picker(language.text("Language", "Langue"), selection: $language.language) { ForEach(LanguageStore.Language.allCases) { Text($0.title).tag($0) } } }; Section { Button(language.text("Sign out", "Se déconnecter"), role: .destructive) { Task { await auth.signOut() } } } }.navigationTitle(language.text("Account", "Compte")) } } }
 private extension View { func premiumCard() -> some View { padding(20).frame(maxWidth: .infinity, alignment: .leading).background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 28, style: .continuous)).shadow(color: .black.opacity(0.045), radius: 18, y: 7) } }
 #Preview { ContentView() }
