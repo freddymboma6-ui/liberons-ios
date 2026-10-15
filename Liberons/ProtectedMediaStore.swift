@@ -16,7 +16,7 @@ final class ProtectedMediaStore: ObservableObject {
         do {
             let response = try await SupabaseService.client
                 .from("media_assets")
-                .select("id,ios_local_identifier,original_filename,media_type,size_bytes,captured_at")
+                .select("id,ios_local_identifier,original_filename,media_type,size_bytes,captured_at,protected_at,created_at,local_removed_at")
                 .eq("status", value: "protected")
                 .order("captured_at", ascending: false)
                 .execute()
