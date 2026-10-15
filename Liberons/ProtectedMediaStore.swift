@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import Supabase
 
 @MainActor
 final class ProtectedMediaStore: ObservableObject {
