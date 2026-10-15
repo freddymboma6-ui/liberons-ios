@@ -52,6 +52,17 @@ enum SupabaseService {
             request.setValue(value, forHTTPHeaderField: name)
         }
 
+        let fileValues = try? fileURL.resourceValues(forKeys: [.fileSizeKey])
+        let fileSize = fileValues?.fileSize ?? -1
+
+        print("☁️ B2 UPLOAD START")
+        print("Method: PUT")
+        print("Host: \(signedURL.host ?? "unknown")")
+        print("Path: \(signedURL.path)")
+        print("File bytes: \(fileSize)")
+        print("Request headers: \(headers)")
+        print("Signed query keys: \(URLComponents(url: signedURL, resolvingAgainstBaseURL: false)?.queryItems?.map(\.name) ?? [])")
+
         let (data, response) = try await URLSession.shared.upload(
             for: request,
             fromFile: fileURL
@@ -65,15 +76,22 @@ enum SupabaseService {
             )
         }
 
+        let rawBody = String(data: data, encoding: .utf8) ?? ""
+
+        print("☁️ B2 RESPONSE")
+        print("HTTP status: \(http.statusCode)")
+        print("Response headers:")
+        for (key, value) in http.allHeaderFields {
+            print("  \(key): \(value)")
+        }
+        print("Response body BEGIN")
+        print(rawBody.isEmpty ? "<empty>" : rawBody)
+        print("Response body END")
+
         guard (200..<300).contains(http.statusCode) else {
-            let rawBody = String(data: data, encoding: .utf8) ?? ""
             let cleanBody = rawBody
                 .replacingOccurrences(of: "\n", with: " ")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-
-            print("❌ B2 UPLOAD FAILED")
-            print("HTTP status: \(http.statusCode)")
-            print("Response: \(cleanBody)")
 
             let detail = cleanBody.isEmpty ? "No response body" : cleanBody
             throw NSError(
