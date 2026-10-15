@@ -56,7 +56,8 @@ private struct DashboardView: View {
 
 private struct BackupView: View {
     @ObservedObject var analyzer: PhotoLibraryAnalyzer; @ObservedObject var preferences: BackupPreferences; @ObservedObject var language: LanguageStore
-    @State private var testing = false; @State private var testMessage: String?; @State private var showRemovalExplanation = false
+    @StateObject private var backup = BackupEngine()
+    @State private var showRemovalExplanation = false
     var totalItems: Int { analyzer.photoCount + analyzer.videoCount }
     var body: some View { NavigationStack { ScrollView { VStack(alignment: .leading, spacing: 20) {
         Text(language.text("Backup & Free Space", "Sauvegarde et espace")).font(.largeTitle.bold())
@@ -64,20 +65,11 @@ private struct BackupView: View {
         VStack(alignment: .leading, spacing: 18) { Label(language.text("Free space on this iPhone", "Libérer de l'espace sur cet iPhone"), systemImage: "iphone.and.arrow.forward").font(.title2.bold()); PercentagePicker(selection: $preferences.removalPercent, choices: BackupPreferences.choices); HStack { Text("\(preferences.removalPercent)%").font(.system(size: 38, weight: .bold, design: .rounded)); Spacer(); Button { showRemovalExplanation = true } label: { Image(systemName: "info.circle") } }; Text(language.text("Nothing is removed automatically. Only protected originals are eligible.", "Rien n'est supprimé automatiquement. Seuls les originaux protégés sont éligibles.")).font(.footnote).foregroundStyle(.secondary) }.card()
         VStack(alignment: .leading, spacing: 14) {
             status(language.text("Uploading", "Téléversement"), "arrow.up.circle"); status(language.text("Verifying", "Vérification"), "checkmark.shield"); status(language.text("Protected", "Protégé"), "lock.shield")
-            Button { testing = true; testMessage = nil; Task { await testConnection(); testing = false } } label: { HStack { Spacer(); if testing { ProgressView().tint(.white) }; Text(testing ? language.text("Testing…", "Test en cours…") : language.text("Start secure backup", "Démarrer la sauvegarde sécurisée")); Spacer() } }.buttonStyle(.borderedProminent).controlSize(.large).disabled(testing || !analyzer.canReadLibrary)
-            if let testMessage { Text(testMessage).font(.footnote).foregroundStyle(.secondary) }
-            Text(language.text("For safety, the first run validates the authenticated Libérons cloud path before bulk backup begins.", "Par sécurité, le premier lancement valide le chemin cloud Libérons authentifié avant la sauvegarde en masse.")).font(.caption).foregroundStyle(.secondary)
+            Button { Task { await backup.backupOneNewestAsset() } } label: { HStack { Spacer(); if backup.isRunning { ProgressView().tint(.white) }; Text(backup.isRunning ? language.text("Protecting…", "Protection…") : language.text("Protect one real item", "Protéger 1 élément réel")); Spacer() } }.buttonStyle(.borderedProminent).controlSize(.large).disabled(backup.isRunning || !analyzer.canReadLibrary)
+            if !backup.message.isEmpty { Text(backup.message).font(.footnote).foregroundStyle(backup.message.contains("✓") ? .green : .secondary) }
+            Text(language.text("This first end-to-end run uploads one real original, verifies the cloud object, then marks it protected. It does not remove anything from your iPhone.", "Ce premier test complet envoie un véritable original, vérifie l'objet cloud, puis le marque comme protégé. Rien n'est retiré de votre iPhone.")).font(.caption).foregroundStyle(.secondary)
         }.card()
     }.padding(20) } }.alert(language.text("Removing from iPhone", "Retrait de l'iPhone"), isPresented: $showRemovalExplanation) { Button("OK", role: .cancel) {} } message: { Text(language.text("The protected Libérons Cloud copy remains available after local removal.", "La copie protégée Libérons Cloud reste disponible après le retrait local.")) } }
-
-    @MainActor private func testConnection() async {
-        do {
-            _ = try await SupabaseService.client.auth.session
-            let count = PHAsset.fetchAssets(with: nil).count
-            guard count > 0 else { testMessage = language.text("No media found.", "Aucun média trouvé."); return }
-            testMessage = language.text("Cloud account authenticated. \(count.formatted()) local items are ready for the protected upload pipeline.", "Compte cloud authentifié. \(count.formatted()) éléments locaux sont prêts pour le pipeline d'envoi protégé.")
-        } catch { testMessage = error.localizedDescription }
-    }
     private func status(_ title: String, _ icon: String) -> some View { HStack { Image(systemName: icon); Text(title); Spacer(); Circle().fill(.secondary.opacity(0.25)).frame(width: 9, height: 9) } }
 }
 
