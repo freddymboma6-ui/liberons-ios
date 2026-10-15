@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 import Photos
 import CryptoKit
 import UniformTypeIdentifiers
@@ -86,7 +87,7 @@ final class BackupEngine: ObservableObject {
     }
 
     private func export(resource: PHAssetResource, to url: URL) async throws {
-        try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let options = PHAssetResourceRequestOptions()
             options.isNetworkAccessAllowed = true
             PHAssetResourceManager.default().writeData(for: resource, toFile: url, options: options) { error in
