@@ -27,4 +27,22 @@ enum SupabaseService {
         }
         return data
     }
+
+    static func putFile(_ fileURL: URL, to signedURL: URL, headers: [String: String]) async throws {
+        var request = URLRequest(url: signedURL)
+        request.httpMethod = "PUT"
+        for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
+        let (_, response) = try await URLSession.shared.upload(for: request, fromFile: fileURL)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw NSError(domain: "LiberonsCloud", code: (response as? HTTPURLResponse)?.statusCode ?? -1, userInfo: [NSLocalizedDescriptionKey: "Cloud upload failed"])
+        }
+    }
+
+    static func verifyUpload(assetID: String, uploadSessionID: String) async throws -> Data {
+        let body = try JSONSerialization.data(withJSONObject: [
+            "asset_id": assetID,
+            "upload_session_id": uploadSessionID
+        ])
+        return try await callFunction("verify-upload", json: body)
+    }
 }
