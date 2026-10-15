@@ -86,7 +86,8 @@ final class BackupEngine: ObservableObject {
         let mimeType = UTType(filenameExtension: ext)?.preferredMIMEType ?? (asset.mediaType == .video ? "video/mp4" : "image/jpeg")
         let iso = ISO8601DateFormatter(); var body: [String: Any] = ["filename": resource.originalFilename, "mime_type": mimeType, "size_bytes": byteCount, "checksum_sha256": checksum, "ios_local_identifier": asset.localIdentifier]
         if let captured = asset.creationDate { body["captured_at"] = iso.string(from: captured) }
-        let initiated = try JSONDecoder().decode(InitiateResponse.self, from: SupabaseService.callFunction("initiate-upload", json: try JSONSerialization.data(withJSONObject: body)))
+        let initiateData = try await SupabaseService.callFunction("initiate-upload", json: try JSONSerialization.data(withJSONObject: body))
+        let initiated = try JSONDecoder().decode(InitiateResponse.self, from: initiateData)
         guard let signedURL = URL(string: initiated.upload.url) else { throw NSError(domain: "LiberonsBackup", code: 4, userInfo: [NSLocalizedDescriptionKey: "Invalid signed upload URL"]) }
         try await SupabaseService.putFile(temp, to: signedURL, headers: initiated.upload.headers)
         let verifiedData = try await SupabaseService.verifyUpload(assetID: initiated.asset_id, uploadSessionID: initiated.upload_session_id)
