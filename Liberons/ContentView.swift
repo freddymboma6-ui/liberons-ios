@@ -4,7 +4,6 @@ import Photos
 struct ContentView: View {
     @StateObject private var auth = AuthStore()
     @StateObject private var language = LanguageStore()
-
     var body: some View {
         Group {
             if auth.isLoading { ProgressView() }
@@ -20,7 +19,6 @@ private struct SignInView: View {
     @State private var email = ""
     @State private var password = ""
     @State private var signingIn = false
-
     var body: some View {
         NavigationStack {
             VStack(spacing: 22) {
@@ -41,20 +39,17 @@ private struct SignInView: View {
                 } label: {
                     Group { if signingIn { ProgressView().tint(.white) } else { Text(language.text("Sign in", "Se connecter")).fontWeight(.semibold) } }
                         .frame(maxWidth: .infinity).frame(height: 54)
-                }
-                .buttonStyle(.borderedProminent).buttonBorderShape(.roundedRectangle(radius: 16))
-                .disabled(signingIn || email.isEmpty || password.isEmpty)
+                }.buttonStyle(.borderedProminent).buttonBorderShape(.roundedRectangle(radius: 16))
+                    .disabled(signingIn || email.isEmpty || password.isEmpty)
                 Text(language.text("Use your existing Libérons account.", "Utilisez votre compte Libérons existant."))
                     .font(.footnote).foregroundStyle(.secondary)
                 Spacer()
             }.padding(24)
         }
     }
-
     private var languageMenu: some View {
-        Menu(language.language.title) {
-            ForEach(LanguageStore.Language.allCases) { item in Button(item.title) { language.language = item } }
-        }.buttonStyle(.bordered)
+        Menu(language.language.title) { ForEach(LanguageStore.Language.allCases) { item in Button(item.title) { language.language = item } } }
+            .buttonStyle(.bordered)
     }
 }
 
@@ -62,26 +57,19 @@ private struct MainAppView: View {
     @ObservedObject var auth: AuthStore
     @ObservedObject var language: LanguageStore
     @StateObject private var analyzer = PhotoLibraryAnalyzer()
-
     var body: some View {
         TabView {
-            DashboardView(analyzer: analyzer, language: language)
-                .tabItem { Label(language.text("Home", "Accueil"), systemImage: "house.fill") }
-            BackupView(analyzer: analyzer, language: language)
-                .tabItem { Label(language.text("Backup", "Sauvegarde"), systemImage: "icloud.and.arrow.up") }
-            CloudLibraryView(language: language)
-                .tabItem { Label(language.text("Library", "Bibliothèque"), systemImage: "photo.on.rectangle.angled") }
-            AccountView(auth: auth, language: language)
-                .tabItem { Label(language.text("Account", "Compte"), systemImage: "person.crop.circle") }
-        }
-        .task { if analyzer.canReadLibrary && analyzer.totalItems == 0 { await analyzer.scan() } }
+            DashboardView(analyzer: analyzer, language: language).tabItem { Label(language.text("Home", "Accueil"), systemImage: "house.fill") }
+            BackupView(analyzer: analyzer, language: language).tabItem { Label(language.text("Backup", "Sauvegarde"), systemImage: "icloud.and.arrow.up") }
+            CloudLibraryView(language: language).tabItem { Label(language.text("Library", "Bibliothèque"), systemImage: "photo.on.rectangle.angled") }
+            AccountView(auth: auth, language: language).tabItem { Label(language.text("Account", "Compte"), systemImage: "person.crop.circle") }
+        }.task { await analyzer.refreshIfNeeded() }
     }
 }
 
 private struct DashboardView: View {
     @ObservedObject var analyzer: PhotoLibraryAnalyzer
     @ObservedObject var language: LanguageStore
-
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -92,7 +80,7 @@ private struct DashboardView: View {
                             .foregroundStyle(.secondary)
                     }
                     if analyzer.canReadLibrary { analysisCard } else { permissionCard }
-                    if analyzer.canReadLibrary && !analyzer.isScanning && analyzer.totalItems > 0 { recommendationCard }
+                    if analyzer.canReadLibrary && analyzer.hasCompletedScan { recommendationCard }
                     safetyCard
                 }.padding(20)
             }.navigationTitle("Libérons").navigationBarTitleDisplayMode(.inline)
@@ -112,10 +100,15 @@ private struct DashboardView: View {
 
     private var analysisCard: some View {
         VStack(alignment: .leading, spacing: 18) {
-            if analyzer.isScanning {
+            if analyzer.isScanning && !analyzer.hasCompletedScan {
                 Text(language.text("Analyzing your library…", "Analyse de votre photothèque…")).font(.headline)
                 ProgressView(value: Double(analyzer.scannedItems), total: Double(max(analyzer.totalItems, 1)))
                 Text("\(analyzer.scannedItems.formatted()) / \(analyzer.totalItems.formatted())").font(.caption).foregroundStyle(.secondary)
+            } else if analyzer.isScanning {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text(language.text("Updating in the background…", "Mise à jour en arrière-plan…"))
+                }.font(.caption).foregroundStyle(.secondary)
             }
             Text(analyzer.formattedSize).font(.system(size: 45, weight: .bold, design: .rounded))
             Text(language.text("estimated original library size", "taille estimée des originaux")).foregroundStyle(.secondary)
@@ -123,9 +116,16 @@ private struct DashboardView: View {
                 MiniStat(icon: "photo", value: analyzer.photoCount.formatted(), title: language.text("Photos", "Photos"))
                 MiniStat(icon: "video", value: analyzer.videoCount.formatted(), title: language.text("Videos", "Vidéos"))
             }
-            if !analyzer.isScanning {
-                Button(language.text("Scan again", "Analyser à nouveau")) { Task { await analyzer.scan() } }.buttonStyle(.bordered)
+            if let date = analyzer.formattedLastScan {
+                HStack {
+                    Label(language.text("Last analyzed: \(date)", "Dernière analyse : \(date)"), systemImage: "checkmark.circle.fill")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    if analyzer.libraryHasChanged { Text(language.text("Changes detected", "Changements détectés")).font(.caption.bold()).foregroundStyle(.orange) }
+                }
             }
+            Button(language.text("Refresh analysis", "Actualiser l'analyse")) { Task { await analyzer.scanNow() } }
+                .buttonStyle(.bordered).disabled(analyzer.isScanning)
         }.card()
     }
 
@@ -133,11 +133,7 @@ private struct DashboardView: View {
         let plan = recommendedPlan(bytes: analyzer.estimatedBytes)
         return VStack(alignment: .leading, spacing: 12) {
             Label(language.text("Recommended for you", "Recommandé pour vous"), systemImage: "sparkles").font(.headline)
-            HStack(alignment: .firstTextBaseline) {
-                Text(plan.name).font(.system(size: 34, weight: .bold, design: .rounded))
-                Spacer()
-                Text(plan.price).font(.title3.bold())
-            }
+            HStack(alignment: .firstTextBaseline) { Text(plan.name).font(.system(size: 34, weight: .bold, design: .rounded)); Spacer(); Text(plan.price).font(.title3.bold()) }
             Text(language.text("Enough room for your current library with space to keep growing.", "Assez d'espace pour votre photothèque actuelle et vos prochains souvenirs."))
                 .foregroundStyle(.secondary)
             Text(language.text("Plan purchase will be activated when billing is connected.", "Le choix du forfait sera activé lorsque la facturation sera connectée."))
@@ -179,8 +175,7 @@ private struct BackupView: View {
                         status(language.text("Uploaded", "Téléversé"), "checkmark.circle", false)
                         status(language.text("Verifying", "Vérification"), "checkmark.shield", false)
                         status(language.text("Protected", "Protégé"), "lock.shield", false)
-                        Button(language.text("Start backup", "Démarrer la sauvegarde")) { }
-                            .buttonStyle(.borderedProminent).controlSize(.large).disabled(true)
+                        Button(language.text("Start backup", "Démarrer la sauvegarde")) { }.buttonStyle(.borderedProminent).controlSize(.large).disabled(true)
                         Text(language.text("Cloud upload is being connected next.", "La connexion au stockage cloud est la prochaine étape."))
                             .font(.caption).foregroundStyle(.secondary)
                     }.card()
@@ -214,13 +209,9 @@ private struct AccountView: View {
                     HStack { Text(language.text("Cloud used", "Cloud utilisé")); Spacer(); Text("0 GB / 2 GB").foregroundStyle(.secondary) }
                 }
                 Section(language.text("Language", "Langue")) {
-                    Picker(language.text("Language", "Langue"), selection: $language.language) {
-                        ForEach(LanguageStore.Language.allCases) { item in Text(item.title).tag(item) }
-                    }
+                    Picker(language.text("Language", "Langue"), selection: $language.language) { ForEach(LanguageStore.Language.allCases) { item in Text(item.title).tag(item) } }
                 }
-                Section(language.text("Security", "Sécurité")) {
-                    Label(language.text("Verified backups before removal", "Sauvegardes vérifiées avant suppression"), systemImage: "checkmark.shield")
-                }
+                Section(language.text("Security", "Sécurité")) { Label(language.text("Verified backups before removal", "Sauvegardes vérifiées avant suppression"), systemImage: "checkmark.shield") }
                 Section { Button(language.text("Sign out", "Se déconnecter"), role: .destructive) { Task { await auth.signOut() } } }
             }.navigationTitle(language.text("Account", "Compte"))
         }
@@ -230,17 +221,13 @@ private struct AccountView: View {
 private struct MiniStat: View {
     let icon: String; let value: String; let title: String
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Image(systemName: icon).foregroundStyle(.secondary)
-            Text(value).font(.title2.bold()); Text(title).font(.footnote).foregroundStyle(.secondary)
-        }.padding(16).frame(maxWidth: .infinity, alignment: .leading).background(.background, in: RoundedRectangle(cornerRadius: 18))
+        VStack(alignment: .leading, spacing: 7) { Image(systemName: icon).foregroundStyle(.secondary); Text(value).font(.title2.bold()); Text(title).font(.footnote).foregroundStyle(.secondary) }
+            .padding(16).frame(maxWidth: .infinity, alignment: .leading).background(.background, in: RoundedRectangle(cornerRadius: 18))
     }
 }
 
 private extension View {
-    func card() -> some View {
-        padding(20).frame(maxWidth: .infinity, alignment: .leading).background(.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 24))
-    }
+    func card() -> some View { padding(20).frame(maxWidth: .infinity, alignment: .leading).background(.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 24)) }
 }
 
 #Preview { ContentView() }
