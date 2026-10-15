@@ -8,6 +8,11 @@ import UniformTypeIdentifiers
 final class BackupEngine: ObservableObject {
     @Published private(set) var isRunning = false
     @Published private(set) var message = ""
+    @Published private(set) var selectedLocalIdentifier: String?
+    @Published private(set) var selectedFilename: String?
+    @Published private(set) var selectedBytes: Int64 = 0
+    @Published private(set) var selectedIsVideo = false
+    @Published private(set) var selectedCreationDate: Date?
     @Published private(set) var lastProtectedLocalIdentifier: String?
     @Published private(set) var lastProtectedFilename: String?
     @Published private(set) var lastProtectedBytes: Int64 = 0
@@ -20,24 +25,56 @@ final class BackupEngine: ObservableObject {
         let upload: Upload
     }
 
+    func prepareNewestAsset() {
+        let options = PHFetchOptions()
+        options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+        options.fetchLimit = 1
+        guard let asset = PHAsset.fetchAssets(with: options).firstObject,
+              let resource = PHAssetResource.assetResources(for: asset).first else {
+            selectedLocalIdentifier = nil
+            selectedFilename = nil
+            message = "No media found"
+            return
+        }
+        selectedLocalIdentifier = asset.localIdentifier
+        selectedFilename = resource.originalFilename
+        selectedIsVideo = asset.mediaType == .video
+        selectedCreationDate = asset.creationDate
+        selectedBytes = Int64(resource.value(forKey: "fileSize") as? CLong ?? 0)
+        message = ""
+    }
+
+    func backupSelectedAsset() async {
+        guard !isRunning else { return }
+        if selectedLocalIdentifier == nil { prepareNewestAsset() }
+        guard let localIdentifier = selectedLocalIdentifier,
+              let asset = PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil).firstObject,
+              let resource = PHAssetResource.assetResources(for: asset).first else {
+            message = "Selected media is no longer available"
+            return
+        }
+        await backup(asset: asset, resource: resource)
+    }
+
     func backupOneNewestAsset() async {
+        prepareNewestAsset()
+        await backupSelectedAsset()
+    }
+
+    private func backup(asset: PHAsset, resource: PHAssetResource) async {
         guard !isRunning else { return }
         isRunning = true
         defer { isRunning = false }
         var temporaryURL: URL?
         do {
             message = "Preparing media…"
-            let options = PHFetchOptions()
-            options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
-            options.fetchLimit = 1
-            guard let asset = PHAsset.fetchAssets(with: options).firstObject else { throw NSError(domain: "LiberonsBackup", code: 1, userInfo: [NSLocalizedDescriptionKey: "No media found"]) }
-            guard let resource = PHAssetResource.assetResources(for: asset).first else { throw NSError(domain: "LiberonsBackup", code: 2, userInfo: [NSLocalizedDescriptionKey: "No media resource found"]) }
             let ext = (resource.originalFilename as NSString).pathExtension
             let temp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension(ext)
             temporaryURL = temp
             try await export(resource: resource, to: temp)
             let byteCount = (try temp.resourceValues(forKeys: [.fileSizeKey])).fileSize ?? 0
             guard byteCount > 0 else { throw NSError(domain: "LiberonsBackup", code: 3, userInfo: [NSLocalizedDescriptionKey: "Exported media is empty"]) }
+            selectedBytes = Int64(byteCount)
             message = "Securing media…"
             let checksum = try sha256(fileURL: temp)
             let mimeType = UTType(filenameExtension: ext)?.preferredMIMEType ?? (asset.mediaType == .video ? "video/mp4" : "image/jpeg")
