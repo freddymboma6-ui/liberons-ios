@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import Supabase
 import Auth
 
 @MainActor
