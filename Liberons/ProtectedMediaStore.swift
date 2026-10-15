@@ -26,4 +26,6 @@ final class ProtectedMediaStore: ObservableObject {
             errorMessage = error.localizedDescription
         }
     }
+
+    func refreshAfterProtection() { Task { await refresh() } }
 }
