@@ -1,5 +1,6 @@
 import SwiftUI
 import Photos
+import Supabase
 
 struct ContentView: View {
     @StateObject private var auth = AuthStore()
