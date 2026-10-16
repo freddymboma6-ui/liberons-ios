@@ -55,7 +55,13 @@ struct ProtectedLibraryView: View {
             .confirmationDialog(language.text("Delete selected memories from Libérons?", "Supprimer les souvenirs sélectionnés de Libérons ?"), isPresented: $showBulkDelete) { Button(language.text("Delete permanently", "Supprimer définitivement"), role: .destructive) { Task { await deleteSelected() } } }
         }
     }
-    private func toggle(_ id: UUID) { selectedIDs.contains(id) ? selectedIDs.remove(id) : selectedIDs.insert(id) }
+    private func toggle(_ id: UUID) {
+        if selectedIDs.contains(id) {
+            selectedIDs.remove(id)
+        } else {
+            selectedIDs.insert(id)
+        }
+    }
     @MainActor private func deleteSelected() async { deletingSelection = true; for id in selectedIDs { try? await SupabaseService.deleteCloudMedia(assetID: id) }; selectedIDs.removeAll(); isSelecting = false; deletingSelection = false; await store.refresh() }
 }
 
