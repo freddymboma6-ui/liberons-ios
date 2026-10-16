@@ -135,6 +135,7 @@ private struct AccountView: View {
     @ObservedObject var auth: AuthStore
     @ObservedObject var cloud: CloudStorageSummary
     @ObservedObject var language: LanguageStore
+    @State private var showingLanguagePicker = false
     private var email: String { auth.session?.user.email ?? "Libérons" }
     private var initials: String { String(email.prefix(1)).uppercased() }
     private var used: Int64 { cloud.protectedBytes + cloud.pendingBytes }
@@ -151,11 +152,28 @@ private struct AccountView: View {
                         HStack { Text(language.text("Used", "Utilisé")); Spacer(); Text(used == 0 ? "0 KB" : ByteCountFormatter.string(fromByteCount: used, countStyle: .file)).fontWeight(.semibold) }
                         NavigationLink { StoragePlanView(cloud: cloud, language: language) } label: { HStack { Text(language.text("Manage storage plan", "Gérer le forfait de stockage")); Spacer(); Image(systemName: "chevron.right") } }.foregroundStyle(.blue)
                     }.card()
-                    VStack(spacing: 0) { SettingRow(icon: "globe", title: language.text("Language", "Langue"), trailing: language.language.title); Divider(); SettingRow(icon: "bell.fill", title: language.text("Notifications", "Notifications")); Divider(); SettingRow(icon: "lock.shield.fill", title: language.text("Privacy & security", "Confidentialité et sécurité")) }.card()
+                    VStack(spacing: 0) {
+                        Button { showingLanguagePicker = true } label: { SettingRow(icon: "globe", title: language.text("Language", "Langue"), trailing: language.language.title) }.buttonStyle(.plain)
+                        Divider()
+                        SettingRow(icon: "bell.fill", title: language.text("Notifications", "Notifications"))
+                        Divider()
+                        SettingRow(icon: "lock.shield.fill", title: language.text("Privacy & security", "Confidentialité et sécurité"))
+                    }.card()
                     VStack(spacing: 0) { SettingRow(icon: "questionmark.circle.fill", title: language.text("Help & support", "Aide et support")); Divider(); SettingRow(icon: "info.circle.fill", title: language.text("About Libérons", "À propos de Libérons")) }.card()
                     Button(role: .destructive) { Task { await auth.signOut() } } label: { Label(language.text("Sign out", "Se déconnecter"), systemImage: "rectangle.portrait.and.arrow.right").fontWeight(.semibold).frame(maxWidth: .infinity).frame(height: 48) }.buttonStyle(.bordered).tint(.red)
                 }.padding(20).padding(.bottom, 100)
             }.background(Color(uiColor: .systemGroupedBackground)).toolbar(.hidden, for: .navigationBar)
+        }
+        .confirmationDialog(language.text("Choose language", "Choisir la langue"), isPresented: $showingLanguagePicker, titleVisibility: .visible) {
+            ForEach(LanguageStore.Language.allCases) { item in
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) { language.language = item }
+                } label: {
+                    if item == language.language { Label(item.title, systemImage: "checkmark") }
+                    else { Text(item.title) }
+                }
+            }
+            Button(language.text("Cancel", "Annuler"), role: .cancel) {}
         }
     }
 }
@@ -194,7 +212,7 @@ private struct Metric: View {
 
 private struct SettingRow: View {
     let icon: String; let title: String; var trailing: String = ""
-    var body: some View { HStack(spacing: 13) { Image(systemName: icon).foregroundStyle(.blue).frame(width: 25); Text(title); Spacer(); if !trailing.isEmpty { Text(trailing).foregroundStyle(.secondary) }; Image(systemName: "chevron.right").font(.caption.bold()).foregroundStyle(.tertiary) }.padding(.vertical, 13) }
+    var body: some View { HStack(spacing: 13) { Image(systemName: icon).foregroundStyle(.blue).frame(width: 25); Text(title); Spacer(); if !trailing.isEmpty { Text(trailing).foregroundStyle(.secondary) }; Image(systemName: "chevron.right").font(.caption.bold()).foregroundStyle(.tertiary) }.padding(.vertical, 13).contentShape(Rectangle()) }
 }
 
 private extension View {
