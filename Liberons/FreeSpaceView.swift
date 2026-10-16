@@ -98,7 +98,19 @@ struct FreeSpaceView: View {
                     Spacer()
                     Button(role: .destructive) {
                         showReview = false
-                        Task { await cleaner.deletePreparedFromIPhone() }
+                        Task {
+                            // Let SwiftUI finish dismissing our review sheet before Photos
+                            // presents Apple's system deletion confirmation. Presenting both in
+                            // the same transition can make the Photos dialog flash and vanish.
+                            try? await Task.sleep(nanoseconds: 450_000_000)
+                            await cleaner.deletePreparedFromIPhone()
+                            // A Photos cancellation leaves the prepared selection intact.
+                            // Restore the review screen so the user can try again deliberately.
+                            if !cleaner.selectedLocalIdentifiers.isEmpty {
+                                try? await Task.sleep(nanoseconds: 250_000_000)
+                                showReview = true
+                            }
+                        }
                     } label: {
                         Text(language.text("Free \(selectedSize)", "Libérer \(selectedSize)")).fontWeight(.bold).frame(maxWidth: .infinity).frame(height: 48)
                     }
