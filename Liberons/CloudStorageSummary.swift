@@ -17,29 +17,30 @@ final class CloudStorageSummary: ObservableObject {
         let pending_bytes: Int64
     }
 
-    private struct Asset: Decodable {
-        let protected_at: Date?
-    }
+    private struct Asset: Decodable { let protected_at: Date? }
 
     func refresh() async {
         guard !isLoading else { return }
         isLoading = true
         defer { isLoading = false }
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
 
+        // Keep these queries independent: a missing/empty storage_usage row must never
+        // prevent the UI from showing media that is already protected.
         do {
             let usageResponse = try await SupabaseService.client
                 .from("storage_usage")
                 .select("quota_bytes,protected_bytes,pending_bytes")
                 .limit(1)
                 .execute()
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
             if let usage = try decoder.decode([Usage].self, from: usageResponse.data).first {
                 quotaBytes = usage.quota_bytes
                 protectedBytes = usage.protected_bytes
                 pendingBytes = usage.pending_bytes
             }
+        } catch { }
 
+        do {
             let assetsResponse = try await SupabaseService.client
                 .from("media_assets")
                 .select("protected_at")
@@ -49,8 +50,6 @@ final class CloudStorageSummary: ObservableObject {
             let assets = try decoder.decode([Asset].self, from: assetsResponse.data)
             protectedCount = assets.count
             lastProtectedAt = assets.first?.protected_at
-        } catch {
-            // Dashboard remains usable with zero values if cloud state cannot be read.
-        }
+        } catch { }
     }
 }
