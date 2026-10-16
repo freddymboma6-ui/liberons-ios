@@ -8,6 +8,7 @@ final class AuthStore: ObservableObject {
     @Published private(set) var session: Session?
     @Published private(set) var isLoading = true
     @Published private(set) var freeTierEligible: Bool?
+    @Published private(set) var appAttestVerified: Bool?
     @Published var errorMessage: String?
 
     var isAuthenticated: Bool { session != nil }
@@ -19,14 +20,14 @@ final class AuthStore: ObservableObject {
     func restoreSession() async {
         defer { isLoading = false }
         session = try? await SupabaseService.client.auth.session
-        if session != nil { await validateFreeTier() }
+        if session != nil { await validateDeviceAndFreeTier() }
     }
 
     func signIn(email: String, password: String) async {
         errorMessage = nil
         do {
             session = try await SupabaseService.client.auth.signIn(email: email, password: password)
-            await validateFreeTier()
+            await validateDeviceAndFreeTier()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -37,12 +38,23 @@ final class AuthStore: ObservableObject {
             try await SupabaseService.client.auth.signOut()
             session = nil
             freeTierEligible = nil
+            appAttestVerified = nil
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
-    private func validateFreeTier() async {
+    /// App Attest is an additional integrity signal, never a client-side entitlement decision.
+    /// Unsupported devices continue through the server-side free-tier policy as Apple recommends.
+    private func validateDeviceAndFreeTier() async {
+        do {
+            appAttestVerified = try await FreeTierProtection.registerAppAttestKeyIfSupported()
+        } catch {
+            // Network errors, unsupported/older devices, or an unavailable verifier must not
+            // manufacture trust. Keep the state unknown and let the backend policy decide.
+            appAttestVerified = nil
+        }
+
         do {
             freeTierEligible = try await FreeTierProtection.validateFreeTier()
         } catch {
