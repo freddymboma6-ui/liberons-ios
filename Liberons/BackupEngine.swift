@@ -22,13 +22,9 @@ final class BackupEngine: ObservableObject {
     @Published private(set) var queueFailed = 0
     @Published private(set) var currentQueueFilename: String?
     private var selectionConfirmed = false
-
     var queueProgress: Double { queueTotal == 0 ? 0 : Double(queueCompleted + queueFailed) / Double(queueTotal) }
 
-    private struct InitiateResponse: Decodable {
-        struct Upload: Decodable { let url: String; let headers: [String: String] }
-        let asset_id: String; let upload_session_id: String; let upload: Upload
-    }
+    private struct InitiateResponse: Decodable { struct Upload: Decodable { let url: String; let headers: [String: String] }; let asset_id: String; let upload_session_id: String; let upload: Upload }
 
     func prepareOldestAsset() {
         let options = PHFetchOptions(); options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]; options.fetchLimit = 1
@@ -36,28 +32,19 @@ final class BackupEngine: ObservableObject {
         setPreview(asset: asset, resource: resource); selectionConfirmed = true; message = "Oldest item ready — tap again to protect"
     }
 
-    func backupSelectedAsset() async {
-        guard !isRunning else { return }
-        guard let localIdentifier = selectedLocalIdentifier else { message = "Select media first"; return }
-        await backup(localIdentifiers: [localIdentifier])
-    }
-
-    func backupOneOldestAsset() async {
-        if !selectionConfirmed { prepareOldestAsset(); return }
-        selectionConfirmed = false; await backupSelectedAsset()
-    }
+    func backupSelectedAsset() async { guard !isRunning else { return }; guard let localIdentifier = selectedLocalIdentifier else { message = "Select media first"; return }; await backup(localIdentifiers: [localIdentifier]) }
+    func backupOneOldestAsset() async { if !selectionConfirmed { prepareOldestAsset(); return }; selectionConfirmed = false; await backupSelectedAsset() }
 
     func backupOldestItems(count: Int) async {
         guard count > 0 else { return }
         let options = PHFetchOptions(); options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]; options.fetchLimit = count
         let result = PHAsset.fetchAssets(with: options); var ids: [String] = []
-        result.enumerateObjects { asset, _, _ in ids.append(asset.localIdentifier) }
-        await backup(localIdentifiers: ids)
+        result.enumerateObjects { asset, _, _ in ids.append(asset.localIdentifier) }; await backup(localIdentifiers: ids)
     }
 
     func backup(localIdentifiers: [String]) async {
         guard !isRunning else { return }
-        let unique = Array(NSOrderedSet(array: localIdentifiers)) as? [String] ?? localIdentifiers
+        var seen = Set<String>(); let unique = localIdentifiers.filter { seen.insert($0).inserted }
         let result = PHAsset.fetchAssets(withLocalIdentifiers: unique, options: nil); var assetsByID: [String: PHAsset] = [:]
         result.enumerateObjects { asset, _, _ in assetsByID[asset.localIdentifier] = asset }
         let assets = unique.compactMap { assetsByID[$0] }
@@ -66,35 +53,27 @@ final class BackupEngine: ObservableObject {
         defer { isRunning = false; currentQueueFilename = nil }
         for asset in assets {
             guard let resource = PHAssetResource.assetResources(for: asset).first else { queueFailed += 1; continue }
-            currentQueueFilename = resource.originalFilename; setPreview(asset: asset, resource: resource)
-            message = "Protecting \(queueCompleted + queueFailed + 1) of \(queueTotal)…"
+            currentQueueFilename = resource.originalFilename; setPreview(asset: asset, resource: resource); message = "Protecting \(queueCompleted + queueFailed + 1) of \(queueTotal)…"
             do { try await protect(asset: asset, resource: resource); queueCompleted += 1 } catch { queueFailed += 1 }
         }
         message = queueFailed == 0 ? "\(queueCompleted) items protected ✓" : "\(queueCompleted) protected • \(queueFailed) failed"
     }
 
-    private func setPreview(asset: PHAsset, resource: PHAssetResource) {
-        selectedLocalIdentifier = asset.localIdentifier; selectedFilename = resource.originalFilename; selectedIsVideo = asset.mediaType == .video; selectedCreationDate = asset.creationDate
-        selectedBytes = Int64(resource.value(forKey: "fileSize") as? CLong ?? 0)
-    }
+    private func setPreview(asset: PHAsset, resource: PHAssetResource) { selectedLocalIdentifier = asset.localIdentifier; selectedFilename = resource.originalFilename; selectedIsVideo = asset.mediaType == .video; selectedCreationDate = asset.creationDate; selectedBytes = Int64(resource.value(forKey: "fileSize") as? CLong ?? 0) }
 
     private func protect(asset: PHAsset, resource: PHAssetResource) async throws {
         var temporaryURL: URL?; defer { if let temporaryURL { try? FileManager.default.removeItem(at: temporaryURL) } }
-        let ext = (resource.originalFilename as NSString).pathExtension
-        let temp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension(ext); temporaryURL = temp
+        let ext = (resource.originalFilename as NSString).pathExtension; let temp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension(ext); temporaryURL = temp
         try await export(resource: resource, to: temp)
         let byteCount = (try temp.resourceValues(forKeys: [.fileSizeKey])).fileSize ?? 0
         guard byteCount > 0 else { throw NSError(domain: "LiberonsBackup", code: 3, userInfo: [NSLocalizedDescriptionKey: "Exported media is empty"]) }
-        selectedBytes = Int64(byteCount); let checksum = try sha256(fileURL: temp)
-        let mimeType = UTType(filenameExtension: ext)?.preferredMIMEType ?? (asset.mediaType == .video ? "video/mp4" : "image/jpeg")
+        selectedBytes = Int64(byteCount); let checksum = try sha256(fileURL: temp); let mimeType = UTType(filenameExtension: ext)?.preferredMIMEType ?? (asset.mediaType == .video ? "video/mp4" : "image/jpeg")
         let iso = ISO8601DateFormatter(); var body: [String: Any] = ["filename": resource.originalFilename, "mime_type": mimeType, "size_bytes": byteCount, "checksum_sha256": checksum, "ios_local_identifier": asset.localIdentifier]
         if let captured = asset.creationDate { body["captured_at"] = iso.string(from: captured) }
-        let initiateData = try await SupabaseService.callFunction("initiate-upload", json: try JSONSerialization.data(withJSONObject: body))
-        let initiated = try JSONDecoder().decode(InitiateResponse.self, from: initiateData)
+        let initiateData = try await SupabaseService.callFunction("initiate-upload", json: try JSONSerialization.data(withJSONObject: body)); let initiated = try JSONDecoder().decode(InitiateResponse.self, from: initiateData)
         guard let signedURL = URL(string: initiated.upload.url) else { throw NSError(domain: "LiberonsBackup", code: 4, userInfo: [NSLocalizedDescriptionKey: "Invalid signed upload URL"]) }
         try await SupabaseService.putFile(temp, to: signedURL, headers: initiated.upload.headers)
-        let verifiedData = try await SupabaseService.verifyUpload(assetID: initiated.asset_id, uploadSessionID: initiated.upload_session_id)
-        let verifiedObject = try JSONSerialization.jsonObject(with: verifiedData) as? [String: Any]
+        let verifiedData = try await SupabaseService.verifyUpload(assetID: initiated.asset_id, uploadSessionID: initiated.upload_session_id); let verifiedObject = try JSONSerialization.jsonObject(with: verifiedData) as? [String: Any]
         guard verifiedObject?["protected"] as? Bool == true else { throw NSError(domain: "LiberonsBackup", code: 5, userInfo: [NSLocalizedDescriptionKey: "Cloud copy was not marked protected"]) }
         lastProtectedLocalIdentifier = asset.localIdentifier; lastProtectedFilename = resource.originalFilename; lastProtectedBytes = Int64(byteCount); lastProtectedIsVideo = asset.mediaType == .video
     }
