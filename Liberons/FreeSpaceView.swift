@@ -6,9 +6,7 @@ struct FreeSpaceView: View {
     @StateObject private var cleaner = ProtectedSpaceCleaner()
     @State private var showReview = false
 
-    private var selectedSize: String {
-        ByteCountFormatter.string(fromByteCount: cleaner.selectedBytes, countStyle: .file)
-    }
+    private var selectedSize: String { ByteCountFormatter.string(fromByteCount: cleaner.selectedBytes, countStyle: .file) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -17,19 +15,12 @@ struct FreeSpaceView: View {
                 Spacer()
                 Text("\(preferences.removalPercent)%").font(.headline).foregroundStyle(.green)
             }
-
-            Text(language.text(
-                "The percentage only prepares a selection. Nothing is removed when you tap a percentage.",
-                "Le pourcentage prépare uniquement une sélection. Rien n’est supprimé lorsque vous touchez un pourcentage."
-            )).font(.subheadline).foregroundStyle(.secondary)
+            Text(language.text("The percentage only prepares a selection. Nothing is removed when you tap a percentage.", "Le pourcentage prépare uniquement une sélection. Rien n’est supprimé lorsque vous touchez un pourcentage.")).font(.subheadline).foregroundStyle(.secondary)
 
             if cleaner.isLoading {
                 ProgressView(language.text("Calculating what can be freed…", "Calcul de l’espace réellement libérable…"))
             } else if cleaner.selectedLocalIdentifiers.isEmpty {
-                Text(language.text(
-                    "Continue to calculate which protected and verified originals are still on this iPhone.",
-                    "Continuez pour calculer quels originaux protégés et vérifiés sont encore présents sur cet iPhone."
-                )).font(.subheadline).foregroundStyle(.secondary)
+                Text(language.text("Continue to calculate which protected and verified originals are still on this iPhone.", "Continuez pour calculer quels originaux protégés et vérifiés sont encore présents sur cet iPhone.")).font(.subheadline).foregroundStyle(.secondary)
             } else {
                 VStack(alignment: .leading, spacing: 5) {
                     Text("\(cleaner.selectedLocalIdentifiers.count) " + language.text("item(s)", "élément(s)")).font(.title3.bold())
@@ -37,7 +28,15 @@ struct FreeSpaceView: View {
                 }
             }
 
-            if !cleaner.message.isEmpty { Text(cleaner.message).font(.caption).foregroundStyle(.secondary) }
+            if !cleaner.message.isEmpty {
+                HStack(alignment: .top, spacing: 9) {
+                    Image(systemName: "info.circle.fill").foregroundStyle(.secondary)
+                    Text(cleaner.message).font(.caption).foregroundStyle(.secondary)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
 
             Button {
                 Task {
@@ -47,14 +46,9 @@ struct FreeSpaceView: View {
             } label: {
                 HStack { Spacer(); if cleaner.isLoading { ProgressView() }; Label(language.text("Continue", "Continuer"), systemImage: "arrow.right.circle.fill"); Spacer() }.frame(height: 34)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .disabled(cleaner.isLoading || cleaner.isDeleting)
+            .buttonStyle(.borderedProminent).controlSize(.large).disabled(cleaner.isLoading || cleaner.isDeleting)
 
-            Label(language.text(
-                "Libérons never deletes the cloud copy here. Apple Photos asks for its own confirmation before removing local originals.",
-                "Libérons ne supprime jamais la copie cloud ici. Apple Photos demande sa propre confirmation avant de retirer les originaux locaux."
-            ), systemImage: "lock.shield.fill")
+            Label(language.text("Libérons never deletes the cloud copy here. Apple Photos asks for its own confirmation before removing local originals.", "Libérons ne supprime jamais la copie cloud ici. Photos demande sa propre confirmation avant de retirer les originaux locaux."), systemImage: "lock.shield.fill")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .padding(20)
@@ -63,28 +57,23 @@ struct FreeSpaceView: View {
         .sheet(isPresented: $showReview) {
             NavigationStack {
                 VStack(alignment: .leading, spacing: 22) {
-                    Image(systemName: "iphone.and.arrow.forward").font(.system(size: 42)).foregroundStyle(.green)
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Color.green.opacity(0.12)).frame(width: 72, height: 72)
+                        Image(systemName: "iphone.and.arrow.forward").font(.system(size: 31, weight: .semibold)).foregroundStyle(.green)
+                    }
                     Text(language.text("Ready to free space", "Prêt à libérer de l’espace")).font(.largeTitle.bold())
-                    Text(language.text(
-                        "Review before anything is removed from this iPhone.",
-                        "Vérifiez le récapitulatif avant que quoi que ce soit soit retiré de cet iPhone."
-                    )).foregroundStyle(.secondary)
-
+                    Text(language.text("Review your selection before anything is removed from this iPhone.", "Vérifiez votre sélection avant que quoi que ce soit soit retiré de cet iPhone.")).foregroundStyle(.secondary)
                     VStack(spacing: 0) {
-                        reviewRow(language.text("Selected", "Sélectionnés"), "\(cleaner.selectedLocalIdentifiers.count) " + language.text("items", "éléments"))
+                        reviewRow(language.text("Selected", "Sélection"), "\(cleaner.selectedLocalIdentifiers.count) " + language.text("items", "élément(s)"))
                         Divider()
                         reviewRow(language.text("Space to free", "Espace à libérer"), selectedSize)
                         Divider()
-                        reviewRow(language.text("Libérons copies", "Copies Libérons"), language.text("Kept protected", "Restent protégées"))
+                        reviewRow(language.text("Cloud copies", "Copies cloud"), language.text("Remain protected", "Restent protégées"))
                     }
                     .padding(.horizontal, 18)
-                    .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
-
-                    Text(language.text(
-                        "Only protected, cloud-verified originals that Libérons can still find in Apple Photos are included.",
-                        "Seuls les originaux protégés, vérifiés dans le cloud et encore retrouvés dans Photos sont inclus."
-                    )).font(.footnote).foregroundStyle(.secondary)
-
+                    .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    Label(language.text("Photos will display the final iOS confirmation. If you cancel there, nothing changes.", "Photos affichera ensuite la confirmation finale d’iOS. Si vous refusez, rien ne change."), systemImage: "checkmark.shield.fill")
+                        .font(.footnote).foregroundStyle(.secondary)
                     Spacer()
                     Button(role: .destructive) {
                         showReview = false
@@ -92,10 +81,7 @@ struct FreeSpaceView: View {
                     } label: {
                         Text(language.text("Free \(selectedSize)", "Libérer \(selectedSize)")).fontWeight(.bold).frame(maxWidth: .infinity).frame(height: 48)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-                    .disabled(cleaner.isDeleting)
-
+                    .buttonStyle(.borderedProminent).controlSize(.large).disabled(cleaner.isDeleting)
                     Button(language.text("Cancel", "Annuler")) { showReview = false }.frame(maxWidth: .infinity)
                 }
                 .padding(24)
@@ -103,6 +89,7 @@ struct FreeSpaceView: View {
                 .navigationBarTitleDisplayMode(.inline)
             }
             .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
         }
     }
 
