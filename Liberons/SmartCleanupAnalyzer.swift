@@ -20,9 +20,8 @@ final class SmartCleanupAnalyzer: ObservableObject {
         isScanning = true
         defer { isScanning = false }
 
-        // Keep the first pass local and lightweight. The previous implementation exported
-        // every possible duplicate (including iCloud originals) and SHA-256 hashed entire
-        // files. On large libraries this could make the app appear frozen for minutes.
+        // Keep discovery local and lightweight. Exact byte counting below never downloads
+        // iCloud-only originals: it only counts resources already present on this iPhone.
         let result = PHAsset.fetchAssets(with: nil)
         var shots: [String] = []
         var memories: [String] = []
@@ -37,17 +36,49 @@ final class SmartCleanupAnalyzer: ObservableObject {
 
         screenshotIDs = shots
         memoryIDs = memories
-
-        // Exact duplicate verification is intentionally not part of this foreground scan.
-        // We never label/delete a media item as a duplicate without content verification.
         duplicateIDs = []
-        screenshotBytes = 0
         duplicateBytes = 0
+
+        // Count the real local bytes with the public Photos API. This replaces the old
+        // hard-coded 0 KB while avoiding private/KVC file-size access and iCloud downloads.
+        screenshotBytes = await localByteCount(for: shots)
     }
 
     func deleteScreenshots() async throws { try await delete(ids: screenshotIDs) }
     func deleteDuplicates() async throws { try await delete(ids: duplicateIDs) }
     func deleteAllCleanupItems() async throws { try await delete(ids: Array(Set(screenshotIDs + duplicateIDs))) }
+
+    private func localByteCount(for ids: [String]) async -> Int64 {
+        guard !ids.isEmpty else { return 0 }
+        let assets = PHAsset.fetchAssets(withLocalIdentifiers: ids, options: nil)
+        var total: Int64 = 0
+
+        for index in 0..<assets.count {
+            let asset = assets.object(at: index)
+            for resource in PHAssetResource.assetResources(for: asset) {
+                total += await localByteCount(for: resource)
+            }
+        }
+        return total
+    }
+
+    private func localByteCount(for resource: PHAssetResource) async -> Int64 {
+        await withCheckedContinuation { continuation in
+            let options = PHAssetResourceRequestOptions()
+            options.isNetworkAccessAllowed = false
+            var bytes: Int64 = 0
+            PHAssetResourceManager.default().requestData(
+                for: resource,
+                options: options,
+                dataReceivedHandler: { data in
+                    bytes += Int64(data.count)
+                },
+                completionHandler: { error in
+                    continuation.resume(returning: error == nil ? bytes : 0)
+                }
+            )
+        }
+    }
 
     private func delete(ids: [String]) async throws {
         guard !ids.isEmpty else { return }
