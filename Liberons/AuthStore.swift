@@ -10,6 +10,7 @@ final class AuthStore: ObservableObject {
     @Published private(set) var freeTierEligible: Bool?
     @Published private(set) var appAttestVerified: Bool?
     @Published var errorMessage: String?
+    @Published var infoMessage: String?
 
     var isAuthenticated: Bool { session != nil }
 
@@ -25,11 +26,30 @@ final class AuthStore: ObservableObject {
 
     func signIn(email: String, password: String) async {
         errorMessage = nil
+        infoMessage = nil
         do {
             session = try await SupabaseService.client.auth.signIn(email: email, password: password)
             await validateDeviceAndFreeTier()
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    func signUp(email: String, password: String) async -> Bool {
+        errorMessage = nil
+        infoMessage = nil
+        do {
+            let response = try await SupabaseService.client.auth.signUp(email: email, password: password)
+            if let newSession = response.session {
+                session = newSession
+                await validateDeviceAndFreeTier()
+                return true
+            }
+            infoMessage = "confirmation_required"
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
         }
     }
 
@@ -39,6 +59,7 @@ final class AuthStore: ObservableObject {
             session = nil
             freeTierEligible = nil
             appAttestVerified = nil
+            infoMessage = nil
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -50,16 +71,12 @@ final class AuthStore: ObservableObject {
         do {
             appAttestVerified = try await FreeTierProtection.registerAppAttestKeyIfSupported()
         } catch {
-            // Network errors, unsupported/older devices, or an unavailable verifier must not
-            // manufacture trust. Keep the state unknown and let the backend policy decide.
             appAttestVerified = nil
         }
 
         do {
             freeTierEligible = try await FreeTierProtection.validateFreeTier()
         } catch {
-            // A temporary network/server failure must never sign the user out or
-            // accidentally grant another free allocation. The backend remains authoritative.
             freeTierEligible = nil
         }
     }
