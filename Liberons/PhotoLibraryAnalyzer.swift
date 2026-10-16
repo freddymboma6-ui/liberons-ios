@@ -15,7 +15,6 @@ final class PhotoLibraryAnalyzer: NSObject, ObservableObject, PHPhotoLibraryChan
     @Published private(set) var libraryHasChanged = false
     @Published var errorMessage: String?
 
-    private var scanTask: Task<Void, Never>?
     private let defaults = UserDefaults.standard
     private let cacheVersion = 1
 
@@ -36,68 +35,44 @@ final class PhotoLibraryAnalyzer: NSObject, ObservableObject, PHPhotoLibraryChan
 
     deinit { PHPhotoLibrary.shared().unregisterChangeObserver(self) }
 
-    var canReadLibrary: Bool {
-        authorizationStatus == .authorized || authorizationStatus == .limited
-    }
-
+    var canReadLibrary: Bool { authorizationStatus == .authorized || authorizationStatus == .limited }
     var hasCompletedScan: Bool { lastScanDate != nil && totalItems > 0 }
 
     func requestAccessAndScan() async {
         let status = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
         authorizationStatus = status
         guard status == .authorized || status == .limited else { return }
+        refreshCountsFast()
         if !hasCompletedScan { await scan(force: true) }
     }
 
     func scan(force: Bool = false) async {
-        guard canReadLibrary else { return }
+        guard canReadLibrary, !isScanning else { return }
         if hasCompletedScan && !libraryHasChanged && !force { return }
-        if isScanning { return }
 
         isScanning = true
         errorMessage = nil
+        refreshCountsFast()
+
         let assets = PHAsset.fetchAssets(with: nil)
         let count = assets.count
-
         var bytes: Int64 = 0
-        var photos = 0
-        var videos = 0
 
-        // Keep the previous stable result visible while a refresh runs.
-        if !hasCompletedScan {
-            photoCount = 0
-            videoCount = 0
-            estimatedBytes = 0
-            scannedItems = 0
-            totalItems = count
-        }
-
+        // Size calculation is intentionally chunked so a very large library does not
+        // monopolize the main actor and make scrolling/taps feel frozen.
         for index in 0..<count {
             if Task.isCancelled { isScanning = false; return }
             let asset = assets.object(at: index)
-            switch asset.mediaType {
-            case .image: photos += 1
-            case .video: videos += 1
-            default: break
-            }
-
             for resource in PHAssetResource.assetResources(for: asset) {
                 if let value = resource.value(forKey: "fileSize") as? NSNumber { bytes += value.int64Value }
             }
-
-            if index.isMultiple(of: 150) || index == count - 1 {
+            if index.isMultiple(of: 40) || index == count - 1 {
                 scannedItems = index + 1
-                if !hasCompletedScan {
-                    photoCount = photos
-                    videoCount = videos
-                    estimatedBytes = bytes
-                }
                 await Task.yield()
+                try? await Task.sleep(for: .milliseconds(1))
             }
         }
 
-        photoCount = photos
-        videoCount = videos
         estimatedBytes = bytes
         totalItems = count
         scannedItems = count
@@ -110,8 +85,10 @@ final class PhotoLibraryAnalyzer: NSObject, ObservableObject, PHPhotoLibraryChan
     func refreshIfNeeded() async {
         authorizationStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
         guard canReadLibrary else { return }
+        refreshCountsFast()
+        // Keep the cached size instantly available. A Photos change no longer starts a
+        // 28k-item resource scan while the user is navigating the app.
         if !hasCompletedScan { await scan(force: true) }
-        else if libraryHasChanged { await scan(force: true) }
     }
 
     func scanNow() async { await scan(force: true) }
@@ -120,22 +97,23 @@ final class PhotoLibraryAnalyzer: NSObject, ObservableObject, PHPhotoLibraryChan
         Task { @MainActor [weak self] in
             guard let self else { return }
             self.libraryHasChanged = true
-            // Debounce bursts of Photos changes, then refresh once.
-            self.scanTask?.cancel()
-            self.scanTask = Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .seconds(3))
-                guard !Task.isCancelled else { return }
-                await self?.scan(force: true)
-            }
+            self.refreshCountsFast()
         }
     }
 
-    var formattedSize: String { ByteCountFormatter.string(fromByteCount: estimatedBytes, countStyle: .file) }
-
-    var formattedLastScan: String? {
-        guard let lastScanDate else { return nil }
-        return lastScanDate.formatted(date: .abbreviated, time: .shortened)
+    private func refreshCountsFast() {
+        guard canReadLibrary else { return }
+        let imageOptions = PHFetchOptions()
+        imageOptions.predicate = NSPredicate(format: "mediaType == %d", PHAssetMediaType.image.rawValue)
+        let videoOptions = PHFetchOptions()
+        videoOptions.predicate = NSPredicate(format: "mediaType == %d", PHAssetMediaType.video.rawValue)
+        photoCount = PHAsset.fetchAssets(with: imageOptions).count
+        videoCount = PHAsset.fetchAssets(with: videoOptions).count
+        totalItems = photoCount + videoCount
     }
+
+    var formattedSize: String { ByteCountFormatter.string(fromByteCount: estimatedBytes, countStyle: .file) }
+    var formattedLastScan: String? { lastScanDate?.formatted(date: .abbreviated, time: .shortened) }
 
     private func restoreCachedScan() {
         guard defaults.integer(forKey: Key.version) == cacheVersion,
