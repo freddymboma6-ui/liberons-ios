@@ -33,7 +33,7 @@ struct BackupQueueView: View {
 
             Divider()
             VStack(alignment:.leading,spacing:12){
-                HStack{Label(language.text("Smart cleanup","Nettoyage intelligent"),systemImage:"sparkles").font(.headline);Spacer();if smart.isScanning{ProgressView().controlSize(.small)}}
+                HStack{Label(language.text("Smart cleanup","Nettoyage intelligent"),systemImage:"photo.stack").font(.headline);Spacer();if smart.isScanning{ProgressView().controlSize(.small)}}
                 Text(language.text("Runs on this iPhone. Screenshots can be excluded from protection and cleaned separately.","Fonctionne sur cet iPhone. Les captures d’écran peuvent être exclues de la protection et nettoyées séparément.")).font(.caption).foregroundStyle(.secondary)
                 if smart.memoryCount+smart.screenshotCount>0{
                     HStack(spacing:10){smartMetric(value:smart.memoryCount,label:language.text("Memories","Souvenirs"),icon:"photo.fill",tint:.blue);smartMetric(value:smart.screenshotCount,label:language.text("Screenshots","Captures"),icon:"rectangle.on.rectangle",tint:.orange)}
@@ -41,7 +41,7 @@ struct BackupQueueView: View {
                     Toggle(language.text("Protect memories only","Protéger seulement les souvenirs"),isOn:$smartMode).font(.subheadline.bold()).tint(.blue)
                     if smart.screenshotCount>0{Button(role:.destructive){showScreenshotDelete=true}label:{Label(language.text("Review & delete screenshots","Vérifier et supprimer les captures"),systemImage:"trash").frame(maxWidth:.infinity).frame(height:34)}.buttonStyle(.bordered)}
                 }
-                Button{Task{await smart.scan()}}label:{Label(smart.memoryCount+smart.screenshotCount>0 ? language.text("Scan again","Analyser à nouveau"):language.text("Analyze my library","Analyser ma photothèque"),systemImage:"sparkles").frame(maxWidth:.infinity).frame(height:34)}.buttonStyle(.bordered).disabled(smart.isScanning || backup.isRunning || !analyzer.canReadLibrary)
+                Button{Task{await smart.scan()}}label:{Label(smart.memoryCount+smart.screenshotCount>0 ? language.text("Scan again","Analyser à nouveau"):language.text("Analyze my library","Analyser ma photothèque"),systemImage:"photo.on.rectangle").frame(maxWidth:.infinity).frame(height:34)}.buttonStyle(.bordered).disabled(smart.isScanning || backup.isRunning || !analyzer.canReadLibrary)
             }
 
             if backup.queueTotal>0{ProgressView(value:backup.queueProgress).tint(.blue);HStack(spacing:14){Label("\(backup.queueCompleted) "+language.text("protected","protégés"),systemImage:"checkmark.shield.fill").foregroundStyle(.green);if backup.queueFailed>0{Label("\(backup.queueFailed) "+language.text("failed","échoués"),systemImage:"exclamationmark.triangle.fill").foregroundStyle(.orange)}}.font(.caption.bold());if let name=backup.currentQueueFilename{Text(language.text("Now: ","En cours : ")+name).font(.caption).foregroundStyle(.secondary).lineLimit(1)}}
