@@ -7,11 +7,13 @@ struct LiberonsApp: App {
 
     init() {
         LocalStorageGuard.configure()
+        LiberonsTheme.configureGlobalAppearance()
     }
 
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .liberonsCanvas()
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
                     LocalStorageGuard.applicationDidReceiveMemoryWarning()
                 }
