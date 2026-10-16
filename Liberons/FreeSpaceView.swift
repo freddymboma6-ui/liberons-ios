@@ -3,6 +3,7 @@ import SwiftUI
 struct FreeSpaceView: View {
     @ObservedObject var preferences: BackupPreferences
     @ObservedObject var language: LanguageStore
+    @ObservedObject var backup: BackupEngine
     @StateObject private var cleaner = ProtectedSpaceCleaner()
     @State private var showReview = false
 
@@ -18,7 +19,7 @@ struct FreeSpaceView: View {
             Text(language.text("The percentage only prepares a selection. Nothing is removed when you tap a percentage.", "Le pourcentage prépare uniquement une sélection. Rien n’est supprimé lorsque vous touchez un pourcentage.")).font(.subheadline).foregroundStyle(.secondary)
 
             NavigationLink {
-                StorageAnalysisView(language: language)
+                StorageAnalysisView(language: language, backup: backup)
             } label: {
                 HStack(spacing: 12) {
                     ZStack {
