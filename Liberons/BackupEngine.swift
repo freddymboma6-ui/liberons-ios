@@ -30,33 +30,38 @@ final class BackupEngine: ObservableObject {
         let asset_id: String; let upload_session_id: String; let upload: Upload
     }
 
-    func prepareNewestAsset() {
-        let options = PHFetchOptions(); options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]; options.fetchLimit = 1
+    func prepareOldestAsset() {
+        let options = PHFetchOptions(); options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]; options.fetchLimit = 1
         guard let asset = PHAsset.fetchAssets(with: options).firstObject, let resource = PHAssetResource.assetResources(for: asset).first else { selectedLocalIdentifier = nil; selectedFilename = nil; message = "No media found"; return }
-        setPreview(asset: asset, resource: resource)
-        selectionConfirmed = true
-        message = "Preview ready — tap again to protect"
+        setPreview(asset: asset, resource: resource); selectionConfirmed = true; message = "Oldest item ready — tap again to protect"
     }
 
     func backupSelectedAsset() async {
         guard !isRunning else { return }
-        guard let localIdentifier = selectedLocalIdentifier, let asset = PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil).firstObject, let resource = PHAssetResource.assetResources(for: asset).first else { message = "Selected media is no longer available"; return }
-        isRunning = true; defer { isRunning = false }
-        do { try await protect(asset: asset, resource: resource); message = "Protected ✓" } catch { message = error.localizedDescription }
+        guard let localIdentifier = selectedLocalIdentifier else { message = "Select media first"; return }
+        await backup(localIdentifiers: [localIdentifier])
     }
 
-    func backupOneNewestAsset() async {
-        if !selectionConfirmed { prepareNewestAsset(); return }
-        selectionConfirmed = false
-        await backupSelectedAsset()
+    func backupOneOldestAsset() async {
+        if !selectionConfirmed { prepareOldestAsset(); return }
+        selectionConfirmed = false; await backupSelectedAsset()
     }
 
-    func backupNewestItems(count: Int) async {
-        guard !isRunning, count > 0 else { return }
-        let options = PHFetchOptions(); options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]; options.fetchLimit = count
-        let result = PHAsset.fetchAssets(with: options)
-        var assets: [PHAsset] = []; result.enumerateObjects { asset, _, _ in assets.append(asset) }
-        guard !assets.isEmpty else { message = "No media found"; return }
+    func backupOldestItems(count: Int) async {
+        guard count > 0 else { return }
+        let options = PHFetchOptions(); options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]; options.fetchLimit = count
+        let result = PHAsset.fetchAssets(with: options); var ids: [String] = []
+        result.enumerateObjects { asset, _, _ in ids.append(asset.localIdentifier) }
+        await backup(localIdentifiers: ids)
+    }
+
+    func backup(localIdentifiers: [String]) async {
+        guard !isRunning else { return }
+        let unique = Array(NSOrderedSet(array: localIdentifiers)) as? [String] ?? localIdentifiers
+        let result = PHAsset.fetchAssets(withLocalIdentifiers: unique, options: nil); var assetsByID: [String: PHAsset] = [:]
+        result.enumerateObjects { asset, _, _ in assetsByID[asset.localIdentifier] = asset }
+        let assets = unique.compactMap { assetsByID[$0] }
+        guard !assets.isEmpty else { message = "No selected media found"; return }
         isRunning = true; queueTotal = assets.count; queueCompleted = 0; queueFailed = 0
         defer { isRunning = false; currentQueueFilename = nil }
         for asset in assets {
@@ -74,15 +79,13 @@ final class BackupEngine: ObservableObject {
     }
 
     private func protect(asset: PHAsset, resource: PHAssetResource) async throws {
-        var temporaryURL: URL?
-        defer { if let temporaryURL { try? FileManager.default.removeItem(at: temporaryURL) } }
+        var temporaryURL: URL?; defer { if let temporaryURL { try? FileManager.default.removeItem(at: temporaryURL) } }
         let ext = (resource.originalFilename as NSString).pathExtension
         let temp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension(ext); temporaryURL = temp
         try await export(resource: resource, to: temp)
         let byteCount = (try temp.resourceValues(forKeys: [.fileSizeKey])).fileSize ?? 0
         guard byteCount > 0 else { throw NSError(domain: "LiberonsBackup", code: 3, userInfo: [NSLocalizedDescriptionKey: "Exported media is empty"]) }
-        selectedBytes = Int64(byteCount)
-        let checksum = try sha256(fileURL: temp)
+        selectedBytes = Int64(byteCount); let checksum = try sha256(fileURL: temp)
         let mimeType = UTType(filenameExtension: ext)?.preferredMIMEType ?? (asset.mediaType == .video ? "video/mp4" : "image/jpeg")
         let iso = ISO8601DateFormatter(); var body: [String: Any] = ["filename": resource.originalFilename, "mime_type": mimeType, "size_bytes": byteCount, "checksum_sha256": checksum, "ios_local_identifier": asset.localIdentifier]
         if let captured = asset.creationDate { body["captured_at"] = iso.string(from: captured) }
