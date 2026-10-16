@@ -5,7 +5,6 @@ struct FreeSpaceView: View {
     @ObservedObject var language: LanguageStore
     @StateObject private var cleaner = ProtectedSpaceCleaner()
     @State private var showReview = false
-    @State private var showDeleteConfirmation = false
 
     private var selectedSize: String {
         ByteCountFormatter.string(fromByteCount: cleaner.selectedBytes, countStyle: .file)
@@ -53,8 +52,8 @@ struct FreeSpaceView: View {
             .disabled(cleaner.isLoading || cleaner.isDeleting)
 
             Label(language.text(
-                "Libérons never deletes the cloud copy here. iOS also asks for its own confirmation before Photos removes local originals.",
-                "Libérons ne supprime jamais la copie cloud ici. iOS demande également sa propre confirmation avant que Photos retire les originaux locaux."
+                "Libérons never deletes the cloud copy here. Apple Photos asks for its own confirmation before removing local originals.",
+                "Libérons ne supprime jamais la copie cloud ici. Apple Photos demande sa propre confirmation avant de retirer les originaux locaux."
             ), systemImage: "lock.shield.fill")
                 .font(.caption).foregroundStyle(.secondary)
         }
@@ -87,9 +86,16 @@ struct FreeSpaceView: View {
                     )).font(.footnote).foregroundStyle(.secondary)
 
                     Spacer()
-                    Button(role: .destructive) { showReview = false; showDeleteConfirmation = true } label: {
+                    Button(role: .destructive) {
+                        showReview = false
+                        Task { await cleaner.deletePreparedFromIPhone() }
+                    } label: {
                         Text(language.text("Free \(selectedSize)", "Libérer \(selectedSize)")).fontWeight(.bold).frame(maxWidth: .infinity).frame(height: 48)
-                    }.buttonStyle(.borderedProminent).controlSize(.large)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .disabled(cleaner.isDeleting)
+
                     Button(language.text("Cancel", "Annuler")) { showReview = false }.frame(maxWidth: .infinity)
                 }
                 .padding(24)
@@ -97,17 +103,6 @@ struct FreeSpaceView: View {
                 .navigationBarTitleDisplayMode(.inline)
             }
             .presentationDetents([.large])
-        }
-        .confirmationDialog(language.text("Remove these originals from this iPhone?", "Retirer ces originaux de cet iPhone ?"), isPresented: $showDeleteConfirmation, titleVisibility: .visible) {
-            Button(language.text("Continue to iOS confirmation", "Continuer vers la confirmation iOS"), role: .destructive) {
-                Task { await cleaner.deletePreparedFromIPhone() }
-            }
-            Button(language.text("Cancel", "Annuler"), role: .cancel) {}
-        } message: {
-            Text(language.text(
-                "Their protected Libérons copies remain in the cloud. Apple Photos will ask you to confirm the local removal once more.",
-                "Leurs copies protégées restent dans Libérons Cloud. Apple Photos vous demandera encore une fois de confirmer le retrait local."
-            ))
         }
     }
 
