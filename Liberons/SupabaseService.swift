@@ -35,6 +35,15 @@ enum SupabaseService {
         return url
     }
 
+    static func deleteCloudMedia(assetID: UUID) async throws -> Int64 {
+        let body = try JSONSerialization.data(withJSONObject: ["asset_id": assetID.uuidString])
+        let data = try await callFunction("delete-media", json: body)
+        struct Response: Decodable { let deleted: Bool; let released_bytes: Int64 }
+        let response = try JSONDecoder().decode(Response.self, from: data)
+        guard response.deleted else { throw NSError(domain: "LiberonsCloud", code: -4, userInfo: [NSLocalizedDescriptionKey: "Cloud media was not deleted"]) }
+        return response.released_bytes
+    }
+
     static func putFile(_ fileURL: URL, to signedURL: URL, headers: [String: String]) async throws {
         var request = URLRequest(url: signedURL)
         request.httpMethod = "PUT"
