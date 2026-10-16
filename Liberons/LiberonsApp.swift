@@ -1,5 +1,7 @@
 import SwiftUI
 import UIKit
+import Supabase
+import Auth
 
 @main
 struct LiberonsApp: App {
