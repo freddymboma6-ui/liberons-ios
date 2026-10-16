@@ -4,7 +4,12 @@ struct FreeSpaceView: View {
     @ObservedObject var preferences: BackupPreferences
     @ObservedObject var language: LanguageStore
     @StateObject private var cleaner = ProtectedSpaceCleaner()
+    @State private var showReview = false
     @State private var showDeleteConfirmation = false
+
+    private var selectedSize: String {
+        ByteCountFormatter.string(fromByteCount: cleaner.selectedBytes, countStyle: .file)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -14,49 +19,99 @@ struct FreeSpaceView: View {
                 Text("\(preferences.removalPercent)%").font(.headline).foregroundStyle(.green)
             }
 
+            Text(language.text(
+                "The percentage only prepares a selection. Nothing is removed when you tap a percentage.",
+                "Le pourcentage prépare uniquement une sélection. Rien n’est supprimé lorsque vous touchez un pourcentage."
+            )).font(.subheadline).foregroundStyle(.secondary)
+
             if cleaner.isLoading {
-                ProgressView(language.text("Checking protected originals…", "Vérification des originaux protégés…"))
+                ProgressView(language.text("Calculating what can be freed…", "Calcul de l’espace réellement libérable…"))
             } else if cleaner.selectedLocalIdentifiers.isEmpty {
-                Text(language.text("First check which protected originals can safely leave this iPhone.", "Vérifiez d’abord quels originaux protégés peuvent quitter cet iPhone en toute sécurité.")).font(.subheadline).foregroundStyle(.secondary)
+                Text(language.text(
+                    "Continue to calculate which protected and verified originals are still on this iPhone.",
+                    "Continuez pour calculer quels originaux protégés et vérifiés sont encore présents sur cet iPhone."
+                )).font(.subheadline).foregroundStyle(.secondary)
             } else {
-                Label("\(cleaner.selectedLocalIdentifiers.count) " + language.text("protected originals selected", "originaux protégés sélectionnés"), systemImage: "checkmark.shield.fill").foregroundStyle(.green).font(.subheadline.bold())
-                Text(language.text("Only items already marked Protected in Libérons Cloud are included. The oldest protected originals are selected first.", "Seuls les éléments déjà marqués Protégé dans Libérons Cloud sont inclus. Les originaux protégés les plus anciens sont sélectionnés en premier.")).font(.caption).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("\(cleaner.selectedLocalIdentifiers.count) " + language.text("item(s)", "élément(s)")).font(.title3.bold())
+                    Text(language.text("About \(selectedSize) can be freed", "Environ \(selectedSize) peuvent être libérés")).foregroundStyle(.green).fontWeight(.semibold)
+                }
             }
 
             if !cleaner.message.isEmpty { Text(cleaner.message).font(.caption).foregroundStyle(.secondary) }
 
             Button {
-                Task { await cleaner.prepare(removalPercent: preferences.removalPercent) }
+                Task {
+                    await cleaner.prepare(removalPercent: preferences.removalPercent)
+                    if !cleaner.selectedLocalIdentifiers.isEmpty { showReview = true }
+                }
             } label: {
-                Label(language.text("Check protected originals", "Vérifier les originaux protégés"), systemImage: "checkmark.shield")
-                    .frame(maxWidth: .infinity).frame(height: 34)
+                HStack { Spacer(); if cleaner.isLoading { ProgressView() }; Label(language.text("Continue", "Continuer"), systemImage: "arrow.right.circle.fill"); Spacer() }.frame(height: 34)
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.borderedProminent)
             .controlSize(.large)
             .disabled(cleaner.isLoading || cleaner.isDeleting)
 
-            if !cleaner.selectedLocalIdentifiers.isEmpty {
-                Button(role: .destructive) { showDeleteConfirmation = true } label: {
-                    HStack { Spacer(); if cleaner.isDeleting { ProgressView() }; Text(language.text("Free space on this iPhone", "Libérer l’espace sur cet iPhone")).fontWeight(.semibold); Spacer() }.frame(height: 34)
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .disabled(cleaner.isDeleting)
-            }
-
-            Label(language.text("Cloud copies are kept. iOS will ask for system confirmation before local Photos originals are removed.", "Les copies cloud sont conservées. iOS demandera une confirmation système avant de retirer les originaux de Photos sur cet iPhone."), systemImage: "lock.shield.fill")
+            Label(language.text(
+                "Libérons never deletes the cloud copy here. iOS also asks for its own confirmation before Photos removes local originals.",
+                "Libérons ne supprime jamais la copie cloud ici. iOS demande également sa propre confirmation avant que Photos retire les originaux locaux."
+            ), systemImage: "lock.shield.fill")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .padding(20)
         .background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
         .shadow(color: .black.opacity(0.045), radius: 18, y: 7)
-        .confirmationDialog(language.text("Remove local originals?", "Retirer les originaux locaux ?"), isPresented: $showDeleteConfirmation, titleVisibility: .visible) {
+        .sheet(isPresented: $showReview) {
+            NavigationStack {
+                VStack(alignment: .leading, spacing: 22) {
+                    Image(systemName: "iphone.and.arrow.forward").font(.system(size: 42)).foregroundStyle(.green)
+                    Text(language.text("Ready to free space", "Prêt à libérer de l’espace")).font(.largeTitle.bold())
+                    Text(language.text(
+                        "Review before anything is removed from this iPhone.",
+                        "Vérifiez le récapitulatif avant que quoi que ce soit soit retiré de cet iPhone."
+                    )).foregroundStyle(.secondary)
+
+                    VStack(spacing: 0) {
+                        reviewRow(language.text("Selected", "Sélectionnés"), "\(cleaner.selectedLocalIdentifiers.count) " + language.text("items", "éléments"))
+                        Divider()
+                        reviewRow(language.text("Space to free", "Espace à libérer"), selectedSize)
+                        Divider()
+                        reviewRow(language.text("Libérons copies", "Copies Libérons"), language.text("Kept protected", "Restent protégées"))
+                    }
+                    .padding(.horizontal, 18)
+                    .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
+
+                    Text(language.text(
+                        "Only protected, cloud-verified originals that Libérons can still find in Apple Photos are included.",
+                        "Seuls les originaux protégés, vérifiés dans le cloud et encore retrouvés dans Photos sont inclus."
+                    )).font(.footnote).foregroundStyle(.secondary)
+
+                    Spacer()
+                    Button(role: .destructive) { showReview = false; showDeleteConfirmation = true } label: {
+                        Text(language.text("Free \(selectedSize)", "Libérer \(selectedSize)")).fontWeight(.bold).frame(maxWidth: .infinity).frame(height: 48)
+                    }.buttonStyle(.borderedProminent).controlSize(.large)
+                    Button(language.text("Cancel", "Annuler")) { showReview = false }.frame(maxWidth: .infinity)
+                }
+                .padding(24)
+                .navigationTitle(language.text("Review", "Récapitulatif"))
+                .navigationBarTitleDisplayMode(.inline)
+            }
+            .presentationDetents([.large])
+        }
+        .confirmationDialog(language.text("Remove these originals from this iPhone?", "Retirer ces originaux de cet iPhone ?"), isPresented: $showDeleteConfirmation, titleVisibility: .visible) {
             Button(language.text("Continue to iOS confirmation", "Continuer vers la confirmation iOS"), role: .destructive) {
                 Task { await cleaner.deletePreparedFromIPhone() }
             }
             Button(language.text("Cancel", "Annuler"), role: .cancel) {}
         } message: {
-            Text(language.text("Only verified protected items are included. Their Libérons Cloud copies remain protected.", "Seuls les éléments protégés et vérifiés sont inclus. Leurs copies Libérons Cloud restent protégées."))
+            Text(language.text(
+                "Their protected Libérons copies remain in the cloud. Apple Photos will ask you to confirm the local removal once more.",
+                "Leurs copies protégées restent dans Libérons Cloud. Apple Photos vous demandera encore une fois de confirmer le retrait local."
+            ))
         }
+    }
+
+    private func reviewRow(_ title: String, _ value: String) -> some View {
+        HStack { Text(title); Spacer(); Text(value).fontWeight(.semibold).multilineTextAlignment(.trailing) }.padding(.vertical, 15)
     }
 }
