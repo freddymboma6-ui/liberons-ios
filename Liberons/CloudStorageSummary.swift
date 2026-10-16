@@ -15,12 +15,19 @@ final class CloudStorageSummary: ObservableObject {
     @Published private(set) var lastProtectedAt: Date?
     @Published private(set) var accountRole: String = "user"
     @Published private(set) var isLoading = false
+    @Published private(set) var planLoadFailed = false
     var isOwner: Bool { accountRole.lowercased() == "owner" }
     private var observer: NSObjectProtocol?
 
-    private struct Usage: Decodable { let quota_bytes: Int64; let protected_bytes: Int64; let pending_bytes: Int64 }
+    private struct ServerPlan: Decodable {
+        let user_id: String
+        let quota_bytes: Int64
+        let protected_bytes: Int64
+        let pending_bytes: Int64
+        let role: String
+        let source: String
+    }
     private struct Asset: Decodable { let protected_at: Date?; let size_bytes: Int64? }
-    private struct ProfileRole: Decodable { let role: String? }
 
     init() {
         observer = NotificationCenter.default.addObserver(forName: .liberonsCloudDidChange, object: nil, queue: .main) { [weak self] _ in Task { @MainActor in await self?.refresh() } }
@@ -31,58 +38,40 @@ final class CloudStorageSummary: ObservableObject {
         guard !isLoading else { return }
         isLoading = true; defer { isLoading = false }
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
-        var usageProtected: Int64?
 
-        // Always bind the dashboard/plan to the currently authenticated account.
-        // Do not use limit(1): an owner/admin account could otherwise receive another
-        // user's free 2 GB row depending on database ordering/RLS configuration.
-        guard let userID = try? await SupabaseService.client.auth.session.user.id else {
-            quotaBytes = Self.freeQuotaBytes
-            accountRole = "user"
+        guard let session = try? await SupabaseService.client.auth.session else {
+            planLoadFailed = true
             return
         }
-        let userIDString = userID.uuidString
+        let userID = session.user.id.uuidString
 
+        // The authenticated server endpoint is the single source of truth for quota.
+        // Never silently downgrade a paid account to 2 GB when the network/backend fails.
         do {
-            let response = try await SupabaseService.client
-                .from("profiles")
-                .select("role")
-                .eq("id", value: userIDString)
-                .limit(1)
-                .execute()
-            if let profile = try decoder.decode([ProfileRole].self, from: response.data).first {
-                accountRole = profile.role?.lowercased() ?? "user"
-            } else {
-                accountRole = "user"
+            let response = try await SupabaseService.client.functions.invoke(
+                "account-storage-plan",
+                options: FunctionInvokeOptions(headers: ["Authorization": "Bearer \(session.accessToken)"])
+            )
+            let plan = try decoder.decode(ServerPlan.self, from: response.data)
+            guard plan.user_id.lowercased() == userID.lowercased(), plan.source == "server", plan.quota_bytes > 0 else {
+                throw NSError(domain: "LiberonsPlan", code: 1)
             }
+            quotaBytes = plan.quota_bytes
+            protectedBytes = max(0, plan.protected_bytes)
+            pendingBytes = max(0, plan.pending_bytes)
+            accountRole = plan.role.lowercased()
+            planLoadFailed = false
         } catch {
-            accountRole = "user"
-        }
-
-        do {
-            let response = try await SupabaseService.client
-                .from("storage_usage")
-                .select("quota_bytes,protected_bytes,pending_bytes")
-                .eq("user_id", value: userIDString)
-                .limit(1)
-                .execute()
-            if let usage = try decoder.decode([Usage].self, from: response.data).first {
-                quotaBytes = usage.quota_bytes > 0 ? usage.quota_bytes : Self.freeQuotaBytes
-                usageProtected = usage.protected_bytes
-                pendingBytes = max(0, usage.pending_bytes)
-            } else {
-                quotaBytes = Self.freeQuotaBytes
-                pendingBytes = 0
-            }
-        } catch {
-            if quotaBytes <= 0 { quotaBytes = Self.freeQuotaBytes }
+            // Keep the last known quota. A temporary failure must never make a paying
+            // customer appear to have the free plan.
+            planLoadFailed = true
         }
 
         do {
             let response = try await SupabaseService.client
                 .from("media_assets")
                 .select("protected_at,size_bytes")
-                .eq("user_id", value: userIDString)
+                .eq("user_id", value: userID)
                 .eq("status", value: "protected")
                 .order("protected_at", ascending: false)
                 .execute()
@@ -90,9 +79,7 @@ final class CloudStorageSummary: ObservableObject {
             protectedCount = assets.count
             lastProtectedAt = assets.first?.protected_at
             let actualAssetBytes = assets.reduce(Int64(0)) { $0 + max(0, $1.size_bytes ?? 0) }
-            protectedBytes = actualAssetBytes > 0 ? actualAssetBytes : max(0, usageProtected ?? 0)
-        } catch {
-            protectedBytes = max(0, usageProtected ?? protectedBytes)
-        }
+            if actualAssetBytes > 0 { protectedBytes = actualAssetBytes }
+        } catch { }
     }
 }
