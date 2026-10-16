@@ -44,6 +44,18 @@ enum SupabaseService {
         return response.released_bytes
     }
 
+    /// Keeps the cloud record linked to the *new* PHAsset created when a protected
+    /// memory is restored to Apple Photos. Without this, the UI keeps checking the
+    /// identifier of the asset that was removed while freeing space.
+    static func updateLocalIdentifier(assetID: UUID, localIdentifier: String) async throws {
+        struct Patch: Encodable { let ios_local_identifier: String }
+        _ = try await client
+            .from("media_assets")
+            .update(Patch(ios_local_identifier: localIdentifier))
+            .eq("id", value: assetID.uuidString)
+            .execute()
+    }
+
     static func putFile(_ fileURL: URL, to signedURL: URL, headers: [String: String]) async throws {
         var request = URLRequest(url: signedURL)
         request.httpMethod = "PUT"
