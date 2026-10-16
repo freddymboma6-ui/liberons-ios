@@ -80,7 +80,13 @@ private struct ProtectedGalleryViewer: View {
             TabView(selection: $selection) { ForEach(items) { CloudPhotoPage(item: $0, language: language).tag($0.id) } }.tabViewStyle(.page(indexDisplayMode: .never)).ignoresSafeArea().offset(y: verticalOffset)
             VStack { HStack { if let i = items.firstIndex(where: { $0.id == selection }) { Text("\(i + 1) / \(items.count)").font(.subheadline.bold()).foregroundStyle(.white).padding(8).background(.black.opacity(0.45), in: Capsule()) }; Spacer(); Button { showInfo = true } label: { ZStack { Color.clear; Image(systemName: "ellipsis.circle.fill").font(.title2).foregroundStyle(.white) }.frame(width: 56, height: 56).contentShape(Rectangle()) }.buttonStyle(.plain) }.padding(.horizontal, 8).padding(.top, 4); Spacer() }
         }
-        .gesture(DragGesture().onChanged { if $0.translation.height > abs($0.translation.width) { verticalOffset = max(0, $0.translation.height) } }.onEnded { value in if verticalOffset > 135 || value.predictedEndTranslation.height > 250 { dismiss() } else { withAnimation { verticalOffset = 0 } } })
+        .simultaneousGesture(DragGesture(minimumDistance: 10).onChanged { value in
+            guard value.translation.height > 0, abs(value.translation.height) > abs(value.translation.width) else { return }
+            verticalOffset = value.translation.height
+        }.onEnded { value in
+            guard value.translation.height > 0, abs(value.translation.height) > abs(value.translation.width) else { withAnimation(.snappy) { verticalOffset = 0 }; return }
+            if verticalOffset > 110 || value.predictedEndTranslation.height > 220 { dismiss() } else { withAnimation(.snappy) { verticalOffset = 0 } }
+        })
         .toolbarBackground(.hidden, for: .navigationBar).toolbarColorScheme(.dark, for: .navigationBar)
         .sheet(isPresented: $showInfo) { if let current { ProtectedMediaDetail(item: current, language: language, closeViewer: { showInfo = false; dismiss() }) } }
     }
@@ -94,7 +100,7 @@ private struct CloudPhotoPage: View {
     @MainActor private func load() async { guard !isVideo else { loading = false; return }; do { let url = try await SupabaseService.cloudMediaURL(assetID: item.id); let (data, _) = try await URLSession.shared.data(from: url); image = UIImage(data: data) } catch {}; loading = false }
 }
 
-private enum ProtectedAction { case restore, removeDevice, deleteCloud }
+private enum ProtectedAction: Hashable { case restore, removeDevice, deleteCloud }
 
 private struct ProtectedMediaDetail: View {
     let item: ProtectedCloudMedia
@@ -137,7 +143,11 @@ private struct ProtectedMediaDetail: View {
         }
     }
 
-    private struct ActionSheetItem: Identifiable { let id = UUID(); let action: ProtectedAction; init(_ action: ProtectedAction) { self.action = action } }
+    private struct ActionSheetItem: Identifiable {
+        let action: ProtectedAction
+        var id: ProtectedAction { action }
+        init(_ action: ProtectedAction) { self.action = action }
+    }
 
     @ViewBuilder private func premiumSheet(for action: ProtectedAction) -> some View {
         VStack(spacing: 0) {
