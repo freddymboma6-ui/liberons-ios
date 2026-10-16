@@ -14,9 +14,7 @@ final class AuthStore: ObservableObject {
 
     var isAuthenticated: Bool { session != nil }
 
-    init() {
-        Task { await restoreSession() }
-    }
+    init() { Task { await restoreSession() } }
 
     func restoreSession() async {
         defer { isLoading = false }
@@ -25,19 +23,15 @@ final class AuthStore: ObservableObject {
     }
 
     func signIn(email: String, password: String) async {
-        errorMessage = nil
-        infoMessage = nil
+        errorMessage = nil; infoMessage = nil
         do {
             session = try await SupabaseService.client.auth.signIn(email: email, password: password)
             await validateDeviceAndFreeTier()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+        } catch { errorMessage = error.localizedDescription }
     }
 
     func signUp(email: String, password: String) async -> Bool {
-        errorMessage = nil
-        infoMessage = nil
+        errorMessage = nil; infoMessage = nil
         do {
             let response = try await SupabaseService.client.auth.signUp(email: email, password: password)
             if let newSession = response.session {
@@ -47,37 +41,36 @@ final class AuthStore: ObservableObject {
             }
             infoMessage = "confirmation_required"
             return true
-        } catch {
-            errorMessage = error.localizedDescription
-            return false
-        }
+        } catch { errorMessage = error.localizedDescription; return false }
+    }
+
+    func sendPasswordReset(email: String) async -> Bool {
+        errorMessage = nil; infoMessage = nil
+        do {
+            try await SupabaseService.client.auth.resetPasswordForEmail(email, redirectTo: URL(string: "https://liberons.com/account/update-password"))
+            infoMessage = "password_reset_sent"
+            return true
+        } catch { errorMessage = error.localizedDescription; return false }
+    }
+
+    func updatePassword(_ password: String) async -> Bool {
+        errorMessage = nil; infoMessage = nil
+        do {
+            try await SupabaseService.client.auth.update(user: UserAttributes(password: password))
+            infoMessage = "password_updated"
+            return true
+        } catch { errorMessage = error.localizedDescription; return false }
     }
 
     func signOut() async {
         do {
             try await SupabaseService.client.auth.signOut()
-            session = nil
-            freeTierEligible = nil
-            appAttestVerified = nil
-            infoMessage = nil
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+            session = nil; freeTierEligible = nil; appAttestVerified = nil; infoMessage = nil
+        } catch { errorMessage = error.localizedDescription }
     }
 
-    /// App Attest is an additional integrity signal, never a client-side entitlement decision.
-    /// Unsupported devices continue through the server-side free-tier policy as Apple recommends.
     private func validateDeviceAndFreeTier() async {
-        do {
-            appAttestVerified = try await FreeTierProtection.registerAppAttestKeyIfSupported()
-        } catch {
-            appAttestVerified = nil
-        }
-
-        do {
-            freeTierEligible = try await FreeTierProtection.validateFreeTier()
-        } catch {
-            freeTierEligible = nil
-        }
+        do { appAttestVerified = try await FreeTierProtection.registerAppAttestKeyIfSupported() } catch { appAttestVerified = nil }
+        do { freeTierEligible = try await FreeTierProtection.validateFreeTier() } catch { freeTierEligible = nil }
     }
 }
