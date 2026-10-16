@@ -7,11 +7,20 @@ struct BackupQueueView: View {
     @ObservedObject var analyzer: PhotoLibraryAnalyzer
     @ObservedObject var language: LanguageStore
     @State private var showMediaPicker = false
+    @State private var showBackupReview = false
+    @State private var showBackupConfirmation = false
     @State private var showPostBackupCleanup = false
     @State private var deletingProtectedBatch = false
     @State private var cleanupError: String?
 
-    private var requestedCount: Int { max(1, preferences.selectedCount(total: analyzer.photoCount + analyzer.videoCount)) }
+    private var totalLibraryCount: Int { analyzer.photoCount + analyzer.videoCount }
+    private var requestedCount: Int { max(1, preferences.selectedCount(total: totalLibraryCount)) }
+    private var estimatedBytes: Int64 {
+        guard totalLibraryCount > 0 else { return 0 }
+        let average = Double(analyzer.estimatedBytes) / Double(totalLibraryCount)
+        return Int64(average * Double(min(requestedCount, totalLibraryCount)))
+    }
+    private var estimatedSize: String { ByteCountFormatter.string(fromByteCount: estimatedBytes, countStyle: .file) }
     private var protectedStillOnDevice: [PHAsset] {
         guard !backup.newlyProtectedLocalIdentifiers.isEmpty else { return [] }
         let result = PHAsset.fetchAssets(withLocalIdentifiers: backup.newlyProtectedLocalIdentifiers, options: nil)
@@ -26,7 +35,7 @@ struct BackupQueueView: View {
                 if backup.queueTotal > 0 { Text("\(backup.queueCompleted + backup.queueFailed)/\(backup.queueTotal)").font(.subheadline.bold()).monospacedDigit() }
             }
 
-            Text(language.text("You stay in control: choose specific photos and videos, or let Libérons start automatically with the oldest memories.", "Vous gardez le contrôle : choisissez précisément vos photos et vidéos, ou laissez Libérons commencer automatiquement par les souvenirs les plus anciens.")).font(.subheadline).foregroundStyle(.secondary)
+            Text(language.text("You stay in control: choose specific photos and videos, or prepare an automatic selection from the percentage above.", "Vous gardez le contrôle : choisissez précisément vos photos et vidéos, ou préparez une sélection automatique à partir du pourcentage choisi plus haut.")).font(.subheadline).foregroundStyle(.secondary)
 
             Button { showMediaPicker = true } label: { Label(language.text("Choose photos and videos", "Choisir les photos et vidéos"), systemImage: "photo.on.rectangle.angled").frame(maxWidth: .infinity).frame(height: 34) }.buttonStyle(.borderedProminent).controlSize(.large).disabled(backup.isRunning || !analyzer.canReadLibrary)
 
@@ -50,21 +59,77 @@ struct BackupQueueView: View {
             }
 
             Divider()
-            Text(language.text("Automatic option", "Option automatique")).font(.caption.bold()).foregroundStyle(.secondary)
-            Text(language.text("Protect about \(requestedCount) items, oldest first.", "Protéger environ \(requestedCount) éléments, en commençant par les plus anciens.")).font(.caption).foregroundStyle(.secondary)
-            Button { Task { await backup.backupOldestItems(count: requestedCount) } } label: { HStack { Spacer(); if backup.isRunning { ProgressView().tint(.white) }; Text(backup.isRunning ? language.text("Backup in progress…", "Sauvegarde en cours…") : language.text("Protect oldest items", "Protéger les plus anciens")).fontWeight(.semibold); Spacer() }.frame(height: 34) }.buttonStyle(.bordered).controlSize(.large).disabled(backup.isRunning || !analyzer.canReadLibrary)
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(language.text("Automatic selection", "Sélection automatique")).font(.caption.bold()).foregroundStyle(.secondary)
+                    Text("\(preferences.backupPercent)% · " + language.text("about \(requestedCount.formatted()) items", "environ \(requestedCount.formatted()) éléments")).font(.subheadline.bold())
+                    Text(language.text("Estimated \(estimatedSize), oldest memories first.", "Environ \(estimatedSize), en commençant par les souvenirs les plus anciens.")).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
 
-            Text(language.text("Nothing is deleted automatically. Libérons asks first after cloud protection is verified.", "Rien n’est supprimé automatiquement. Libérons vous demande d’abord après vérification de la protection cloud.")).font(.caption).foregroundStyle(.secondary)
+            Button { showBackupReview = true } label: {
+                Label(language.text("Continue", "Continuer"), systemImage: "arrow.right.circle.fill").frame(maxWidth: .infinity).frame(height: 34)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.large)
+            .disabled(backup.isRunning || !analyzer.canReadLibrary || totalLibraryCount == 0)
+
+            Text(language.text("Choosing a percentage never starts a backup. Libérons shows a review first, then asks you to confirm.", "Choisir un pourcentage ne lance jamais une sauvegarde. Libérons affiche d’abord un récapitulatif, puis vous demande de confirmer.")).font(.caption).foregroundStyle(.secondary)
         }
         .padding(20)
         .background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
         .shadow(color: .black.opacity(0.045), radius: 18, y: 7)
         .sheet(isPresented: $showMediaPicker) { MediaSelectionView(backup: backup, language: language) }
+        .sheet(isPresented: $showBackupReview) {
+            NavigationStack {
+                VStack(alignment: .leading, spacing: 22) {
+                    Image(systemName: "icloud.and.arrow.up.fill").font(.system(size: 44)).foregroundStyle(.blue)
+                    Text(language.text("Ready to protect", "Prêt à protéger")).font(.largeTitle.bold())
+                    Text(language.text("Review your automatic selection before Libérons starts uploading anything.", "Vérifiez votre sélection automatique avant que Libérons commence la moindre sauvegarde.")).foregroundStyle(.secondary)
+
+                    VStack(spacing: 0) {
+                        reviewRow(language.text("Selected percentage", "Pourcentage choisi"), "\(preferences.backupPercent)%")
+                        Divider()
+                        reviewRow(language.text("Estimated items", "Éléments estimés"), requestedCount.formatted())
+                        Divider()
+                        reviewRow(language.text("Estimated size", "Taille estimée"), estimatedSize)
+                        Divider()
+                        reviewRow(language.text("Order", "Ordre"), language.text("Oldest first", "Plus anciens d’abord"))
+                    }
+                    .padding(.horizontal, 18)
+                    .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
+
+                    Label(language.text("Nothing will be removed from your iPhone during this step.", "Rien ne sera retiré de votre iPhone pendant cette étape."), systemImage: "iphone").font(.footnote).foregroundStyle(.secondary)
+                    Label(language.text("After protection is verified, Libérons will ask separately before offering to free local space.", "Une fois la protection vérifiée, Libérons demandera séparément votre accord avant de proposer de libérer l’espace local."), systemImage: "checkmark.shield.fill").font(.footnote).foregroundStyle(.secondary)
+
+                    Spacer()
+                    Button { showBackupReview = false; showBackupConfirmation = true } label: {
+                        Text(language.text("Continue", "Continuer")).fontWeight(.bold).frame(maxWidth: .infinity).frame(height: 48)
+                    }.buttonStyle(.borderedProminent).controlSize(.large)
+                    Button(language.text("Cancel", "Annuler")) { showBackupReview = false }.frame(maxWidth: .infinity)
+                }
+                .padding(24)
+                .navigationTitle(language.text("Review", "Récapitulatif"))
+                .navigationBarTitleDisplayMode(.inline)
+            }
+            .presentationDetents([.large])
+        }
+        .confirmationDialog(language.text("Start this backup?", "Commencer cette sauvegarde ?"), isPresented: $showBackupConfirmation, titleVisibility: .visible) {
+            Button(language.text("Start protection", "Commencer la protection")) { Task { await backup.backupOldestItems(count: requestedCount) } }
+            Button(language.text("Cancel", "Annuler"), role: .cancel) {}
+        } message: {
+            Text(language.text("Libérons will protect about \(requestedCount.formatted()) items. No local original will be deleted by starting this backup.", "Libérons va protéger environ \(requestedCount.formatted()) éléments. Aucun original local ne sera supprimé en lançant cette sauvegarde."))
+        }
         .onChange(of: backup.protectionBatchID) { _, _ in if !backup.newlyProtectedLocalIdentifiers.isEmpty { showPostBackupCleanup = true } }
         .confirmationDialog(language.text("Free space on this iPhone?", "Libérer de l’espace sur cet iPhone ?"), isPresented: $showPostBackupCleanup, titleVisibility: .visible) {
             Button(language.text("Remove protected originals", "Supprimer les originaux protégés"), role: .destructive) { Task { await removeProtectedBatchFromDevice() } }
             Button(language.text("Keep them on iPhone", "Les garder sur l’iPhone"), role: .cancel) { }
         } message: { Text(language.text("These items are verified in Libérons Cloud. Apple will ask you to confirm their removal from Photos. Their Libérons copies stay protected.", "Ces éléments sont vérifiés dans Libérons Cloud. Apple vous demandera de confirmer leur suppression dans Photos. Leurs copies Libérons restent protégées.")) }
+    }
+
+    private func reviewRow(_ title: String, _ value: String) -> some View {
+        HStack { Text(title); Spacer(); Text(value).fontWeight(.semibold).multilineTextAlignment(.trailing) }.padding(.vertical, 15)
     }
 
     @MainActor private func removeProtectedBatchFromDevice() async {
