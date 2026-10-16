@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 import Photos
 
 @MainActor
@@ -15,10 +16,12 @@ final class SmartCleanupAnalyzer: ObservableObject {
         guard !isScanning else { return }
         isScanning = true
         defer { isScanning = false }
+
         let result = PHAsset.fetchAssets(with: nil)
         var shots: [String] = []
         var memories: [String] = []
         var bytes: Int64 = 0
+
         result.enumerateObjects { asset, _, _ in
             if asset.mediaType == .image && asset.mediaSubtypes.contains(.photoScreenshot) {
                 shots.append(asset.localIdentifier)
@@ -29,6 +32,7 @@ final class SmartCleanupAnalyzer: ObservableObject {
                 memories.append(asset.localIdentifier)
             }
         }
+
         screenshotIDs = shots
         memoryIDs = memories
         screenshotBytes = bytes
@@ -40,7 +44,10 @@ final class SmartCleanupAnalyzer: ObservableObject {
         var assets: [PHAsset] = []
         result.enumerateObjects { asset, _, _ in assets.append(asset) }
         guard !assets.isEmpty else { return }
-        try await PHPhotoLibrary.shared().performChanges { PHAssetChangeRequest.deleteAssets(assets as NSArray) }
+
+        try await PHPhotoLibrary.shared().performChanges {
+            PHAssetChangeRequest.deleteAssets(assets as NSArray)
+        }
         await scan()
     }
 }
