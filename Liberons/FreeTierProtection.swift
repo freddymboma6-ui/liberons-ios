@@ -8,6 +8,17 @@ enum FreeTierProtection {
     private static let installationAccount = "installation-id"
     private static let appAttestKeyAccount = "app-attest-key-id"
 
+    private struct ChallengeResponse: Decodable {
+        let challenge_id: String
+        let challenge: String
+        let expires_at: String
+        let purpose: String
+    }
+
+    private struct RegistrationResponse: Decodable {
+        let verified: Bool?
+    }
+
     static func installationID() throws -> String {
         if let existing = readKeychain(account: installationAccount), !existing.isEmpty { return existing }
         let created = UUID().uuidString.lowercased()
@@ -24,6 +35,40 @@ enum FreeTierProtection {
         let keyID = try await service.generateKey()
         try writeKeychain(keyID, account: appAttestKeyAccount)
         return keyID
+    }
+
+    /// Requests a one-time server challenge, asks Apple to attest the local key,
+    /// then forwards Apple's opaque attestation object to the backend verifier.
+    /// This never treats the client-side result as authoritative.
+    static func registerAppAttestKeyIfSupported() async throws -> Bool? {
+        let attestService = DCAppAttestService.shared
+        guard attestService.isSupported else { return nil }
+        guard let keyID = try await appAttestKeyID() else { return nil }
+
+        let challengeRequest = try JSONSerialization.data(withJSONObject: ["purpose": "attestation"])
+        let challengeData = try await SupabaseService.callFunction("app-attest-challenge", json: challengeRequest)
+        let challenge = try JSONDecoder().decode(ChallengeResponse.self, from: challengeData)
+
+        // Apple requires SHA-256 of a unique, single-use data block containing the server challenge.
+        let clientDataHash = Data(SHA256.hash(data: Data(challenge.challenge.utf8)))
+        let attestationObject = try await attestService.attestKey(keyID, clientDataHash: clientDataHash)
+        let installationID = try installationID()
+
+        let registrationBody = try JSONSerialization.data(withJSONObject: [
+            "challenge_id": challenge.challenge_id,
+            "challenge": challenge.challenge,
+            "key_id": keyID,
+            "attestation": attestationObject.base64EncodedString(),
+            "installation_id": installationID
+        ])
+
+        do {
+            let responseData = try await SupabaseService.callFunction("app-attest-register", json: registrationBody)
+            return try JSONDecoder().decode(RegistrationResponse.self, from: responseData).verified == true
+        } catch let error as NSError where error.domain == "LiberonsCloud" && error.code == 501 {
+            // Backend intentionally fails closed until Apple's attestation object is fully verified.
+            return false
+        }
     }
 
     /// Produces an Apple assertion for a server-issued, single-use challenge.
