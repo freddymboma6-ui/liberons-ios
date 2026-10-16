@@ -6,9 +6,7 @@ struct BackupQueueView: View {
     @ObservedObject var analyzer: PhotoLibraryAnalyzer
     @ObservedObject var language: LanguageStore
 
-    private var requestedCount: Int {
-        max(1, preferences.selectedCount(total: analyzer.photoCount + analyzer.videoCount))
-    }
+    private var requestedCount: Int { max(1, preferences.selectedCount(total: analyzer.photoCount + analyzer.videoCount)) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -17,7 +15,6 @@ struct BackupQueueView: View {
                 Spacer()
                 if backup.queueTotal > 0 { Text("\(backup.queueCompleted + backup.queueFailed)/\(backup.queueTotal)").font(.subheadline.bold()).monospacedDigit() }
             }
-
             if backup.queueTotal > 0 {
                 ProgressView(value: backup.queueProgress).tint(.blue)
                 HStack(spacing: 14) {
@@ -26,23 +23,11 @@ struct BackupQueueView: View {
                 }.font(.caption.bold())
                 if let name = backup.currentQueueFilename { Text(language.text("Now: ", "En cours : ") + name).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
             } else {
-                Text(language.text("Your selected percentage represents about \(requestedCount) photos or videos. Libérons will protect them one by one and verify each cloud copy.", "Votre pourcentage sélectionné représente environ \(requestedCount) photos ou vidéos. Libérons les protégera une par une et vérifiera chaque copie cloud.")).font(.subheadline).foregroundStyle(.secondary)
+                Text(language.text("Automatic backup starts with your oldest memories. Your percentage represents about \(requestedCount) items.", "La sauvegarde automatique commence par vos souvenirs les plus anciens. Votre pourcentage représente environ \(requestedCount) éléments.")).font(.subheadline).foregroundStyle(.secondary)
             }
-
-            Button {
-                Task { await backup.backupNewestItems(count: requestedCount) }
-            } label: {
-                HStack {
-                    Spacer()
-                    if backup.isRunning { ProgressView().tint(.white) }
-                    Text(backup.isRunning ? language.text("Backup in progress…", "Sauvegarde en cours…") : language.text("Protect selected items", "Protéger les éléments sélectionnés")).fontWeight(.semibold)
-                    Spacer()
-                }.frame(height: 36)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .disabled(backup.isRunning || !analyzer.canReadLibrary)
-
+            Button { Task { await backup.backupOldestItems(count: requestedCount) } } label: {
+                HStack { Spacer(); if backup.isRunning { ProgressView().tint(.white) }; Text(backup.isRunning ? language.text("Backup in progress…", "Sauvegarde en cours…") : language.text("Protect oldest items", "Protéger les plus anciens")).fontWeight(.semibold); Spacer() }.frame(height: 36)
+            }.buttonStyle(.borderedProminent).controlSize(.large).disabled(backup.isRunning || !analyzer.canReadLibrary)
             Text(language.text("Nothing is deleted from this iPhone during backup.", "Rien n'est supprimé de cet iPhone pendant la sauvegarde.")).font(.caption).foregroundStyle(.secondary)
         }
         .padding(20)
