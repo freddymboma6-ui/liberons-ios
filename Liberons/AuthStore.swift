@@ -33,7 +33,7 @@ final class AuthStore: ObservableObject {
     func signUp(email: String, password: String) async -> Bool {
         errorMessage = nil; infoMessage = nil
         do {
-            let response = try await SupabaseService.client.auth.signUp(email: email, password: password)
+            let response = try await SupabaseService.client.auth.signUp(email: email, password: password, redirectTo: URL(string: "liberons://auth/confirm"))
             if let newSession = response.session {
                 session = newSession
                 await validateDeviceAndFreeTier()
@@ -47,10 +47,21 @@ final class AuthStore: ObservableObject {
     func sendPasswordReset(email: String) async -> Bool {
         errorMessage = nil; infoMessage = nil
         do {
-            try await SupabaseService.client.auth.resetPasswordForEmail(email, redirectTo: URL(string: "https://liberons.com/account/update-password"))
+            try await SupabaseService.client.auth.resetPasswordForEmail(email, redirectTo: URL(string: "liberons://auth/reset-password"))
             infoMessage = "password_reset_sent"
             return true
         } catch { errorMessage = error.localizedDescription; return false }
+    }
+
+    func handleAuthURL(_ url: URL) async -> Bool {
+        errorMessage = nil
+        do {
+            session = try await SupabaseService.client.auth.session(from: url)
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
     }
 
     func updatePassword(_ password: String) async -> Bool {
