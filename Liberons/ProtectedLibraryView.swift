@@ -9,6 +9,7 @@ struct ProtectedLibraryView: View {
     @State private var isSelecting = false
     @State private var showBulkDelete = false
     @State private var deletingSelection = false
+    @Namespace private var photoTransition
     private let columns = [GridItem(.flexible(), spacing: 2), GridItem(.flexible(), spacing: 2), GridItem(.flexible(), spacing: 2)]
 
     var body: some View {
@@ -32,6 +33,7 @@ struct ProtectedLibraryView: View {
                             LazyVGrid(columns: columns, spacing: 2) {
                                 ForEach(store.items) { item in
                                     ProtectedLibraryTile(item: item)
+                                        .matchedTransitionSource(id: item.id, in: photoTransition)
                                         .overlay(alignment: .topTrailing) {
                                             if isSelecting {
                                                 Image(systemName: selectedIDs.contains(item.id) ? "checkmark.circle.fill" : "circle")
@@ -89,6 +91,7 @@ struct ProtectedLibraryView: View {
             .task { await store.refresh() }
             .navigationDestination(item: $viewerItem) { item in
                 ProtectedGalleryViewer(items: store.items, initialID: item.id, language: language)
+                    .navigationTransition(.zoom(sourceID: item.id, in: photoTransition))
                     .onDisappear { Task { await store.refresh() } }
             }
             .confirmationDialog(language.text("Delete selected memories from Libérons?", "Supprimer les souvenirs sélectionnés de Libérons ?"), isPresented: $showBulkDelete, titleVisibility: .visible) {
@@ -115,27 +118,100 @@ private struct ProtectedGalleryViewer: View {
     @Environment(\.dismiss) private var dismiss
     @State private var selection: UUID
     @State private var showInfo = false
+    @State private var verticalOffset: CGFloat = 0
+    @State private var isDismissing = false
 
-    init(items: [ProtectedCloudMedia], initialID: UUID, language: LanguageStore) { self.items = items; self.initialID = initialID; self.language = language; _selection = State(initialValue: initialID) }
+    init(items: [ProtectedCloudMedia], initialID: UUID, language: LanguageStore) {
+        self.items = items
+        self.initialID = initialID
+        self.language = language
+        _selection = State(initialValue: initialID)
+    }
+
     private var current: ProtectedCloudMedia? { items.first(where: { $0.id == selection }) }
+    private var dragProgress: CGFloat { min(max(verticalOffset / 360, 0), 1) }
 
     var body: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
-            TabView(selection: $selection) { ForEach(items) { item in CloudPhotoPage(item: item, language: language).tag(item.id) } }.tabViewStyle(.page(indexDisplayMode: .never)).ignoresSafeArea()
+            Color.black.opacity(1 - (dragProgress * 0.78)).ignoresSafeArea()
+
+            TabView(selection: $selection) {
+                ForEach(items) { item in
+                    CloudPhotoPage(item: item, language: language)
+                        .tag(item.id)
+                }
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .ignoresSafeArea()
+            .offset(y: verticalOffset)
+            .scaleEffect(1 - (dragProgress * 0.16))
+            .clipShape(RoundedRectangle(cornerRadius: dragProgress * 24, style: .continuous))
+
             VStack {
                 HStack {
-                    if let index = items.firstIndex(where: { $0.id == selection }) { Text("\(index + 1) / \(items.count)").font(.subheadline.bold()).foregroundStyle(.white).padding(.horizontal, 13).padding(.vertical, 8).background(.black.opacity(0.45), in: Capsule()) }
+                    if let index = items.firstIndex(where: { $0.id == selection }) {
+                        Text("\(index + 1) / \(items.count)")
+                            .font(.subheadline.bold())
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 13)
+                            .padding(.vertical, 8)
+                            .background(.black.opacity(0.45), in: Capsule())
+                    }
                     Spacer()
-                    Button { showInfo = true } label: { Image(systemName: "ellipsis.circle.fill").font(.title2).foregroundStyle(.white).frame(width: 42, height: 42).background(.black.opacity(0.45), in: Circle()) }
-                }.padding(.horizontal, 16).padding(.top, 8)
+                    Button { showInfo = true } label: {
+                        Image(systemName: "ellipsis.circle.fill")
+                            .font(.title2)
+                            .foregroundStyle(.white)
+                            .frame(width: 42, height: 42)
+                            .background(.black.opacity(0.45), in: Circle())
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
                 Spacer()
             }
+            .opacity(1 - min(dragProgress * 2.2, 1))
+            .allowsHitTesting(verticalOffset == 0)
         }
+        .contentShape(Rectangle())
+        .simultaneousGesture(dismissGesture)
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbarColorScheme(.dark, for: .navigationBar)
-        .sheet(isPresented: $showInfo) { if let current { ProtectedMediaDetail(item: current, language: language, closeViewer: { showInfo = false; dismiss() }) } }
+        .sheet(isPresented: $showInfo) {
+            if let current {
+                ProtectedMediaDetail(item: current, language: language, closeViewer: {
+                    showInfo = false
+                    dismiss()
+                })
+            }
+        }
+    }
+
+    private var dismissGesture: some Gesture {
+        DragGesture(minimumDistance: 12, coordinateSpace: .local)
+            .onChanged { value in
+                guard !isDismissing else { return }
+                let vertical = value.translation.height
+                let horizontal = abs(value.translation.width)
+                guard vertical > 0, vertical > horizontal * 1.15 else { return }
+                verticalOffset = vertical
+            }
+            .onEnded { value in
+                guard verticalOffset > 0 else { return }
+                let predicted = value.predictedEndTranslation.height
+                if verticalOffset > 135 || predicted > 250 {
+                    isDismissing = true
+                    withAnimation(.easeOut(duration: 0.18)) {
+                        verticalOffset = max(verticalOffset, 420)
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { dismiss() }
+                } else {
+                    withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) {
+                        verticalOffset = 0
+                    }
+                }
+            }
     }
 }
 
@@ -147,10 +223,49 @@ private struct CloudPhotoPage: View {
     @State private var errorMessage: String?
     @State private var scale: CGFloat = 1
     private var isVideo: Bool { item.mediaType.lowercased().contains("video") }
+
     var body: some View {
-        GeometryReader { proxy in ZStack { Color.black; if let image { Image(uiImage: image).resizable().scaledToFit().scaleEffect(scale).gesture(MagnificationGesture().onChanged { scale = max(1, $0) }.onEnded { if $0 < 1.05 { scale = 1 } }) } else if loading { ProgressView().tint(.white) } else { VStack(spacing: 12) { Image(systemName: "exclamationmark.icloud").font(.largeTitle); Text(errorMessage ?? language.text("Unable to load this memory.", "Impossible de charger ce souvenir.")).font(.caption).multilineTextAlignment(.center); Button(language.text("Try again", "Réessayer")) { Task { await load() } } }.foregroundStyle(.white).padding() }; if isVideo { Image(systemName: "play.circle.fill").font(.system(size: 68)).foregroundStyle(.white) } }.frame(width: proxy.size.width, height: proxy.size.height) }.task(id: item.id) { await load() }
+        GeometryReader { proxy in
+            ZStack {
+                Color.black
+                if let image {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .scaleEffect(scale)
+                        .gesture(
+                            MagnificationGesture()
+                                .onChanged { scale = max(1, $0) }
+                                .onEnded { if $0 < 1.05 { withAnimation(.spring(response: 0.25)) { scale = 1 } } }
+                        )
+                } else if loading {
+                    ProgressView().tint(.white)
+                } else {
+                    VStack(spacing: 12) {
+                        Image(systemName: "exclamationmark.icloud").font(.largeTitle)
+                        Text(errorMessage ?? language.text("Unable to load this memory.", "Impossible de charger ce souvenir."))
+                            .font(.caption).multilineTextAlignment(.center)
+                        Button(language.text("Try again", "Réessayer")) { Task { await load() } }
+                    }
+                    .foregroundStyle(.white).padding()
+                }
+                if isVideo { Image(systemName: "play.circle.fill").font(.system(size: 68)).foregroundStyle(.white) }
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height)
+        }
+        .task(id: item.id) { await load() }
     }
-    @MainActor private func load() async { loading = true; errorMessage = nil; image = nil; do { guard !isVideo else { throw NSError(domain: "LiberonsCloud", code: -8, userInfo: [NSLocalizedDescriptionKey: language.text("Cloud video playback is coming next.", "La lecture vidéo cloud arrive ensuite.")]) }; let url = try await SupabaseService.cloudMediaURL(assetID: item.id); let (data, response) = try await URLSession.shared.data(from: url); guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode), let decoded = UIImage(data: data) else { throw NSError(domain: "LiberonsCloud", code: -3, userInfo: [NSLocalizedDescriptionKey: language.text("Unable to decode this cloud photo.", "Impossible de décoder cette photo cloud.")]) }; image = decoded; loading = false } catch { errorMessage = error.localizedDescription; loading = false } }
+
+    @MainActor private func load() async {
+        loading = true; errorMessage = nil; image = nil
+        do {
+            guard !isVideo else { throw NSError(domain: "LiberonsCloud", code: -8, userInfo: [NSLocalizedDescriptionKey: language.text("Cloud video playback is coming next.", "La lecture vidéo cloud arrive ensuite.")]) }
+            let url = try await SupabaseService.cloudMediaURL(assetID: item.id)
+            let (data, response) = try await URLSession.shared.data(from: url)
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode), let decoded = UIImage(data: data) else { throw NSError(domain: "LiberonsCloud", code: -3, userInfo: [NSLocalizedDescriptionKey: language.text("Unable to decode this cloud photo.", "Impossible de décoder cette photo cloud.")]) }
+            image = decoded; loading = false
+        } catch { errorMessage = error.localizedDescription; loading = false }
+    }
 }
 
 private struct ProtectedMediaDetail: View {
