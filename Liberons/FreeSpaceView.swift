@@ -17,6 +17,26 @@ struct FreeSpaceView: View {
             }
             Text(language.text("The percentage only prepares a selection. Nothing is removed when you tap a percentage.", "Le pourcentage prépare uniquement une sélection. Rien n’est supprimé lorsque vous touchez un pourcentage.")).font(.subheadline).foregroundStyle(.secondary)
 
+            NavigationLink {
+                StorageAnalysisView(language: language)
+            } label: {
+                HStack(spacing: 12) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.blue.opacity(0.11)).frame(width: 44, height: 44)
+                        Image(systemName: "chart.bar.doc.horizontal.fill").foregroundStyle(.blue)
+                    }
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(language.text("Analyze iPhone storage", "Analyser le stockage de l’iPhone")).fontWeight(.semibold).foregroundStyle(.primary)
+                        Text(language.text("Find screenshots, 4K videos and your largest files", "Trouvez les captures, vidéos 4K et vos fichiers les plus lourds")).font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right").font(.caption.bold()).foregroundStyle(.tertiary)
+                }
+                .padding(12)
+                .background(LiberonsTheme.insetCard, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            }
+            .buttonStyle(.plain)
+
             if cleaner.isLoading {
                 ProgressView(language.text("Calculating what can be freed…", "Calcul de l’espace réellement libérable…"))
             } else if cleaner.selectedLocalIdentifiers.isEmpty {
@@ -35,7 +55,7 @@ struct FreeSpaceView: View {
                 }
                 .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .background(LiberonsTheme.insetCard, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
 
             Button {
@@ -52,7 +72,7 @@ struct FreeSpaceView: View {
                 .font(.caption).foregroundStyle(.secondary)
         }
         .padding(20)
-        .background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .background(LiberonsTheme.card, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
         .shadow(color: .black.opacity(0.045), radius: 18, y: 7)
         .sheet(isPresented: $showReview) {
             NavigationStack {
@@ -71,7 +91,7 @@ struct FreeSpaceView: View {
                         reviewRow(language.text("Cloud copies", "Copies cloud"), language.text("Remain protected", "Restent protégées"))
                     }
                     .padding(.horizontal, 18)
-                    .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .background(LiberonsTheme.insetCard, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
                     Label(language.text("Photos will display the final iOS confirmation. If you cancel there, nothing changes.", "Photos affichera ensuite la confirmation finale d’iOS. Si vous refusez, rien ne change."), systemImage: "checkmark.shield.fill")
                         .font(.footnote).foregroundStyle(.secondary)
                     Spacer()
@@ -87,6 +107,7 @@ struct FreeSpaceView: View {
                 .padding(24)
                 .navigationTitle(language.text("Review", "Récapitulatif"))
                 .navigationBarTitleDisplayMode(.inline)
+                .background(LiberonsTheme.canvas)
             }
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
