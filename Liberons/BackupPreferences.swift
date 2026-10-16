@@ -3,6 +3,12 @@ import Combine
 
 @MainActor
 final class BackupPreferences: ObservableObject {
+    enum BackupOrder: String, CaseIterable, Identifiable {
+        case oldest
+        case newest
+        var id: String { rawValue }
+    }
+
     static let choices = [10, 20, 50, 80, 100]
 
     @Published var backupPercent: Int {
@@ -13,11 +19,16 @@ final class BackupPreferences: ObservableObject {
         didSet { UserDefaults.standard.set(removalPercent, forKey: "liberons.removal.percent") }
     }
 
+    @Published var backupOrder: BackupOrder {
+        didSet { UserDefaults.standard.set(backupOrder.rawValue, forKey: "liberons.backup.order") }
+    }
+
     init() {
         let savedBackup = UserDefaults.standard.integer(forKey: "liberons.backup.percent")
         let savedRemoval = UserDefaults.standard.integer(forKey: "liberons.removal.percent")
         backupPercent = Self.choices.contains(savedBackup) ? savedBackup : 100
         removalPercent = Self.choices.contains(savedRemoval) ? savedRemoval : 50
+        backupOrder = BackupOrder(rawValue: UserDefaults.standard.string(forKey: "liberons.backup.order") ?? "") ?? .oldest
     }
 
     func selectedCount(total: Int) -> Int {
@@ -25,6 +36,7 @@ final class BackupPreferences: ObservableObject {
     }
 
     func removableCount(protectedCount: Int) -> Int {
-        min(protectedCount, Int(floor(Double(protectedCount) * Double(removalPercent) / 100.0)))
+        guard protectedCount > 0 else { return 0 }
+        return min(protectedCount, max(1, Int(ceil(Double(protectedCount) * Double(removalPercent) / 100.0))))
     }
 }
