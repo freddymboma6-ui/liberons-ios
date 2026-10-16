@@ -4,7 +4,7 @@ import Combine
 
 struct StorageInsightItem: Identifiable, Hashable {
     enum Kind: String, Hashable {
-        case screenshot, screenRecording, largeVideo, longVideo, slowMotion, timeLapse, livePhoto, rawPhoto, video4K, other
+        case screenshot, video, largeVideo, longVideo, slowMotion, timeLapse, livePhoto, rawPhoto, video4K, other
     }
     let id: String
     let kind: Kind
@@ -13,7 +13,6 @@ struct StorageInsightItem: Identifiable, Hashable {
     let creationDate: Date?
     let pixelWidth: Int
     let pixelHeight: Int
-    let confidence: Double
 }
 
 struct StorageInsightCategory: Identifiable, Hashable {
@@ -69,8 +68,6 @@ final class StorageIntelligence: ObservableObject {
 
                     let subtypes = asset.mediaSubtypes
                     var kind: StorageInsightItem.Kind = .other
-                    var confidence = 1.0
-
                     if subtypes.contains(.photoScreenshot) {
                         kind = .screenshot
                     } else if subtypes.contains(.videoHighFrameRate) {
@@ -80,31 +77,23 @@ final class StorageIntelligence: ObservableObject {
                     } else if subtypes.contains(.photoLive) {
                         kind = .livePhoto
                     } else if asset.mediaType == .video {
-                        // Photos has no universally reliable public "screen recording" subtype.
-                        // Use conservative filename/dimension clues and expose confidence so UI never
-                        // presents a heuristic match as certain.
-                        let nameLooksLikeRecording = names.contains { $0.contains("rpReplay") || $0.contains("screenrecord") || $0.contains("screen_record") }
-                        let portraitScreenShape = asset.pixelHeight > asset.pixelWidth && asset.pixelHeight >= 1792
-                        if nameLooksLikeRecording {
-                            kind = .screenRecording; confidence = 0.95
-                        } else if portraitScreenShape && asset.duration >= 10 {
-                            kind = .screenRecording; confidence = 0.65
-                        } else if asset.pixelWidth >= 3840 || asset.pixelHeight >= 2160 {
+                        // Screen recordings intentionally remain in the Video family. This avoids
+                        // pretending Photos exposes a perfectly reliable screen-recording subtype.
+                        if asset.pixelWidth >= 3840 || asset.pixelHeight >= 2160 {
                             kind = .video4K
                         } else if asset.duration >= 300 {
                             kind = .longVideo
                         } else if bytes >= 500_000_000 {
                             kind = .largeVideo
+                        } else {
+                            kind = .video
                         }
                     } else if names.contains(where: { $0.hasSuffix(".dng") }) {
                         kind = .rawPhoto
                     }
 
-                    // Keep actionable categories. Individual heavy media is also retained even when
-                    // it has no special Photos subtype, so the user can always find the biggest file.
                     if kind != .other || bytes >= 100_000_000 {
-                        if kind == .other { kind = .largeVideo }
-                        output.append(StorageInsightItem(id: asset.localIdentifier, kind: kind, bytes: bytes, duration: asset.duration, creationDate: asset.creationDate, pixelWidth: asset.pixelWidth, pixelHeight: asset.pixelHeight, confidence: confidence))
+                        output.append(StorageInsightItem(id: asset.localIdentifier, kind: kind, bytes: bytes, duration: asset.duration, creationDate: asset.creationDate, pixelWidth: asset.pixelWidth, pixelHeight: asset.pixelHeight))
                     }
                 }
             }
