@@ -1,7 +1,7 @@
 import Foundation
 import Supabase
 
-struct ProtectedCloudMedia: Identifiable, Decodable {
+struct ProtectedCloudMedia: Identifiable, Decodable, Hashable {
     let id: UUID
     let iosLocalIdentifier: String?
     let originalFilename: String?
