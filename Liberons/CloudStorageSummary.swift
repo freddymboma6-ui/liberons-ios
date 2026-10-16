@@ -33,8 +33,23 @@ final class CloudStorageSummary: ObservableObject {
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
         var usageProtected: Int64?
 
+        // Always bind the dashboard/plan to the currently authenticated account.
+        // Do not use limit(1): an owner/admin account could otherwise receive another
+        // user's free 2 GB row depending on database ordering/RLS configuration.
+        guard let userID = try? await SupabaseService.client.auth.session.user.id else {
+            quotaBytes = Self.freeQuotaBytes
+            accountRole = "user"
+            return
+        }
+        let userIDString = userID.uuidString
+
         do {
-            let response = try await SupabaseService.client.from("profiles").select("role").limit(1).execute()
+            let response = try await SupabaseService.client
+                .from("profiles")
+                .select("role")
+                .eq("id", value: userIDString)
+                .limit(1)
+                .execute()
             if let profile = try decoder.decode([ProfileRole].self, from: response.data).first {
                 accountRole = profile.role?.lowercased() ?? "user"
             } else {
@@ -45,16 +60,32 @@ final class CloudStorageSummary: ObservableObject {
         }
 
         do {
-            let response = try await SupabaseService.client.from("storage_usage").select("quota_bytes,protected_bytes,pending_bytes").limit(1).execute()
+            let response = try await SupabaseService.client
+                .from("storage_usage")
+                .select("quota_bytes,protected_bytes,pending_bytes")
+                .eq("user_id", value: userIDString)
+                .limit(1)
+                .execute()
             if let usage = try decoder.decode([Usage].self, from: response.data).first {
                 quotaBytes = usage.quota_bytes > 0 ? usage.quota_bytes : Self.freeQuotaBytes
                 usageProtected = usage.protected_bytes
                 pendingBytes = max(0, usage.pending_bytes)
-            } else { quotaBytes = Self.freeQuotaBytes }
-        } catch { if quotaBytes <= 0 { quotaBytes = Self.freeQuotaBytes } }
+            } else {
+                quotaBytes = Self.freeQuotaBytes
+                pendingBytes = 0
+            }
+        } catch {
+            if quotaBytes <= 0 { quotaBytes = Self.freeQuotaBytes }
+        }
 
         do {
-            let response = try await SupabaseService.client.from("media_assets").select("protected_at,size_bytes").eq("status", value: "protected").order("protected_at", ascending: false).execute()
+            let response = try await SupabaseService.client
+                .from("media_assets")
+                .select("protected_at,size_bytes")
+                .eq("user_id", value: userIDString)
+                .eq("status", value: "protected")
+                .order("protected_at", ascending: false)
+                .execute()
             let assets = try decoder.decode([Asset].self, from: response.data)
             protectedCount = assets.count
             lastProtectedAt = assets.first?.protected_at
