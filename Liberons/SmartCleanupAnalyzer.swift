@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import Photos
+import CryptoKit
 
 @MainActor
 final class SmartCleanupAnalyzer: ObservableObject {
@@ -24,7 +25,7 @@ final class SmartCleanupAnalyzer: ObservableObject {
         var shots: [String] = []
         var memories: [String] = []
         var shotBytes: Int64 = 0
-        var groups: [String: [(id: String, date: Date, bytes: Int64)]] = [:]
+        var groups: [String: [(id: String, date: Date, bytes: Int64, resource: PHAssetResource)]] = [:]
 
         result.enumerateObjects { asset, _, _ in
             guard let resource = PHAssetResource.assetResources(for: asset).first else { return }
@@ -35,17 +36,24 @@ final class SmartCleanupAnalyzer: ObservableObject {
             } else {
                 memories.append(asset.localIdentifier)
             }
-            let key = "\(asset.mediaType.rawValue)|\(asset.pixelWidth)x\(asset.pixelHeight)|\(bytes)|\(resource.originalFilename.lowercased())"
-            groups[key, default: []].append((asset.localIdentifier, asset.creationDate ?? .distantPast, bytes))
+            let key = "\(asset.mediaType.rawValue)|\(asset.pixelWidth)x\(asset.pixelHeight)|\(bytes)"
+            groups[key, default: []].append((asset.localIdentifier, asset.creationDate ?? .distantPast, bytes, resource))
         }
 
         var duplicates: [String] = []
         var duplicateTotal: Int64 = 0
         for group in groups.values where group.count > 1 {
-            let ordered = group.sorted { $0.date < $1.date }
-            for copy in ordered.dropFirst() {
-                duplicates.append(copy.id)
-                duplicateTotal += copy.bytes
+            var verified: [String: [(id: String, date: Date, bytes: Int64)]] = [:]
+            for candidate in group {
+                guard let fingerprint = await contentFingerprint(resource: candidate.resource) else { continue }
+                verified[fingerprint, default: []].append((candidate.id, candidate.date, candidate.bytes))
+            }
+            for exactCopies in verified.values where exactCopies.count > 1 {
+                let ordered = exactCopies.sorted { $0.date < $1.date }
+                for copy in ordered.dropFirst() {
+                    duplicates.append(copy.id)
+                    duplicateTotal += copy.bytes
+                }
             }
         }
 
@@ -71,5 +79,25 @@ final class SmartCleanupAnalyzer: ObservableObject {
             PHAssetChangeRequest.deleteAssets(assets as NSArray)
         }
         await scan()
+    }
+
+    private func contentFingerprint(resource: PHAssetResource) async -> String? {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("liberons-check-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: url) }
+        do {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                let options = PHAssetResourceRequestOptions()
+                options.isNetworkAccessAllowed = true
+                PHAssetResourceManager.default().writeData(for: resource, toFile: url, options: options) { error in
+                    if let error { continuation.resume(throwing: error) }
+                    else { continuation.resume(returning: ()) }
+                }
+            }
+            let data = try Data(contentsOf: url, options: .mappedIfSafe)
+            let digest = SHA256.hash(data: data)
+            return digest.map { String(format: "%02x", $0) }.joined()
+        } catch {
+            return nil
+        }
     }
 }
