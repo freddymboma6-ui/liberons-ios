@@ -14,6 +14,7 @@ struct LiberonsApp: App {
         WindowGroup {
             ContentView()
                 .liberonsCanvas()
+                .nativeLibéronsRegistration()
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
                     LocalStorageGuard.applicationDidReceiveMemoryWarning()
                 }
