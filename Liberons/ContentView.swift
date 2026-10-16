@@ -183,20 +183,54 @@ private struct StoragePlanView: View {
     @ObservedObject var language: LanguageStore
     private var used: Int64 { cloud.protectedBytes + cloud.pendingBytes }
     private var available: Int64 { max(0, cloud.quotaBytes - used) }
+    private let plans: [(name: String, bytes: Int64, detailEN: String, detailFR: String)] = [
+        ("2 GB", 2_000_000_000, "For essential memories", "Pour les souvenirs essentiels"),
+        ("100 GB", 100_000_000_000, "For everyday photo libraries", "Pour les photothèques du quotidien"),
+        ("500 GB", 500_000_000_000, "For large photo and video libraries", "Pour les grandes photothèques et vidéothèques"),
+        ("1 TB", 1_000_000_000_000, "For extensive memory collections", "Pour les grandes collections de souvenirs"),
+        ("2 TB", 2_000_000_000_000, "Maximum room for your memories", "Un maximum d’espace pour vos souvenirs")
+    ]
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 VStack(alignment: .leading, spacing: 14) {
-                    HStack { Image(systemName: "icloud.fill").font(.title).foregroundStyle(.blue); VStack(alignment: .leading) { Text(language.text("Current plan", "Forfait actuel")).font(.caption).foregroundStyle(.secondary); Text(cloud.quotaBytes > 0 ? ByteCountFormatter.string(fromByteCount: cloud.quotaBytes, countStyle: .file) : language.text("Free", "Gratuit")).font(.title2.bold()) }; Spacer() }
+                    HStack { Image(systemName: "icloud.fill").font(.title).foregroundStyle(.blue); VStack(alignment: .leading) { Text(language.text("Current plan", "Forfait actuel")).font(.caption).foregroundStyle(.secondary); Text(currentPlanName).font(.title2.bold()) }; Spacer(); Text(language.text("CURRENT", "ACTUEL")).font(.caption2.bold()).foregroundStyle(.blue).padding(.horizontal, 9).padding(.vertical, 6).background(Color.blue.opacity(0.10), in: Capsule()) }
                     ProgressView(value: cloud.quotaBytes > 0 ? min(1, Double(used) / Double(cloud.quotaBytes)) : 0).tint(.blue)
                     HStack { VStack(alignment: .leading) { Text(language.text("Used", "Utilisé")).font(.caption).foregroundStyle(.secondary); Text(used == 0 ? "0 KB" : ByteCountFormatter.string(fromByteCount: used, countStyle: .file)).fontWeight(.semibold) }; Spacer(); if cloud.quotaBytes > 0 { VStack(alignment: .trailing) { Text(language.text("Available", "Disponible")).font(.caption).foregroundStyle(.secondary); Text(ByteCountFormatter.string(fromByteCount: available, countStyle: .file)).fontWeight(.semibold) } } }
                 }.card()
+
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(language.text("Available plans", "Forfaits disponibles")).font(.title3.bold())
+                    Text(language.text("Compare the storage capacities available for Libérons Cloud.", "Comparez les capacités de stockage disponibles pour Libérons Cloud.")).font(.subheadline).foregroundStyle(.secondary)
+                    ForEach(Array(plans.enumerated()), id: \.offset) { index, plan in
+                        if index > 0 { Divider() }
+                        HStack(spacing: 13) {
+                            ZStack { RoundedRectangle(cornerRadius: 13).fill(isCurrent(plan.bytes) ? Color.blue.opacity(0.12) : Color.secondary.opacity(0.08)).frame(width: 46, height: 46); Image(systemName: plan.bytes >= 1_000_000_000_000 ? "externaldrive.fill" : "icloud.fill").foregroundStyle(isCurrent(plan.bytes) ? .blue : .secondary) }
+                            VStack(alignment: .leading, spacing: 3) { HStack(spacing: 7) { Text(plan.name).font(.headline); if isCurrent(plan.bytes) { Text(language.text("Current", "Actuel")).font(.caption2.bold()).foregroundStyle(.blue).padding(.horizontal, 7).padding(.vertical, 3).background(Color.blue.opacity(0.10), in: Capsule()) } }; Text(language.text(plan.detailEN, plan.detailFR)).font(.caption).foregroundStyle(.secondary) }
+                            Spacer()
+                            if isCurrent(plan.bytes) { Image(systemName: "checkmark.circle.fill").foregroundStyle(.blue).font(.title3) }
+                        }.padding(.vertical, 4)
+                    }
+                }.card()
+
                 VStack(alignment: .leading, spacing: 12) { Label(language.text("Your cloud protection", "Votre protection cloud"), systemImage: "checkmark.shield.fill").font(.headline).foregroundStyle(.green); HStack { Text(language.text("Protected memories", "Souvenirs protégés")); Spacer(); Text(cloud.protectedCount.formatted()).fontWeight(.semibold) }; if cloud.pendingBytes > 0 { Divider(); HStack { Text(language.text("Being protected", "En cours de protection")); Spacer(); Text(ByteCountFormatter.string(fromByteCount: cloud.pendingBytes, countStyle: .file)).fontWeight(.semibold) } } }.card()
-                VStack(alignment: .leading, spacing: 10) { Label(language.text("Plan management", "Gestion du forfait"), systemImage: "person.crop.circle.badge.checkmark").font(.headline); Text(language.text("The app reflects the storage plan linked to your Libérons account. Purchases and billing are not performed inside this app.", "L’app affiche le forfait de stockage lié à votre compte Libérons. Les achats et la facturation ne sont pas effectués dans cette application.")).font(.subheadline).foregroundStyle(.secondary) }.card()
+                VStack(alignment: .leading, spacing: 10) { Label(language.text("Plan management", "Gestion du forfait"), systemImage: "person.crop.circle.badge.checkmark").font(.headline); Text(language.text("The app shows the storage options and the plan linked to your Libérons account. Purchases and billing are not performed inside this app.", "L’app affiche les options de stockage et le forfait lié à votre compte Libérons. Les achats et la facturation ne sont pas effectués dans cette application.")).font(.subheadline).foregroundStyle(.secondary) }.card()
                 Button { Task { await cloud.refresh() } } label: { Label(language.text("Refresh plan status", "Actualiser l’état du forfait"), systemImage: "arrow.clockwise").frame(maxWidth: .infinity).frame(height: 42) }.buttonStyle(.borderedProminent).disabled(cloud.isLoading)
             }.padding(20)
         }.background(Color(uiColor: .systemGroupedBackground)).navigationTitle(language.text("Storage plan", "Forfait de stockage")).navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var currentPlanName: String {
+        guard cloud.quotaBytes > 0 else { return language.text("Free", "Gratuit") }
+        if let plan = plans.min(by: { abs($0.bytes - cloud.quotaBytes) < abs($1.bytes - cloud.quotaBytes) }), isCurrent(plan.bytes) { return plan.name }
+        return ByteCountFormatter.string(fromByteCount: cloud.quotaBytes, countStyle: .file)
+    }
+
+    private func isCurrent(_ bytes: Int64) -> Bool {
+        guard cloud.quotaBytes > 0 else { return bytes == 2_000_000_000 }
+        let tolerance = max(Int64(50_000_000), bytes / 100)
+        return abs(cloud.quotaBytes - bytes) <= tolerance
     }
 }
 
