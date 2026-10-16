@@ -5,20 +5,106 @@ struct ProtectedLibraryView: View {
     @ObservedObject var language: LanguageStore
     @StateObject private var store = ProtectedMediaStore()
     @State private var viewerItem: ProtectedCloudMedia?
+    @State private var selectedIDs: Set<UUID> = []
+    @State private var isSelecting = false
+    @State private var showBulkDelete = false
+    @State private var deletingSelection = false
     private let columns = [GridItem(.flexible(), spacing: 2), GridItem(.flexible(), spacing: 2), GridItem(.flexible(), spacing: 2)]
 
     var body: some View {
         NavigationStack {
             Group {
-                if store.isLoading && store.items.isEmpty { ProgressView(language.text("Loading your library…", "Chargement de votre bibliothèque…")) }
-                else if let error = store.errorMessage, store.items.isEmpty { ContentUnavailableView { Label(language.text("Library unavailable", "Bibliothèque indisponible"), systemImage: "exclamationmark.icloud") } description: { Text(error) } actions: { Button(language.text("Try again", "Réessayer")) { Task { await store.refresh() } } } }
-                else if store.items.isEmpty { ContentUnavailableView(language.text("Your cloud library", "Votre bibliothèque cloud"), systemImage: "photo.stack", description: Text(language.text("Protected memories will appear here.", "Vos souvenirs protégés apparaîtront ici."))) }
-                else { ScrollView { VStack(alignment: .leading, spacing: 12) { HStack { Label(language.text("Protected", "Protégés"), systemImage: "checkmark.shield.fill").foregroundStyle(.green); Spacer(); Text("\(store.items.count) \(language.text("items", "éléments"))").foregroundStyle(.secondary) }.font(.subheadline.bold()).padding(.horizontal, 16); LazyVGrid(columns: columns, spacing: 2) { ForEach(store.items) { item in Button { viewerItem = item } label: { ProtectedLibraryTile(item: item) }.buttonStyle(.plain) } } }.padding(.bottom, 100) }.refreshable { await store.refresh() } }
+                if store.isLoading && store.items.isEmpty {
+                    ProgressView(language.text("Loading your library…", "Chargement de votre bibliothèque…"))
+                } else if let error = store.errorMessage, store.items.isEmpty {
+                    ContentUnavailableView { Label(language.text("Library unavailable", "Bibliothèque indisponible"), systemImage: "exclamationmark.icloud") } description: { Text(error) } actions: { Button(language.text("Try again", "Réessayer")) { Task { await store.refresh() } } }
+                } else if store.items.isEmpty {
+                    ContentUnavailableView(language.text("Your cloud library", "Votre bibliothèque cloud"), systemImage: "photo.stack", description: Text(language.text("Protected memories will appear here.", "Vos souvenirs protégés apparaîtront ici.")))
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                Label(language.text("Protected", "Protégés"), systemImage: "checkmark.shield.fill").foregroundStyle(.green)
+                                Spacer()
+                                if isSelecting { Text("\(selectedIDs.count) \(language.text("selected", "sélectionné(s)"))") } else { Text("\(store.items.count) \(language.text("items", "éléments"))") }
+                            }.font(.subheadline.bold()).foregroundStyle(.secondary).padding(.horizontal, 16)
+
+                            LazyVGrid(columns: columns, spacing: 2) {
+                                ForEach(store.items) { item in
+                                    ProtectedLibraryTile(item: item)
+                                        .overlay(alignment: .topTrailing) {
+                                            if isSelecting {
+                                                Image(systemName: selectedIDs.contains(item.id) ? "checkmark.circle.fill" : "circle")
+                                                    .font(.title2).symbolRenderingMode(.palette)
+                                                    .foregroundStyle(.white, selectedIDs.contains(item.id) ? Color.blue : Color.black.opacity(0.35))
+                                                    .padding(7)
+                                            }
+                                        }
+                                        .contentShape(Rectangle())
+                                        .onTapGesture {
+                                            if isSelecting { toggle(item.id) } else { viewerItem = item }
+                                        }
+                                        .onLongPressGesture(minimumDuration: 0.35) {
+                                            if !isSelecting { isSelecting = true; selectedIDs = [item.id] }
+                                        }
+                                        .simultaneousGesture(
+                                            DragGesture(minimumDistance: 8)
+                                                .onChanged { _ in
+                                                    guard isSelecting else { return }
+                                                    selectedIDs.insert(item.id)
+                                                }
+                                        )
+                                        .contextMenu {
+                                            Button { viewerItem = item } label: { Label(language.text("View", "Afficher"), systemImage: "photo") }
+                                            Button { isSelecting = true; selectedIDs = [item.id] } label: { Label(language.text("Select", "Sélectionner"), systemImage: "checkmark.circle") }
+                                            Divider()
+                                            Button(role: .destructive) { selectedIDs = [item.id]; showBulkDelete = true } label: { Label(language.text("Delete from Libérons", "Supprimer de Libérons"), systemImage: "trash") }
+                                        }
+                                }
+                            }
+                        }.padding(.bottom, 100)
+                    }.refreshable { await store.refresh() }
+                }
             }
-            .navigationTitle(language.text("Library", "Bibliothèque"))
+            .navigationTitle(isSelecting ? language.text("Select", "Sélection") : language.text("Library", "Bibliothèque"))
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    if !store.items.isEmpty {
+                        Button(isSelecting ? language.text("Done", "OK") : language.text("Select", "Sélectionner")) {
+                            withAnimation(.easeInOut(duration: 0.18)) {
+                                isSelecting.toggle()
+                                if !isSelecting { selectedIDs.removeAll() }
+                            }
+                        }
+                    }
+                }
+                if isSelecting {
+                    ToolbarItemGroup(placement: .bottomBar) {
+                        Button { selectedIDs = Set(store.items.map(\.id)) } label: { Label(language.text("Select all", "Tout sélectionner"), systemImage: "checkmark.circle") }
+                        Spacer()
+                        Button(role: .destructive) { showBulkDelete = true } label: { if deletingSelection { ProgressView() } else { Label(language.text("Delete", "Supprimer"), systemImage: "trash") } }.disabled(selectedIDs.isEmpty || deletingSelection)
+                    }
+                }
+            }
             .task { await store.refresh() }
-            .fullScreenCover(item: $viewerItem, onDismiss: { Task { await store.refresh() } }) { item in ProtectedGalleryViewer(items: store.items, initialID: item.id, language: language) }
+            .navigationDestination(item: $viewerItem) { item in
+                ProtectedGalleryViewer(items: store.items, initialID: item.id, language: language)
+                    .onDisappear { Task { await store.refresh() } }
+            }
+            .confirmationDialog(language.text("Delete selected memories from Libérons?", "Supprimer les souvenirs sélectionnés de Libérons ?"), isPresented: $showBulkDelete, titleVisibility: .visible) {
+                Button(language.text("Delete permanently", "Supprimer définitivement"), role: .destructive) { Task { await deleteSelected() } }
+                Button(language.text("Cancel", "Annuler"), role: .cancel) { }
+            } message: { Text(language.text("The selected cloud copies will be permanently deleted. This cannot be undone.", "Les copies cloud sélectionnées seront supprimées définitivement. Cette action est irréversible.")) }
         }
+    }
+
+    private func toggle(_ id: UUID) { if selectedIDs.contains(id) { selectedIDs.remove(id) } else { selectedIDs.insert(id) } }
+
+    @MainActor private func deleteSelected() async {
+        deletingSelection = true
+        for id in selectedIDs { do { _ = try await SupabaseService.deleteCloudMedia(assetID: id) } catch { } }
+        selectedIDs.removeAll(); isSelecting = false; deletingSelection = false
+        await store.refresh()
     }
 }
 
@@ -37,8 +123,18 @@ private struct ProtectedGalleryViewer: View {
         ZStack {
             Color.black.ignoresSafeArea()
             TabView(selection: $selection) { ForEach(items) { item in CloudPhotoPage(item: item, language: language).tag(item.id) } }.tabViewStyle(.page(indexDisplayMode: .never)).ignoresSafeArea()
-            VStack { HStack { Button { dismiss() } label: { Image(systemName: "xmark").font(.headline).foregroundStyle(.white).frame(width: 42, height: 42).background(.black.opacity(0.45), in: Circle()) }; Spacer(); if let index = items.firstIndex(where: { $0.id == selection }) { Text("\(index + 1) / \(items.count)").font(.subheadline.bold()).foregroundStyle(.white).padding(.horizontal, 13).padding(.vertical, 8).background(.black.opacity(0.45), in: Capsule()) }; Spacer(); Button { showInfo = true } label: { Image(systemName: "ellipsis.circle.fill").font(.title2).foregroundStyle(.white).frame(width: 42, height: 42).background(.black.opacity(0.45), in: Circle()) } }.padding(.horizontal, 16).padding(.top, 8); Spacer() }
+            VStack {
+                HStack {
+                    if let index = items.firstIndex(where: { $0.id == selection }) { Text("\(index + 1) / \(items.count)").font(.subheadline.bold()).foregroundStyle(.white).padding(.horizontal, 13).padding(.vertical, 8).background(.black.opacity(0.45), in: Capsule()) }
+                    Spacer()
+                    Button { showInfo = true } label: { Image(systemName: "ellipsis.circle.fill").font(.title2).foregroundStyle(.white).frame(width: 42, height: 42).background(.black.opacity(0.45), in: Circle()) }
+                }.padding(.horizontal, 16).padding(.top, 8)
+                Spacer()
+            }
         }
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.hidden, for: .navigationBar)
+        .toolbarColorScheme(.dark, for: .navigationBar)
         .sheet(isPresented: $showInfo) { if let current { ProtectedMediaDetail(item: current, language: language, closeViewer: { showInfo = false; dismiss() }) } }
     }
 }
