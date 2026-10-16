@@ -41,97 +41,71 @@ final class PhotoLibraryAnalyzer: NSObject, ObservableObject, PHPhotoLibraryChan
     func requestAccessAndScan() async {
         let status = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
         authorizationStatus = status
-        guard status == .authorized || status == .limited else { return }
+        guard canReadLibrary else { return }
         refreshCountsFast()
         if !hasCompletedScan { await scan(force: true) }
     }
 
+    // Full byte scan is deliberately reserved for first-time analysis / explicit deep scan.
+    // It walks every PHAssetResource and is too expensive for a dashboard refresh on 20k+ libraries.
     func scan(force: Bool = false) async {
         guard canReadLibrary, !isScanning else { return }
         if hasCompletedScan && !libraryHasChanged && !force { return }
-
-        isScanning = true
-        errorMessage = nil
-        refreshCountsFast()
-
-        let assets = PHAsset.fetchAssets(with: nil)
-        let count = assets.count
-        var bytes: Int64 = 0
-
-        // Size calculation is intentionally chunked so a very large library does not
-        // monopolize the main actor and make scrolling/taps feel frozen.
+        isScanning = true; errorMessage = nil; refreshCountsFast()
+        let assets = PHAsset.fetchAssets(with: nil); let count = assets.count; var bytes: Int64 = 0
         for index in 0..<count {
             if Task.isCancelled { isScanning = false; return }
             let asset = assets.object(at: index)
-            for resource in PHAssetResource.assetResources(for: asset) {
-                if let value = resource.value(forKey: "fileSize") as? NSNumber { bytes += value.int64Value }
-            }
-            if index.isMultiple(of: 40) || index == count - 1 {
-                scannedItems = index + 1
-                await Task.yield()
-                try? await Task.sleep(for: .milliseconds(1))
-            }
+            for resource in PHAssetResource.assetResources(for: asset) { if let value = resource.value(forKey: "fileSize") as? NSNumber { bytes += value.int64Value } }
+            if index.isMultiple(of: 40) || index == count - 1 { scannedItems = index + 1; await Task.yield(); try? await Task.sleep(for: .milliseconds(1)) }
         }
-
-        estimatedBytes = bytes
-        totalItems = count
-        scannedItems = count
-        lastScanDate = Date()
-        libraryHasChanged = false
-        isScanning = false
-        persistScan()
+        estimatedBytes = bytes; totalItems = count; scannedItems = count; lastScanDate = Date(); libraryHasChanged = false; isScanning = false; persistScan()
     }
 
     func refreshIfNeeded() async {
         authorizationStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
         guard canReadLibrary else { return }
         refreshCountsFast()
-        // Keep the cached size instantly available. A Photos change no longer starts a
-        // 28k-item resource scan while the user is navigating the app.
         if !hasCompletedScan { await scan(force: true) }
+    }
+
+    // Fast dashboard refresh: counts are metadata-only and return without opening the
+    // resources of all 28k+ assets. Keep the last accurate byte estimate cached.
+    func refreshDashboardFast() async {
+        authorizationStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        guard canReadLibrary else { return }
+        refreshCountsFast()
+        persistCountsOnly()
+        await Task.yield()
     }
 
     func scanNow() async { await scan(force: true) }
 
     nonisolated func photoLibraryDidChange(_ changeInstance: PHChange) {
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            self.libraryHasChanged = true
-            self.refreshCountsFast()
-        }
+        Task { @MainActor [weak self] in guard let self else { return }; self.libraryHasChanged = true; self.refreshCountsFast(); self.persistCountsOnly() }
     }
 
     private func refreshCountsFast() {
         guard canReadLibrary else { return }
-        let imageOptions = PHFetchOptions()
-        imageOptions.predicate = NSPredicate(format: "mediaType == %d", PHAssetMediaType.image.rawValue)
-        let videoOptions = PHFetchOptions()
-        videoOptions.predicate = NSPredicate(format: "mediaType == %d", PHAssetMediaType.video.rawValue)
-        photoCount = PHAsset.fetchAssets(with: imageOptions).count
-        videoCount = PHAsset.fetchAssets(with: videoOptions).count
-        totalItems = photoCount + videoCount
+        let imageOptions = PHFetchOptions(); imageOptions.predicate = NSPredicate(format: "mediaType == %d", PHAssetMediaType.image.rawValue)
+        let videoOptions = PHFetchOptions(); videoOptions.predicate = NSPredicate(format: "mediaType == %d", PHAssetMediaType.video.rawValue)
+        photoCount = PHAsset.fetchAssets(with: imageOptions).count; videoCount = PHAsset.fetchAssets(with: videoOptions).count; totalItems = photoCount + videoCount
     }
 
     var formattedSize: String { ByteCountFormatter.string(fromByteCount: estimatedBytes, countStyle: .file) }
     var formattedLastScan: String? { lastScanDate?.formatted(date: .abbreviated, time: .shortened) }
 
     private func restoreCachedScan() {
-        guard defaults.integer(forKey: Key.version) == cacheVersion,
-              let date = defaults.object(forKey: Key.date) as? Date else { return }
-        photoCount = defaults.integer(forKey: Key.photos)
-        videoCount = defaults.integer(forKey: Key.videos)
-        estimatedBytes = Int64(defaults.object(forKey: Key.bytes) as? NSNumber ?? 0)
-        totalItems = defaults.integer(forKey: Key.total)
-        scannedItems = totalItems
-        lastScanDate = date
+        guard defaults.integer(forKey: Key.version) == cacheVersion, let date = defaults.object(forKey: Key.date) as? Date else { return }
+        photoCount = defaults.integer(forKey: Key.photos); videoCount = defaults.integer(forKey: Key.videos); estimatedBytes = Int64(defaults.object(forKey: Key.bytes) as? NSNumber ?? 0); totalItems = defaults.integer(forKey: Key.total); scannedItems = totalItems; lastScanDate = date
+    }
+
+    private func persistCountsOnly() {
+        guard lastScanDate != nil else { return }
+        defaults.set(cacheVersion, forKey: Key.version); defaults.set(photoCount, forKey: Key.photos); defaults.set(videoCount, forKey: Key.videos); defaults.set(totalItems, forKey: Key.total)
     }
 
     private func persistScan() {
-        defaults.set(cacheVersion, forKey: Key.version)
-        defaults.set(photoCount, forKey: Key.photos)
-        defaults.set(videoCount, forKey: Key.videos)
-        defaults.set(NSNumber(value: estimatedBytes), forKey: Key.bytes)
-        defaults.set(totalItems, forKey: Key.total)
-        defaults.set(lastScanDate, forKey: Key.date)
+        defaults.set(cacheVersion, forKey: Key.version); defaults.set(photoCount, forKey: Key.photos); defaults.set(videoCount, forKey: Key.videos); defaults.set(NSNumber(value: estimatedBytes), forKey: Key.bytes); defaults.set(totalItems, forKey: Key.total); defaults.set(lastScanDate, forKey: Key.date)
     }
 }
