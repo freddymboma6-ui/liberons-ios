@@ -79,7 +79,25 @@ private struct ProtectedGalleryViewer: View {
         ZStack {
             Color.black.ignoresSafeArea()
             TabView(selection: $selection) { ForEach(items) { CloudPhotoPage(item: $0, language: language).tag($0.id) } }.tabViewStyle(.page(indexDisplayMode: .never)).ignoresSafeArea().offset(y: verticalOffset)
-            VStack { HStack { if let i = items.firstIndex(where: { $0.id == selection }) { Text("\(i + 1) / \(items.count)").font(.subheadline.bold()).foregroundStyle(.white).padding(8).background(.black.opacity(0.45), in: Capsule()) }; Spacer(); Button { showInfo = true } label: { Image(systemName: "ellipsis.circle.fill").font(.title2).foregroundStyle(.white) } }.padding(); Spacer() }
+            VStack {
+                HStack {
+                    if let i = items.firstIndex(where: { $0.id == selection }) { Text("\(i + 1) / \(items.count)").font(.subheadline.bold()).foregroundStyle(.white).padding(8).background(.black.opacity(0.45), in: Capsule()) }
+                    Spacer()
+                    Button { showInfo = true } label: {
+                        ZStack {
+                            Color.clear
+                            Image(systemName: "ellipsis.circle.fill").font(.title2).foregroundStyle(.white)
+                        }
+                        .frame(width: 56, height: 56)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(language.text("More options", "Plus d’options"))
+                }
+                .padding(.horizontal, 8)
+                .padding(.top, 4)
+                Spacer()
+            }
         }
         .gesture(DragGesture().onChanged { if $0.translation.height > abs($0.translation.width) { verticalOffset = max(0, $0.translation.height) } }.onEnded { value in if verticalOffset > 135 || value.predictedEndTranslation.height > 250 { dismiss() } else { withAnimation { verticalOffset = 0 } } })
         .toolbarBackground(.hidden, for: .navigationBar).toolbarColorScheme(.dark, for: .navigationBar)
@@ -189,14 +207,10 @@ private struct ProtectedMediaDetail: View {
                 newIdentifier = request.placeholderForCreatedAsset?.localIdentifier
             }
             guard let newIdentifier else { throw NSError(domain: "LiberonsRestore", code: 2, userInfo: [NSLocalizedDescriptionKey: language.text("Photos did not return the restored item identifier.", "Photos n’a pas retourné l’identifiant de l’élément restauré.")]) }
-
-            // A successful Photos transaction means the restored photo exists. Keep the UI truthful immediately,
-            // then persist and re-check the PHAsset identifier in the background.
             currentLocalIdentifier = newIdentifier
             localExists = true
             restoredSuccessfully = true
             try? await SupabaseService.updateLocalIdentifier(assetID: item.id, localIdentifier: newIdentifier)
-
             for _ in 0..<12 {
                 if let asset = PHAsset.fetchAssets(withLocalIdentifiers: [newIdentifier], options: nil).firstObject {
                     currentLocalIdentifier = asset.localIdentifier
