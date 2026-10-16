@@ -7,10 +7,14 @@ struct BackupQueueView: View {
     @ObservedObject var analyzer: PhotoLibraryAnalyzer
     @ObservedObject var language: LanguageStore
     @StateObject private var smart = SmartCleanupAnalyzer()
-    @State private var showMediaPicker=false, showBackupReview=false, showBackupConfirmation=false, showPostBackupCleanup=false, deletingProtectedBatch=false
-    @State private var cleanupError:String?
-    @State private var smartMode=false
-    @State private var showScreenshotDelete=false
+    @State private var showMediaPicker = false
+    @State private var showBackupReview = false
+    @State private var showBackupConfirmation = false
+    @State private var showPostBackupCleanup = false
+    @State private var deletingProtectedBatch = false
+    @State private var cleanupError: String?
+    @State private var smartMode = false
+    @State private var showScreenshotDelete = false
 
     private var totalLibraryCount:Int{analyzer.photoCount+analyzer.videoCount}
     private var selectableCount:Int{smartMode ? smart.memoryCount:totalLibraryCount}
