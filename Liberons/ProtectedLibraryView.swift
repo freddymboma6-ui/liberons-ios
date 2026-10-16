@@ -142,7 +142,36 @@ private struct ProtectedMediaDetail: View {
 
     private func actionButton(_ title: String, icon: String, color: Color, action: @escaping () -> Void) -> some View { Button(action: action) { HStack { if restoring && icon == "square.and.arrow.down" { ProgressView() }; Label(title, systemImage: icon) }.frame(maxWidth: .infinity, alignment: .leading).padding(14).background(color.opacity(0.10), in: RoundedRectangle(cornerRadius: 14)).foregroundStyle(color) } }
     private func format(_ date: Date?) -> String { guard let date else { return language.text("Unknown", "Inconnue") }; return date.formatted(date: .long, time: .shortened) }
-    private func refreshLocalState() { guard let identifier = currentLocalIdentifier else { localExists = false; return }; localExists = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).firstObject != nil }
+
+    private func matchingLocalAsset() -> PHAsset? {
+        if let identifier = currentLocalIdentifier,
+           let asset = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).firstObject { return asset }
+        let options = PHFetchOptions()
+        if let capturedAt = item.capturedAt {
+            options.predicate = NSPredicate(format: "creationDate >= %@ AND creationDate <= %@", capturedAt.addingTimeInterval(-2) as NSDate, capturedAt.addingTimeInterval(2) as NSDate)
+        }
+        let result = PHAsset.fetchAssets(with: isVideo ? .video : .image, options: options)
+        guard result.count > 0 else { return nil }
+        if let filename = item.originalFilename {
+            var match: PHAsset?
+            result.enumerateObjects { asset, _, stop in
+                if PHAssetResource.assetResources(for: asset).contains(where: { $0.originalFilename.caseInsensitiveCompare(filename) == .orderedSame }) {
+                    match = asset; stop.pointee = true
+                }
+            }
+            if let match { return match }
+        }
+        return result.firstObject
+    }
+
+    private func refreshLocalState() {
+        if let asset = matchingLocalAsset() {
+            currentLocalIdentifier = asset.localIdentifier
+            localExists = true
+        } else {
+            localExists = false
+        }
+    }
 
     @MainActor private func restoreToPhotos() async {
         restoring = true; operationError = nil; restoredSuccessfully = false
@@ -153,28 +182,50 @@ private struct ProtectedMediaDetail: View {
             var newIdentifier: String?
             try await PHPhotoLibrary.shared().performChanges {
                 let request = PHAssetCreationRequest.forAsset()
-                request.addResource(with: .photo, data: data, options: nil)
+                request.creationDate = item.capturedAt
+                let resourceOptions = PHAssetResourceCreationOptions()
+                resourceOptions.originalFilename = item.originalFilename
+                request.addResource(with: .photo, data: data, options: resourceOptions)
                 newIdentifier = request.placeholderForCreatedAsset?.localIdentifier
             }
             guard let newIdentifier else { throw NSError(domain: "LiberonsRestore", code: 2, userInfo: [NSLocalizedDescriptionKey: language.text("Photos did not return the restored item identifier.", "Photos n’a pas retourné l’identifiant de l’élément restauré.")]) }
+
+            // A successful Photos transaction means the restored photo exists. Keep the UI truthful immediately,
+            // then persist and re-check the PHAsset identifier in the background.
             currentLocalIdentifier = newIdentifier
-            try await SupabaseService.updateLocalIdentifier(assetID: item.id, localIdentifier: newIdentifier)
-            // Photos can take a brief moment to expose a newly-created PHAsset. Retry before declaring failure.
-            for _ in 0..<8 {
-                if PHAsset.fetchAssets(withLocalIdentifiers: [newIdentifier], options: nil).firstObject != nil { localExists = true; break }
-                try? await Task.sleep(for: .milliseconds(150))
+            localExists = true
+            restoredSuccessfully = true
+            try? await SupabaseService.updateLocalIdentifier(assetID: item.id, localIdentifier: newIdentifier)
+
+            for _ in 0..<12 {
+                if let asset = PHAsset.fetchAssets(withLocalIdentifiers: [newIdentifier], options: nil).firstObject {
+                    currentLocalIdentifier = asset.localIdentifier
+                    localExists = true
+                    break
+                }
+                try? await Task.sleep(for: .milliseconds(200))
             }
-            if !localExists { localExists = PHAsset.fetchAssets(withLocalIdentifiers: [newIdentifier], options: nil).firstObject != nil }
-            restoredSuccessfully = localExists
-            if !localExists { operationError = language.text("The photo was restored, but Photos is still indexing it. Close and reopen this screen in a moment.", "La photo a été restaurée, mais Photos termine encore son indexation. Fermez puis rouvrez cet écran dans un instant.") }
-        } catch { operationError = error.localizedDescription }
+        } catch {
+            operationError = error.localizedDescription
+            refreshLocalState()
+        }
         restoring = false
     }
 
     @MainActor private func removeFromDevice() async {
         operationError = nil
-        guard let identifier = currentLocalIdentifier, let asset = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).firstObject else { refreshLocalState(); return }
-        do { try await PHPhotoLibrary.shared().performChanges { PHAssetChangeRequest.deleteAssets([asset] as NSArray) }; localExists = false; restoredSuccessfully = false } catch { operationError = error.localizedDescription }
+        refreshLocalState()
+        guard let asset = matchingLocalAsset() else {
+            localExists = false
+            operationError = language.text("This memory is no longer in Photos on this iPhone.", "Ce souvenir n’est plus présent dans Photos sur cet iPhone.")
+            return
+        }
+        do {
+            try await PHPhotoLibrary.shared().performChanges { PHAssetChangeRequest.deleteAssets([asset] as NSArray) }
+            localExists = false
+            restoredSuccessfully = false
+            currentLocalIdentifier = nil
+        } catch { operationError = error.localizedDescription }
     }
     @MainActor private func deleteFromCloud() async { deleting = true; operationError = nil; do { _ = try await SupabaseService.deleteCloudMedia(assetID: item.id); deleting = false; dismiss(); closeViewer?() } catch { deleting = false; operationError = error.localizedDescription } }
 }
