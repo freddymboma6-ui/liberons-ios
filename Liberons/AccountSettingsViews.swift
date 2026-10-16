@@ -47,17 +47,17 @@ struct LiberonsNotificationSettingsView: View {
 
     private var statusRow: some View {
         HStack(spacing: 12) {
-            Image(systemName: authorization == .denied ? "bell.slash.fill" : "bell.badge.fill").foregroundStyle(authorization == .denied ? .red : .blue).frame(width: 24)
+            Image(systemName: authorization == .denied ? "bell.slash.fill" : "bell.badge.fill").foregroundStyle(authorization == .denied ? Color.red : Color.blue).frame(width: 24)
             VStack(alignment: .leading, spacing: 2) {
                 Text(language.text("iOS notifications", "Notifications iOS"))
-                Text(statusText).font(.caption).foregroundStyle(.secondary)
+                Text(statusText).font(.caption).foregroundStyle(Color.secondary)
             }
             Spacer()
         }
     }
 
     private func notificationToggle(_ title: String, icon: String, isOn: Binding<Bool>) -> some View {
-        Toggle(isOn: isOn) { Label(title, systemImage: icon).foregroundStyle(.primary) }
+        Toggle(isOn: isOn) { Label(title, systemImage: icon).foregroundStyle(Color.primary) }
             .disabled(authorization == .denied)
     }
 
@@ -95,13 +95,14 @@ struct LiberonsPrivacySecurityView: View {
         List {
             Section {
                 HStack(spacing: 12) {
-                    Image(systemName: "photo.stack.fill").foregroundStyle(.blue).frame(width: 24)
+                    Image(systemName: "photo.stack.fill").foregroundStyle(Color.blue).frame(width: 24)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(language.text("Photo library access", "Accès à la photothèque"))
-                        Text(photoAccessText).font(.caption).foregroundStyle(.secondary)
+                        Text(photoAccessText).font(.caption).foregroundStyle(Color.secondary)
                     }
                     Spacer()
-                    Image(systemName: photoStatus == .authorized ? "checkmark.circle.fill" : "chevron.right").foregroundStyle(photoStatus == .authorized ? .green : .tertiary)
+                    Image(systemName: photoStatus == .authorized ? "checkmark.circle.fill" : "chevron.right")
+                        .foregroundStyle(photoStatus == .authorized ? Color.green : Color.secondary.opacity(0.45))
                 }
                 .contentShape(Rectangle())
                 .onTapGesture { openAppSettings() }
@@ -160,8 +161,8 @@ struct LiberonsHelpSupportView: View {
                 }
             }
             Section(language.text("Diagnostics", "Diagnostic")) {
-                HStack { Text(language.text("App version", "Version de l’app")); Spacer(); Text(appVersion).foregroundStyle(.secondary) }
-                HStack { Text(language.text("Build", "Build")); Spacer(); Text(buildNumber).foregroundStyle(.secondary) }
+                HStack { Text(language.text("App version", "Version de l’app")); Spacer(); Text(appVersion).foregroundStyle(Color.secondary) }
+                HStack { Text(language.text("Build", "Build")); Spacer(); Text(buildNumber).foregroundStyle(Color.secondary) }
             }
         }
         .navigationTitle(language.text("Help & support", "Aide et support"))
@@ -180,14 +181,14 @@ struct LiberonsAboutView: View {
             VStack(spacing: 20) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 28).fill(Color.blue.gradient).frame(width: 92, height: 92)
-                    Image(systemName: "icloud.and.arrow.up.fill").font(.system(size: 40, weight: .semibold)).foregroundStyle(.white)
+                    Image(systemName: "icloud.and.arrow.up.fill").font(.system(size: 40, weight: .semibold)).foregroundStyle(Color.white)
                 }
                 Text("Libérons").font(.system(size: 34, weight: .bold, design: .rounded))
-                Text(language.text("Keep your memories. Free your space.", "Gardez vos souvenirs. Libérez votre espace.")).font(.headline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                Text(language.text("Keep your memories. Free your space.", "Gardez vos souvenirs. Libérez votre espace.")).font(.headline).foregroundStyle(Color.secondary).multilineTextAlignment(.center)
                 VStack(alignment: .leading, spacing: 14) {
                     Text(language.text("Libérons is designed to make photo and video storage simple: protect your memories first, verify them, then choose when you want to reclaim space on your iPhone.", "Libérons est conçu pour simplifier le stockage de vos photos et vidéos : protégez d’abord vos souvenirs, vérifiez-les, puis choisissez quand vous souhaitez récupérer de l’espace sur votre iPhone."))
                     Divider()
-                    HStack { Text(language.text("Version", "Version")); Spacer(); Text(version).foregroundStyle(.secondary) }
+                    HStack { Text(language.text("Version", "Version")); Spacer(); Text(version).foregroundStyle(Color.secondary) }
                 }
                 .padding(20)
                 .background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 24))
