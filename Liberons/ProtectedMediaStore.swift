@@ -2,6 +2,16 @@ import Foundation
 import Combine
 import Supabase
 
+extension ProtectedCloudMedia: Hashable {
+    static func == (lhs: ProtectedCloudMedia, rhs: ProtectedCloudMedia) -> Bool {
+        lhs.id == rhs.id
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
+}
+
 @MainActor
 final class ProtectedMediaStore: ObservableObject {
     @Published private(set) var items: [ProtectedCloudMedia] = []
