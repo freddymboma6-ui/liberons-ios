@@ -13,11 +13,14 @@ final class CloudStorageSummary: ObservableObject {
     @Published private(set) var quotaBytes: Int64 = freeQuotaBytes
     @Published private(set) var protectedCount: Int = 0
     @Published private(set) var lastProtectedAt: Date?
+    @Published private(set) var accountRole: String = "user"
     @Published private(set) var isLoading = false
+    var isOwner: Bool { accountRole.lowercased() == "owner" }
     private var observer: NSObjectProtocol?
 
     private struct Usage: Decodable { let quota_bytes: Int64; let protected_bytes: Int64; let pending_bytes: Int64 }
     private struct Asset: Decodable { let protected_at: Date?; let size_bytes: Int64? }
+    private struct ProfileRole: Decodable { let role: String? }
 
     init() {
         observer = NotificationCenter.default.addObserver(forName: .liberonsCloudDidChange, object: nil, queue: .main) { [weak self] _ in Task { @MainActor in await self?.refresh() } }
@@ -29,6 +32,18 @@ final class CloudStorageSummary: ObservableObject {
         isLoading = true; defer { isLoading = false }
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
         var usageProtected: Int64?
+
+        do {
+            let response = try await SupabaseService.client.from("profiles").select("role").limit(1).execute()
+            if let profile = try decoder.decode([ProfileRole].self, from: response.data).first {
+                accountRole = profile.role?.lowercased() ?? "user"
+            } else {
+                accountRole = "user"
+            }
+        } catch {
+            accountRole = "user"
+        }
+
         do {
             let response = try await SupabaseService.client.from("storage_usage").select("quota_bytes,protected_bytes,pending_bytes").limit(1).execute()
             if let usage = try decoder.decode([Usage].self, from: response.data).first {
