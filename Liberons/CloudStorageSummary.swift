@@ -45,14 +45,17 @@ final class CloudStorageSummary: ObservableObject {
         }
         let userID = session.user.id.uuidString
 
-        // The authenticated server endpoint is the single source of truth for quota.
-        // Never silently downgrade a paid account to 2 GB when the network/backend fails.
+        // Decode the Edge Function result directly. With the current Supabase Swift SDK,
+        // invoke without a contextual return type resolves to Void, which caused the
+        // compiler error "Value of tuple type '()' has no member 'data'".
         do {
-            let response = try await SupabaseService.client.functions.invoke(
+            let plan: ServerPlan = try await SupabaseService.client.functions.invoke(
                 "account-storage-plan",
-                options: FunctionInvokeOptions(headers: ["Authorization": "Bearer \(session.accessToken)"])
+                options: FunctionInvokeOptions(headers: ["Authorization": "Bearer \(session.accessToken)"]),
+                decode: { data, _ in
+                    try decoder.decode(ServerPlan.self, from: data)
+                }
             )
-            let plan = try decoder.decode(ServerPlan.self, from: response.data)
             guard plan.user_id.lowercased() == userID.lowercased(), plan.source == "server", plan.quota_bytes > 0 else {
                 throw NSError(domain: "LiberonsPlan", code: 1)
             }
