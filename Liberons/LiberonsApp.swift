@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import Supabase
 import Auth
 
 @main
