@@ -17,6 +17,8 @@ final class BackupEngine: ObservableObject {
     @Published private(set) var lastProtectedFilename: String?
     @Published private(set) var lastProtectedBytes: Int64 = 0
     @Published private(set) var lastProtectedIsVideo = false
+    @Published private(set) var newlyProtectedLocalIdentifiers: [String] = []
+    @Published private(set) var protectionBatchID = UUID()
     @Published private(set) var queueTotal = 0
     @Published private(set) var queueCompleted = 0
     @Published private(set) var queueFailed = 0
@@ -49,15 +51,21 @@ final class BackupEngine: ObservableObject {
         result.enumerateObjects { asset, _, _ in assetsByID[asset.localIdentifier] = asset }
         let assets = unique.compactMap { assetsByID[$0] }
         guard !assets.isEmpty else { message = "No selected media found"; return }
+        newlyProtectedLocalIdentifiers = []
         isRunning = true; queueTotal = assets.count; queueCompleted = 0; queueFailed = 0
-        defer { isRunning = false; currentQueueFilename = nil }
+        defer {
+            isRunning = false; currentQueueFilename = nil
+            if !newlyProtectedLocalIdentifiers.isEmpty { protectionBatchID = UUID() }
+        }
         for asset in assets {
             guard let resource = PHAssetResource.assetResources(for: asset).first else { queueFailed += 1; continue }
             currentQueueFilename = resource.originalFilename; setPreview(asset: asset, resource: resource); message = "Protecting \(queueCompleted + queueFailed + 1) of \(queueTotal)…"
-            do { try await protect(asset: asset, resource: resource); queueCompleted += 1 } catch { queueFailed += 1 }
+            do { try await protect(asset: asset, resource: resource); newlyProtectedLocalIdentifiers.append(asset.localIdentifier); queueCompleted += 1 } catch { queueFailed += 1 }
         }
         message = queueFailed == 0 ? "\(queueCompleted) items protected ✓" : "\(queueCompleted) protected • \(queueFailed) failed"
     }
+
+    func clearPostBackupOffer() { newlyProtectedLocalIdentifiers = [] }
 
     private func setPreview(asset: PHAsset, resource: PHAssetResource) { selectedLocalIdentifier = asset.localIdentifier; selectedFilename = resource.originalFilename; selectedIsVideo = asset.mediaType == .video; selectedCreationDate = asset.creationDate; selectedBytes = Int64(resource.value(forKey: "fileSize") as? CLong ?? 0) }
 
