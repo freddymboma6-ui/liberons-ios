@@ -7,6 +7,8 @@ import UniformTypeIdentifiers
 @MainActor
 final class BackupEngine: ObservableObject {
     @Published private(set) var isRunning=false
+    @Published private(set) var isPaused=false
+    @Published private(set) var isStopping=false
     @Published private(set) var message=""
     @Published private(set) var selectedLocalIdentifier:String?
     @Published private(set) var selectedFilename:String?
@@ -27,6 +29,8 @@ final class BackupEngine: ObservableObject {
     @Published private(set) var maxConcurrentTransfers=1
 
     private var selectionConfirmed=false
+    private var stopRequested=false
+    private var pauseWaiters:[CheckedContinuation<Void,Never>]=[]
     var queueProgress:Double{queueTotal==0 ? 0:Double(queueCompleted+queueFailed)/Double(queueTotal)}
     var queueRemaining:Int{max(0,queueTotal-queueCompleted-queueFailed)}
     var queuePercent:Int{Int((queueProgress*100).rounded())}
@@ -40,6 +44,41 @@ final class BackupEngine: ObservableObject {
     func backupItems(count:Int,newestFirst:Bool)async{guard count>0 else{return};let options=PHFetchOptions();options.sortDescriptors=[NSSortDescriptor(key:"creationDate",ascending:!newestFirst)];options.fetchLimit=count;let result=PHAsset.fetchAssets(with:options);var ids:[String]=[];result.enumerateObjects{asset,_,_ in ids.append(asset.localIdentifier)};await backup(localIdentifiers:ids)}
     func backupOldestItems(count:Int)async{await backupItems(count:count,newestFirst:false)}
     func backupMemories(localIdentifiers:[String],count:Int,newestFirst:Bool)async{guard count>0 else{return};let result=PHAsset.fetchAssets(withLocalIdentifiers:localIdentifiers,options:nil);var assets:[PHAsset]=[];result.enumerateObjects{asset,_,_ in assets.append(asset)};assets.sort{let a=$0.creationDate ?? .distantPast;let b=$1.creationDate ?? .distantPast;return newestFirst ? a>b:a<b};await backup(localIdentifiers:Array(assets.prefix(count)).map(\.localIdentifier))}
+
+    func pause(){
+        guard isRunning,!isPaused,!isStopping else{return}
+        isPaused=true
+        message="Paused • \(queueRemaining) remaining"
+    }
+
+    func resume(){
+        guard isRunning,isPaused,!isStopping else{return}
+        isPaused=false
+        let waiters=pauseWaiters
+        pauseWaiters.removeAll()
+        waiters.forEach{$0.resume()}
+        message="\(queuePercent)% • \(queueRemaining) remaining"
+    }
+
+    /// Stops scheduling new media. Transfers already handed to iOS are allowed to
+    /// finish verification so a partially uploaded file is never marked protected.
+    func stop(){
+        guard isRunning,!isStopping else{return}
+        stopRequested=true
+        isStopping=true
+        if isPaused{
+            isPaused=false
+            let waiters=pauseWaiters
+            pauseWaiters.removeAll()
+            waiters.forEach{$0.resume()}
+        }
+        message=activeTransfers>0 ? "Stopping safely…":"Backup stopped"
+    }
+
+    private func waitIfPaused()async{
+        guard isPaused,!stopRequested else{return}
+        await withCheckedContinuation{continuation in pauseWaiters.append(continuation)}
+    }
 
     /// Runs a bounded number of complete export → upload → verify pipelines at once.
     /// This keeps the UI responsive while making good use of Wi‑Fi. We deliberately
@@ -55,6 +94,9 @@ final class BackupEngine: ObservableObject {
         guard !assets.isEmpty else{message="No selected media found";return}
 
         newlyProtectedLocalIdentifiers=[]
+        stopRequested=false
+        isStopping=false
+        isPaused=false
         isRunning=true
         queueTotal=assets.count
         queueCompleted=0
@@ -65,8 +107,13 @@ final class BackupEngine: ObservableObject {
 
         defer{
             isRunning=false
+            isPaused=false
+            isStopping=false
             activeTransfers=0
             currentQueueFilename=nil
+            let waiters=pauseWaiters
+            pauseWaiters.removeAll()
+            waiters.forEach{$0.resume()}
             if !newlyProtectedLocalIdentifiers.isEmpty{
                 protectionBatchID=UUID()
                 NotificationCenter.default.post(name:.liberonsCloudDidChange,object:nil)
@@ -77,10 +124,9 @@ final class BackupEngine: ObservableObject {
         await withTaskGroup(of:Result<ProtectedResult,Error>.self){group in
             let initial=min(maxConcurrentTransfers,assets.count)
             for _ in 0..<initial{
-                if let asset=iterator.next(){
-                    activeTransfers+=1
-                    group.addTask{await self.protectResult(asset:asset)}
-                }
+                guard !stopRequested,let asset=iterator.next() else{break}
+                activeTransfers+=1
+                group.addTask{await self.protectResult(asset:asset)}
             }
 
             while let outcome=await group.next(){
@@ -97,20 +143,31 @@ final class BackupEngine: ObservableObject {
                     queueFailed+=1
                 }
 
-                let done=queueCompleted+queueFailed
-                message="\(queuePercent)% • \(queueRemaining) remaining"
+                if stopRequested{
+                    message=activeTransfers>0 ? "Stopping safely…":"Backup stopped"
+                    continue
+                }
 
+                await waitIfPaused()
+                guard !stopRequested else{
+                    message=activeTransfers>0 ? "Stopping safely…":"Backup stopped"
+                    continue
+                }
+
+                message=isPaused ? "Paused • \(queueRemaining) remaining":"\(queuePercent)% • \(queueRemaining) remaining"
                 if let next=iterator.next(){
                     if let resource=PHAssetResource.assetResources(for:next).first{currentQueueFilename=resource.originalFilename}
                     activeTransfers+=1
                     group.addTask{await self.protectResult(asset:next)}
-                }else if done==queueTotal{
-                    currentQueueFilename=nil
                 }
             }
         }
 
-        message=queueFailed==0 ? "\(queueCompleted) items protected ✓":"\(queueCompleted) protected • \(queueFailed) failed"
+        if stopRequested{
+            message="Backup stopped • \(queueCompleted) protected"
+        }else{
+            message=queueFailed==0 ? "\(queueCompleted) items protected ✓":"\(queueCompleted) protected • \(queueFailed) failed"
+        }
     }
 
     func clearPostBackupOffer(){newlyProtectedLocalIdentifiers=[]}
@@ -140,9 +197,6 @@ final class BackupEngine: ObservableObject {
         try await export(resource:resource,to:temp)
         let byteCount=(try temp.resourceValues(forKeys:[.fileSizeKey])).fileSize ?? 0
         guard byteCount>0 else{throw NSError(domain:"LiberonsBackup",code:3,userInfo:[NSLocalizedDescriptionKey:"Exported media is empty"])}
-
-        // Hashing large videos on the MainActor was one of the biggest UI stalls.
-        // Move the file scan off the UI actor while keeping the same SHA‑256 safety check.
         let checksum=try await Task.detached(priority:.utility){try Self.sha256Detached(fileURL:temp)}.value
         let mimeType=UTType(filenameExtension:ext)?.preferredMIMEType ?? (asset.mediaType == .video ? "video/mp4":"image/jpeg")
         let iso=ISO8601DateFormatter()
