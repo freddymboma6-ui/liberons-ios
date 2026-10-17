@@ -33,7 +33,11 @@ final class AuthStore: ObservableObject {
     func signUp(email: String, password: String) async -> Bool {
         errorMessage = nil; infoMessage = nil
         do {
-            let response = try await SupabaseService.client.auth.signUp(email: email, password: password, redirectTo: URL(string: "liberons://auth/confirm"))
+            let response = try await SupabaseService.client.auth.signUp(
+                email: email,
+                password: password,
+                redirectTo: URL(string: "https://liberons.com/auth/callback")
+            )
             if let newSession = response.session {
                 session = newSession
                 await validateDeviceAndFreeTier()
