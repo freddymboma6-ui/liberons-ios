@@ -1,6 +1,53 @@
 import Foundation
 import Supabase
 
+private final class LiberonsBackgroundUploader:NSObject,URLSessionDataDelegate,URLSessionTaskDelegate,@unchecked Sendable{
+    static let shared=LiberonsBackgroundUploader()
+    private let lock=NSLock()
+    private var continuations:[Int:CheckedContinuation<(Data,URLResponse),Error>]=[:]
+    private var responseData:[Int:Data]=[:]
+
+    private lazy var session:URLSession={
+        let config=URLSessionConfiguration.background(withIdentifier:"com.liberons.cloud.background-upload")
+        config.sessionSendsLaunchEvents=true
+        config.isDiscretionary=false
+        config.waitsForConnectivity=true
+        config.allowsCellularAccess=true
+        config.httpMaximumConnectionsPerHost=4
+        config.timeoutIntervalForResource=60*60*6
+        return URLSession(configuration:config,delegate:self,delegateQueue:nil)
+    }()
+
+    func upload(fileURL:URL,request:URLRequest)async throws->(Data,URLResponse){
+        try await withCheckedThrowingContinuation{continuation in
+            let task=session.uploadTask(with:request,fromFile:fileURL)
+            lock.lock()
+            continuations[task.taskIdentifier]=continuation
+            responseData[task.taskIdentifier]=Data()
+            lock.unlock()
+            task.resume()
+        }
+    }
+
+    func urlSession(_ session:URLSession,dataTask:URLSessionDataTask,didReceive data:Data){
+        lock.lock();responseData[dataTask.taskIdentifier,default:Data()].append(data);lock.unlock()
+    }
+
+    func urlSession(_ session:URLSession,task:URLSessionTask,didCompleteWithError error:Error?){
+        lock.lock()
+        let continuation=continuations.removeValue(forKey:task.taskIdentifier)
+        let data=responseData.removeValue(forKey:task.taskIdentifier) ?? Data()
+        lock.unlock()
+        guard let continuation else{return}
+        if let error{continuation.resume(throwing:error);return}
+        guard let response=task.response else{
+            continuation.resume(throwing:NSError(domain:"LiberonsCloud",code:-1,userInfo:[NSLocalizedDescriptionKey:"B2 returned an invalid response"]))
+            return
+        }
+        continuation.resume(returning:(data,response))
+    }
+}
+
 enum SupabaseService {
     static let projectURL = URL(string: "https://kzwyweglrzcnxcpxnfuf.supabase.co")!
 
@@ -44,27 +91,23 @@ enum SupabaseService {
         return response.released_bytes
     }
 
-    /// Keeps the cloud record linked to the *new* PHAsset created when a protected
-    /// memory is restored to Apple Photos. Without this, the UI keeps checking the
-    /// identifier of the asset that was removed while freeing space.
     static func updateLocalIdentifier(assetID: UUID, localIdentifier: String) async throws {
         struct Patch: Encodable { let ios_local_identifier: String }
-        _ = try await client
-            .from("media_assets")
-            .update(Patch(ios_local_identifier: localIdentifier))
-            .eq("id", value: assetID.uuidString)
-            .execute()
+        _ = try await client.from("media_assets").update(Patch(ios_local_identifier: localIdentifier)).eq("id", value: assetID.uuidString).execute()
     }
 
+    /// Uses an iOS background URLSession. Once an upload task has been handed to
+    /// the system, iOS can keep transferring it while Libérons is backgrounded.
+    /// Verification still happens before an item is ever marked protected.
     static func putFile(_ fileURL: URL, to signedURL: URL, headers: [String: String]) async throws {
         var request = URLRequest(url: signedURL)
         request.httpMethod = "PUT"
         for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
-        let (data, response) = try await URLSession.shared.upload(for: request, fromFile: fileURL)
-        guard let http = response as? HTTPURLResponse else { throw NSError(domain: "LiberonsCloud", code: -1, userInfo: [NSLocalizedDescriptionKey: "B2 returned an invalid response"]) }
-        guard (200..<300).contains(http.statusCode) else {
-            let rawBody = String(data: data, encoding: .utf8) ?? ""
-            throw NSError(domain: "LiberonsCloud", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: "B2 upload failed — HTTP \(http.statusCode) — \(rawBody)"])
+        let (data,response)=try await LiberonsBackgroundUploader.shared.upload(fileURL:fileURL,request:request)
+        guard let http=response as? HTTPURLResponse else{throw NSError(domain:"LiberonsCloud",code:-1,userInfo:[NSLocalizedDescriptionKey:"B2 returned an invalid response"])}
+        guard (200..<300).contains(http.statusCode) else{
+            let rawBody=String(data:data,encoding:.utf8) ?? ""
+            throw NSError(domain:"LiberonsCloud",code:http.statusCode,userInfo:[NSLocalizedDescriptionKey:"B2 upload failed — HTTP \(http.statusCode) — \(rawBody)"])
         }
     }
 
