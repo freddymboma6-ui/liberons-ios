@@ -27,7 +27,7 @@ final class AuthStore: ObservableObject {
         do {
             session = try await SupabaseService.client.auth.signIn(email: email, password: password)
             await validateDeviceAndFreeTier()
-        } catch { errorMessage = error.localizedDescription }
+        } catch { errorMessage = friendlyAuthError(error) }
     }
 
     func signUp(email: String, password: String) async -> Bool {
@@ -41,7 +41,7 @@ final class AuthStore: ObservableObject {
             }
             infoMessage = "confirmation_required"
             return true
-        } catch { errorMessage = error.localizedDescription; return false }
+        } catch { errorMessage = friendlyAuthError(error); return false }
     }
 
     func sendPasswordReset(email: String) async -> Bool {
@@ -50,7 +50,7 @@ final class AuthStore: ObservableObject {
             try await SupabaseService.client.auth.resetPasswordForEmail(email, redirectTo: URL(string: "liberons://auth/reset-password"))
             infoMessage = "password_reset_sent"
             return true
-        } catch { errorMessage = error.localizedDescription; return false }
+        } catch { errorMessage = friendlyAuthError(error); return false }
     }
 
     func handleAuthURL(_ url: URL) async -> Bool {
@@ -59,7 +59,7 @@ final class AuthStore: ObservableObject {
             session = try await SupabaseService.client.auth.session(from: url)
             return true
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = friendlyAuthError(error)
             return false
         }
     }
@@ -70,14 +70,40 @@ final class AuthStore: ObservableObject {
             try await SupabaseService.client.auth.update(user: UserAttributes(password: password))
             infoMessage = "password_updated"
             return true
-        } catch { errorMessage = error.localizedDescription; return false }
+        } catch { errorMessage = friendlyAuthError(error); return false }
     }
 
     func signOut() async {
         do {
             try await SupabaseService.client.auth.signOut()
             session = nil; freeTierEligible = nil; appAttestVerified = nil; infoMessage = nil
-        } catch { errorMessage = error.localizedDescription }
+        } catch { errorMessage = friendlyAuthError(error) }
+    }
+
+    private func friendlyAuthError(_ error: Error) -> String {
+        let raw = error.localizedDescription.lowercased()
+        if raw.contains("invalid login credentials") || raw.contains("invalid credentials") {
+            return "auth_invalid_credentials"
+        }
+        if raw.contains("email not confirmed") {
+            return "auth_email_not_confirmed"
+        }
+        if raw.contains("user already registered") || raw.contains("already been registered") {
+            return "auth_user_already_registered"
+        }
+        if raw.contains("password") && (raw.contains("least") || raw.contains("short") || raw.contains("characters")) {
+            return "auth_password_too_short"
+        }
+        if raw.contains("email") && raw.contains("invalid") {
+            return "auth_invalid_email"
+        }
+        if raw.contains("network") || raw.contains("internet") || raw.contains("offline") || raw.contains("connection") {
+            return "auth_network_error"
+        }
+        if raw.contains("rate limit") || raw.contains("too many") {
+            return "auth_too_many_requests"
+        }
+        return "auth_generic_error"
     }
 
     private func validateDeviceAndFreeTier() async {
