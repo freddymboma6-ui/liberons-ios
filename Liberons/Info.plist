@@ -35,5 +35,7 @@
     </array>
     <key>LSRequiresIPhoneOS</key>
     <true/>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>Libérons needs access to your photo and video library to analyze your storage, securely back up your memories, and help you free space on your iPhone.</string>
 </dict>
 </plist>
