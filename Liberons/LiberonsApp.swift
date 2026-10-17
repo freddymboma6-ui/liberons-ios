@@ -16,7 +16,6 @@ struct LiberonsApp: App {
         WindowGroup {
             ContentView()
                 .liberonsCanvas()
-                .nativeLibéronsRegistration()
                 .liberonsPasswordRecovery()
                 .onOpenURL { url in
                     let isRecovery = url.host == "auth" && url.path.contains("reset-password")
