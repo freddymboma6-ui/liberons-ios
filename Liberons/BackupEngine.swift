@@ -42,7 +42,8 @@ final class BackupEngine: ObservableObject {
     var queuePercent:Int{Int((queueProgress*100).rounded())}
 
     private struct InitiateResponse:Decodable{struct Upload:Decodable{let url:String;let headers:[String:String]};let asset_id:String;let upload_session_id:String;let upload:Upload}
-    private struct ProtectedResult:Sendable{let localIdentifier:String;let filename:String;let bytes:Int64;let isVideo:Bool}
+    private struct ProtectedResult:Sendable{let localIdentifier:String;let filename:String;let bytes:Int64;let isVideo:Bool;let cloudAssetID:String}
+    private struct ThumbnailJob:Sendable{let localIdentifier:String;let cloudAssetID:String}
     private struct BackupFailure:Error,Sendable{
         let reason:String
         let diagnostic:String
@@ -64,8 +65,9 @@ final class BackupEngine: ObservableObject {
     func backup(localIdentifiers:[String])async{
         guard !isRunning else{return}
         var seen=Set<String>();let unique=localIdentifiers.filter{seen.insert($0).inserted};let result=PHAsset.fetchAssets(withLocalIdentifiers:unique,options:nil);var map:[String:PHAsset]=[:];result.enumerateObjects{asset,_,_ in map[asset.localIdentifier]=asset};let assets=unique.compactMap{map[$0]};guard !assets.isEmpty else{message="No selected media found";return}
+        var thumbnailJobs:[ThumbnailJob]=[]
         newlyProtectedLocalIdentifiers=[];stopRequested=false;isStopping=false;isPaused=false;isRunning=true;queueTotal=assets.count;queueCompleted=0;queueFailed=0;lastFailureReason=nil;failureSummary=[:];repeatedFailureReason=nil;repeatedFailureCount=0;maxConcurrentTransfers=recommendedConcurrency();activeTransfers=0;message="Preparing \(queueTotal) items…"
-        defer{isRunning=false;isPaused=false;isStopping=false;activeTransfers=0;currentQueueFilename=nil;let waiters=pauseWaiters;pauseWaiters.removeAll();waiters.forEach{$0.resume()};if !newlyProtectedLocalIdentifiers.isEmpty{protectionBatchID=UUID();NotificationCenter.default.post(name:.liberonsCloudDidChange,object:nil)}}
+        defer{isRunning=false;isPaused=false;isStopping=false;activeTransfers=0;currentQueueFilename=nil;let waiters=pauseWaiters;pauseWaiters.removeAll();waiters.forEach{$0.resume()};if !newlyProtectedLocalIdentifiers.isEmpty{protectionBatchID=UUID();NotificationCenter.default.post(name:.liberonsCloudDidChange,object:nil)};if !thumbnailJobs.isEmpty{startDeferredThumbnails(thumbnailJobs)}}
         var iterator=assets.makeIterator();await withTaskGroup(of:Result<ProtectedResult,BackupFailure>.self){group in
             let initial=min(maxConcurrentTransfers,assets.count)
             for _ in 0..<initial{guard !stopRequested,let asset=iterator.next() else{break};activeTransfers+=1;group.addTask{await self.protectResultWithRetry(asset:asset)}}
@@ -73,7 +75,7 @@ final class BackupEngine: ObservableObject {
                 activeTransfers=max(0,activeTransfers-1)
                 switch outcome{
                 case .success(let protected):
-                    newlyProtectedLocalIdentifiers.append(protected.localIdentifier);queueCompleted+=1;lastProtectedLocalIdentifier=protected.localIdentifier;lastProtectedFilename=protected.filename;lastProtectedBytes=protected.bytes;lastProtectedIsVideo=protected.isVideo;repeatedFailureReason=nil;repeatedFailureCount=0
+                    newlyProtectedLocalIdentifiers.append(protected.localIdentifier);thumbnailJobs.append(ThumbnailJob(localIdentifier:protected.localIdentifier,cloudAssetID:protected.cloudAssetID));queueCompleted+=1;lastProtectedLocalIdentifier=protected.localIdentifier;lastProtectedFilename=protected.filename;lastProtectedBytes=protected.bytes;lastProtectedIsVideo=protected.isVideo;repeatedFailureReason=nil;repeatedFailureCount=0
                 case .failure(let failure):
                     queueFailed+=1;lastFailureReason=failure.reason;failureSummary[failure.reason,default:0]+=1
                     if repeatedFailureReason==failure.reason{repeatedFailureCount+=1}else{repeatedFailureReason=failure.reason;repeatedFailureCount=1}
@@ -89,7 +91,7 @@ final class BackupEngine: ObservableObject {
     }
 
     func clearPostBackupOffer(){newlyProtectedLocalIdentifiers=[]}
-    private func recommendedConcurrency()->Int{if ProcessInfo.processInfo.isLowPowerModeEnabled{return 2};switch ProcessInfo.processInfo.thermalState{case .serious,.critical:return 2;case .fair:return 4;default:return 6}}
+    private func recommendedConcurrency()->Int{if ProcessInfo.processInfo.isLowPowerModeEnabled{return 2};switch ProcessInfo.processInfo.thermalState{case .serious,.critical:return 2;case .fair:return 4;default:return 8}}
     private func primaryResource(for asset:PHAsset)->PHAssetResource?{let resources=PHAssetResource.assetResources(for:asset);if asset.mediaType == .video{return resources.first(where:{$0.type == .fullSizeVideo}) ?? resources.first(where:{$0.type == .video}) ?? resources.first(where:{$0.uniformTypeIdentifier.hasPrefix("public.movie") || $0.uniformTypeIdentifier.hasPrefix("public.video")}) ?? resources.first};return resources.first(where:{$0.type == .fullSizePhoto}) ?? resources.first(where:{$0.type == .photo}) ?? resources.first}
     private func setPreview(asset:PHAsset,resource:PHAssetResource){selectedLocalIdentifier=asset.localIdentifier;selectedFilename=resource.originalFilename;selectedIsVideo=asset.mediaType == .video;selectedCreationDate=asset.creationDate;selectedBytes=Int64(resource.value(forKey:"fileSize") as? CLong ?? 0)}
 
@@ -123,11 +125,24 @@ final class BackupEngine: ObservableObject {
 
     private func protect(asset:PHAsset,resource:PHAssetResource)async throws->ProtectedResult{
         var temporaryURL:URL?;defer{if let temporaryURL{try? FileManager.default.removeItem(at:temporaryURL)}};let ext=(resource.originalFilename as NSString).pathExtension;let temp=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension(ext);temporaryURL=temp;try await export(resource:resource,to:temp);let byteCount=(try temp.resourceValues(forKeys:[.fileSizeKey])).fileSize ?? 0;guard byteCount>0 else{throw NSError(domain:"LiberonsBackup",code:3,userInfo:[NSLocalizedDescriptionKey:"Exported media is empty"])};let checksum=try await Task.detached(priority:.utility){try Self.sha256Detached(fileURL:temp)}.value;let mimeType=UTType(filenameExtension:ext)?.preferredMIMEType ?? (asset.mediaType == .video ? "video/mp4":"image/jpeg");let iso=ISO8601DateFormatter();var body:[String:Any]=["filename":resource.originalFilename,"mime_type":mimeType,"size_bytes":byteCount,"checksum_sha256":checksum,"ios_local_identifier":asset.localIdentifier];if let captured=asset.creationDate{body["captured_at"]=iso.string(from:captured)};let initiateData=try await SupabaseService.callFunction("initiate-upload",json:try JSONSerialization.data(withJSONObject:body));let initiated=try JSONDecoder().decode(InitiateResponse.self,from:initiateData);guard let signedURL=URL(string:initiated.upload.url) else{throw NSError(domain:"LiberonsBackup",code:4,userInfo:[NSLocalizedDescriptionKey:"Invalid signed upload URL"])};try await SupabaseService.putFile(temp,to:signedURL,headers:initiated.upload.headers);let verifiedData=try await SupabaseService.verifyUpload(assetID:initiated.asset_id,uploadSessionID:initiated.upload_session_id);let verifiedObject=try JSONSerialization.jsonObject(with:verifiedData) as? [String:Any];guard verifiedObject?["protected"] as? Bool == true else{throw NSError(domain:"LiberonsBackup",code:5,userInfo:[NSLocalizedDescriptionKey:"Cloud copy was not marked protected"])}
-        if let thumbnail=await thumbnailJPEG(for:asset){let thumbBody:[String:Any]=["asset_id":initiated.asset_id,"jpeg_base64":thumbnail.base64EncodedString()];_ = try? await SupabaseService.callFunction("upload-media-thumbnail",json:try JSONSerialization.data(withJSONObject:thumbBody))}
-        return ProtectedResult(localIdentifier:asset.localIdentifier,filename:resource.originalFilename,bytes:Int64(byteCount),isVideo:asset.mediaType == .video)
+        return ProtectedResult(localIdentifier:asset.localIdentifier,filename:resource.originalFilename,bytes:Int64(byteCount),isVideo:asset.mediaType == .video,cloudAssetID:initiated.asset_id)
     }
 
-    private func thumbnailJPEG(for asset:PHAsset)async->Data?{await withCheckedContinuation{continuation in let options=PHImageRequestOptions();options.deliveryMode = .highQualityFormat;options.resizeMode = .fast;options.isNetworkAccessAllowed=true;PHImageManager.default().requestImage(for:asset,targetSize:CGSize(width:640,height:640),contentMode:.aspectFill,options:options){image,info in if (info?[PHImageCancelledKey] as? Bool)==true{continuation.resume(returning:nil);return};continuation.resume(returning:image?.jpegData(compressionQuality:0.72))}}}
+    private func startDeferredThumbnails(_ jobs:[ThumbnailJob]){
+        Task(priority:.utility){
+            for job in jobs{
+                if ProcessInfo.processInfo.thermalState == .critical{break}
+                let result=PHAsset.fetchAssets(withLocalIdentifiers:[job.localIdentifier],options:nil)
+                guard let asset=result.firstObject,let thumbnail=await self.thumbnailJPEG(for:asset) else{continue}
+                let thumbBody:[String:Any]=["asset_id":job.cloudAssetID,"jpeg_base64":thumbnail.base64EncodedString()]
+                _ = try? await SupabaseService.callFunction("upload-media-thumbnail",json:try JSONSerialization.data(withJSONObject:thumbBody))
+                await Task.yield()
+            }
+            NotificationCenter.default.post(name:.liberonsCloudDidChange,object:nil)
+        }
+    }
+
+    private func thumbnailJPEG(for asset:PHAsset)async->Data?{await withCheckedContinuation{continuation in let options=PHImageRequestOptions();options.deliveryMode = .fastFormat;options.resizeMode = .fast;options.isNetworkAccessAllowed=false;PHImageManager.default().requestImage(for:asset,targetSize:CGSize(width:360,height:360),contentMode:.aspectFill,options:options){image,info in if (info?[PHImageCancelledKey] as? Bool)==true{continuation.resume(returning:nil);return};continuation.resume(returning:image?.jpegData(compressionQuality:0.62))}}}
     private func export(resource:PHAssetResource,to url:URL)async throws{try await withCheckedThrowingContinuation{(continuation:CheckedContinuation<Void,Error>) in let options=PHAssetResourceRequestOptions();options.isNetworkAccessAllowed=true;PHAssetResourceManager.default().writeData(for:resource,toFile:url,options:options){error in if let error{continuation.resume(throwing:error)}else{continuation.resume(returning:())}}}}
-    nonisolated private static func sha256Detached(fileURL:URL)throws->String{let handle=try FileHandle(forReadingFrom:fileURL);defer{try? handle.close()};var hasher=SHA256();while true{let data=try handle.read(upToCount:4_194_304) ?? Data();if data.isEmpty{break};hasher.update(data:data)};return hasher.finalize().map{String(format:"%02x",$0)}.joined()}
+    nonisolated private static func sha256Detached(fileURL:URL)throws->String{let handle=try FileHandle(forReadingFrom:fileURL);defer{try? handle.close()};var hasher=SHA256();while true{let data=try handle.read(upToCount:16_777_216) ?? Data();if data.isEmpty{break};hasher.update(data:data)};return hasher.finalize().map{String(format:"%02x",$0)}.joined()}
 }
