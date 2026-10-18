@@ -1,33 +1,123 @@
-name: Fix account settings closure
+name: Apply library interaction fixes
 on:
   push:
     branches: [library-protected-media]
+    paths:
+      - '.github/workflows/fix-account-settings-closure.yml'
 permissions:
   contents: write
 jobs:
   fix:
-    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: library-protected-media
-      - name: Fix nested shorthand closure
+      - name: Patch protected library
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          p = Path('Liberons/AccountSettingsViews.swift')
-          s = p.read_text()
-          old = 'ForEach(categories.filter { $0.0 != "all" && filteredItems.contains(where: { item in item.category == $0.0 }) }, id: \\.0) { category in'
-          new = 'ForEach(categories.filter { category in category.0 != "all" && filteredItems.contains(where: { item in item.category == category.0 }) }, id: \\.0) { category in'
-          if old not in s:
-              raise SystemExit('Expected problematic closure not found')
-          p.write_text(s.replace(old, new, 1))
+          p=Path('Liberons/ProtectedLibraryView.swift')
+          s=p.read_text()
+
+          if '@State private var restoringSelection = false' not in s:
+              s=s.replace('@State private var deletingSelection = false\n','@State private var deletingSelection = false\n    @State private var restoringSelection = false\n',1)
+
+          old='ToolbarItemGroup(placement: .bottomBar) { Button(language.text("Select all", "Tout sélectionner")) { selectedIDs = Set(store.items.map(\\.id)) }; Spacer(); Button(language.text("Delete", "Supprimer"), role: .destructive) { showBulkDelete = true }.disabled(selectedIDs.isEmpty || deletingSelection) }'
+          new='ToolbarItemGroup(placement: .bottomBar) { Button(language.text("Select all", "Tout sélectionner")) { selectedIDs = Set(store.items.map(\\.id)) }; Spacer(); Button { Task { await restoreSelected() } } label: { Label(language.text("Recover", "Récupérer"), systemImage: "square.and.arrow.down") }.disabled(selectedIDs.isEmpty || deletingSelection || restoringSelection || billing.isPaymentRestricted); Spacer(); Button(role: .destructive) { showBulkDelete = true } label: { Label(language.text("Delete", "Supprimer"), systemImage: "trash") }.disabled(selectedIDs.isEmpty || deletingSelection || restoringSelection) }'
+          if old in s:
+              s=s.replace(old,new,1)
+
+          needle='    @MainActor private func deleteSelected() async {'
+          if 'private func restoreSelected() async' not in s:
+              restore='''    @MainActor private func restoreSelected() async {
+        guard !billing.isPaymentRestricted else { return }
+        restoringSelection = true
+        var failures = 0
+        let chosen = store.items.filter { selectedIDs.contains($0.id) }
+        for item in chosen {
+            do {
+                let remote = try await SupabaseService.cloudOriginalURL(assetID: item.id)
+                let (downloaded, response) = try await URLSession.shared.download(from: remote)
+                guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
+                let fallback = item.mediaType.lowercased().contains("video") ? "mov" : "jpg"
+                let sourceExtension = item.originalFilename.map { URL(fileURLWithPath: $0).pathExtension } ?? ""
+                let ext = sourceExtension.isEmpty ? fallback : sourceExtension
+                let local = FileManager.default.temporaryDirectory.appendingPathComponent("liberons-restore-\\(UUID().uuidString).\\(ext)")
+                try? FileManager.default.removeItem(at: local)
+                try FileManager.default.moveItem(at: downloaded, to: local)
+                try await PHPhotoLibrary.shared().performChanges {
+                    if item.mediaType.lowercased().contains("video") { PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: local) }
+                    else { PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: local) }
+                }
+                try? FileManager.default.removeItem(at: local)
+            } catch { failures += 1 }
+        }
+        restoringSelection = false
+        if failures == 0 { selectedIDs.removeAll(); isSelecting = false }
+    }
+'''
+              if needle not in s: raise SystemExit('deleteSelected marker missing')
+              s=s.replace(needle,restore+needle,1)
+
+          start=s.index('private struct CloudPhotoPage:View{')
+          end=s.index('private enum ProtectedAction:',start)
+          cloud='''private struct CloudPhotoPage:View{
+    let item:ProtectedCloudMedia;@ObservedObject var language:LanguageStore;@ObservedObject var billing:CloudStorageSummary
+    @State private var image:UIImage?;@State private var player:AVPlayer?;@State private var temporaryVideoURL:URL?;@State private var loading=true;@State private var loadFailed=false
+    private var isVideo:Bool{item.mediaType.lowercased().contains("video")}
+    var body:some View{
+        ZStack{Color.black
+            if isVideo,let player { VideoPlayer(player:player).onAppear{player.play()} }
+            else if let image { Image(uiImage:image).resizable().scaledToFit() }
+            else if loading { ProgressView().tint(.white) }
+            else if loadFailed { Image(systemName:"exclamationmark.icloud").font(.largeTitle).foregroundStyle(.white) }
+        }
+        .task(id:item.id){await load()}
+        .onDisappear{player?.pause();player=nil;if let temporaryVideoURL{try? FileManager.default.removeItem(at:temporaryVideoURL);self.temporaryVideoURL=nil}}
+    }
+    @MainActor private func load()async{
+        loading=true;loadFailed=false
+        defer{loading=false}
+        if isVideo {
+            guard !billing.isPaymentRestricted else { loadFailed=true;return }
+            do {
+                let remote=try await SupabaseService.cloudOriginalURL(assetID:item.id)
+                let(downloaded,response)=try await URLSession.shared.download(from:remote)
+                guard let http=response as? HTTPURLResponse,(200..<300).contains(http.statusCode) else{throw URLError(.badServerResponse)}
+                let rawExt=item.originalFilename.map{URL(fileURLWithPath:$0).pathExtension} ?? ""
+                let ext=rawExt.isEmpty ? "mov":rawExt
+                let local=FileManager.default.temporaryDirectory.appendingPathComponent("liberons-play-\\(item.id.uuidString).\\(ext)")
+                try? FileManager.default.removeItem(at:local)
+                try FileManager.default.moveItem(at:downloaded,to:local)
+                temporaryVideoURL=local
+                let newPlayer=AVPlayer(url:local);player=newPlayer;newPlayer.play()
+            } catch { loadFailed=true }
+            return
+        }
+        if let id=item.iosLocalIdentifier,let asset=PHAsset.fetchAssets(withLocalIdentifiers:[id],options:nil).firstObject{
+            let options=PHImageRequestOptions();options.isNetworkAccessAllowed=true;options.deliveryMode = .highQualityFormat
+            PHImageManager.default().requestImage(for:asset,targetSize:PHImageManagerMaximumSize,contentMode:.aspectFit,options:options){value,_ in if let value{Task{@MainActor in image=value}}}
+            return
+        }
+        if let preview=try? await SupabaseService.cloudPreviewURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:preview),let http=response as? HTTPURLResponse,(200..<300).contains(http.statusCode),let decoded=UIImage(data:data){image=decoded;return}
+        guard !billing.isPaymentRestricted else{loadFailed=true;return}
+        if let original=try? await SupabaseService.cloudOriginalURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:original),let http=response as? HTTPURLResponse,(200..<300).contains(http.statusCode),let decoded=UIImage(data:data){image=decoded;return}
+        loadFailed=true
+    }
+}
+
+'''
+          s=s[:start]+cloud+s[end:]
+          p.write_text(s)
           PY
-      - name: Commit fix
+      - name: Validate and commit
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Liberons/AccountSettingsViews.swift
-          git commit -m "Fix nested FAQ category closure"
-          git push
+          grep -q 'language.text("Recover", "Récupérer")' Liberons/ProtectedLibraryView.swift
+          grep -q 'URLSession.shared.download(from:remote)' Liberons/ProtectedLibraryView.swift
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Liberons/ProtectedLibraryView.swift
+          git commit -m 'Add bulk recovery and reliable video playback'
+          git push origin HEAD:library-protected-media
