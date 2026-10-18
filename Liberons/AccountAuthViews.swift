@@ -60,18 +60,24 @@ struct ChangePasswordView: View {
 struct AccountSecurityView: View {
     @ObservedObject var auth: AuthStore
     @ObservedObject var language: LanguageStore
-    private var webPrefix: String { language.language == .english ? "/en" : "" }
-    private func webURL(_ path: String) -> URL { URL(string: "https://liberons.com\(webPrefix)\(path)")! }
+    private func fullRow(_ title: String, icon: String) -> some View {
+        Label(title, systemImage: icon)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .contentShape(Rectangle())
+    }
+    private func webURL(_ destination: LiberonsWebDestination) -> URL {
+        destination.url(for: language.language) ?? URL(string: "https://liberons.com")!
+    }
     var body: some View {
         List {
-            Section { NavigationLink { ChangePasswordView(auth: auth, language: language) } label: { Label(language.text("Change password", "Modifier le mot de passe"), systemImage: "key.fill") } } header: { Text(language.text("Account security", "Sécurité du compte")) } footer: { Text(language.text("Your password protects access to your Libérons account and protected memories.", "Votre mot de passe protège l’accès à votre compte Libérons et à vos souvenirs protégés.")) }
-            Section { NavigationLink { LiberonsPrivacySecurityView(language: language) } label: { Label(language.text("Privacy & data protection", "Confidentialité et protection des données"), systemImage: "lock.shield.fill") } } footer: { Text(language.text("Review how Libérons protects your memories and manages access on this iPhone.", "Consultez comment Libérons protège vos souvenirs et gère les accès sur cet iPhone.")) }
+            Section { NavigationLink { ChangePasswordView(auth: auth, language: language) } label: { fullRow(language.text("Change password", "Modifier le mot de passe"), icon: "key.fill") } } header: { Text(language.text("Account security", "Sécurité du compte")) } footer: { Text(language.text("Your password protects access to your Libérons account and protected memories.", "Votre mot de passe protège l’accès à votre compte Libérons et à vos souvenirs protégés.")) }
+            Section { NavigationLink { LiberonsPrivacySecurityView(language: language) } label: { fullRow(language.text("Privacy & data protection", "Confidentialité et protection des données"), icon: "lock.shield.fill") } } footer: { Text(language.text("Review how Libérons protects your memories and manages access on this iPhone.", "Consultez comment Libérons protège vos souvenirs et gère les accès sur cet iPhone.")) }
             Section(language.text("Official policies", "Politiques officielles")) {
-                Link(destination: webURL("/privacy")) { Label(language.text("Privacy Policy", "Politique de confidentialité"), systemImage: "hand.raised.square.fill") }
-                Link(destination: webURL("/terms")) { Label(language.text("Terms of Use", "Conditions d’utilisation"), systemImage: "doc.text.fill") }
-                Link(destination: webURL("/refund-policy")) { Label(language.text("Refund Policy", "Politique de remboursement"), systemImage: "arrow.uturn.backward.circle.fill") }
+                Link(destination: webURL(.privacy)) { fullRow(language.text("Privacy Policy", "Politique de confidentialité"), icon: "hand.raised.square.fill") }
+                Link(destination: webURL(.terms)) { fullRow(language.text("Terms of Use", "Conditions d’utilisation"), icon: "doc.text.fill") }
+                Link(destination: webURL(.refunds)) { fullRow(language.text("Refund Policy", "Politique de remboursement"), icon: "arrow.uturn.backward.circle.fill") }
             }
-            Section { Link(destination: URL(string:"https://liberons.com")!) { Label(language.text("Open liberons.com", "Ouvrir liberons.com"), systemImage: "safari.fill") } } footer: { Text(language.text("Official policies open on liberons.com in the same language selected in the app.", "Les politiques officielles s’ouvrent sur liberons.com dans la même langue que celle sélectionnée dans l’app.")) }
+            Section { Link(destination: webURL(.home)) { fullRow(language.text("Open liberons.com", "Ouvrir liberons.com"), icon: "safari.fill") } } footer: { Text(language.text("Review Libérons legal and privacy information whenever you need it.", "Consultez les informations juridiques et de confidentialité de Libérons à tout moment.")) }
         }
         .scrollContentBackground(.hidden).background(LiberonsTheme.canvas.ignoresSafeArea()).navigationTitle(language.text("Privacy & security", "Confidentialité et sécurité")).navigationBarTitleDisplayMode(.inline)
     }
