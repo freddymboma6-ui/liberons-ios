@@ -41,9 +41,7 @@ jobs:
         do {
             let request = try await SupabaseService.protectedStreamRequest(assetID: item.id)
             guard let url = request.url else { throw URLError(.badURL) }
-            let options: [String: Any] = [
-                "AVURLAssetHTTPHeaderFieldsKey": request.allHTTPHeaderFields ?? [:]
-            ]
+            let options: [String: Any] = ["AVURLAssetHTTPHeaderFieldsKey": request.allHTTPHeaderFields ?? [:]]
             let asset = AVURLAsset(url: url, options: options)
             let playable = try await asset.load(.isPlayable)
             guard playable else { throw URLError(.cannotDecodeContentData) }
@@ -60,15 +58,12 @@ jobs:
 
         let remote = try await SupabaseService.cloudStreamURL(assetID: item.id)
         let (downloaded, response) = try await URLSession.shared.download(from: remote)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw URLError(.badServerResponse)
-        }
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
         let attrs = try fm.attributesOfItem(atPath: downloaded.path)
         let downloadedSize = (attrs[.size] as? NSNumber)?.int64Value ?? 0
         guard downloadedSize > 0 else { throw URLError(.zeroByteResource) }
         if item.sizeBytes > 0 && downloadedSize != item.sizeBytes {
-            throw NSError(domain: "LiberonsProtectedVideo", code: 1001,
-                          userInfo: [NSLocalizedDescriptionKey: "Protected video download is incomplete."])
+            throw NSError(domain: "LiberonsProtectedVideo", code: 1001, userInfo: [NSLocalizedDescriptionKey: "Protected video download is incomplete."])
         }
         try? fm.removeItem(at: local)
         try fm.moveItem(at: downloaded, to: local)
