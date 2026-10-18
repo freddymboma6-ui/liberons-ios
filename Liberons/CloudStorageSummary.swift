@@ -54,9 +54,27 @@ final class CloudStorageSummary: ObservableObject {
             subscriptionStatus = plan.subscription?.status?.lowercased() ?? "free"; gracePeriodEnd = plan.subscription?.grace_period_end; lastPaymentFailedAt = plan.subscription?.last_payment_failed_at; planLoadFailed = false
         } catch { planLoadFailed = true }
         do {
-            let response = try await SupabaseService.client.from("media_assets").select("protected_at,size_bytes").eq("user_id", value: userID).eq("status", value: "protected").order("protected_at", ascending: false).execute()
-            let assets = try decoder.decode([Asset].self, from: response.data); protectedCount = assets.count; lastProtectedAt = assets.first?.protected_at
-            let actualAssetBytes = assets.reduce(Int64(0)) { $0 + max(0, $1.size_bytes ?? 0) }; if actualAssetBytes > 0 { protectedBytes = actualAssetBytes }
+            let pageSize = 1000
+            var offset = 0
+            var allAssets: [Asset] = []
+            while true {
+                let response = try await SupabaseService.client
+                    .from("media_assets")
+                    .select("protected_at,size_bytes")
+                    .eq("user_id", value: userID)
+                    .eq("status", value: "protected")
+                    .order("protected_at", ascending: false)
+                    .range(from: offset, to: offset + pageSize - 1)
+                    .execute()
+                let page = try decoder.decode([Asset].self, from: response.data)
+                allAssets.append(contentsOf: page)
+                if page.count < pageSize { break }
+                offset += pageSize
+            }
+            protectedCount = allAssets.count
+            lastProtectedAt = allAssets.first?.protected_at
+            let actualAssetBytes = allAssets.reduce(Int64(0)) { $0 + max(0, $1.size_bytes ?? 0) }
+            if actualAssetBytes > 0 { protectedBytes = actualAssetBytes }
         } catch { }
     }
 }
