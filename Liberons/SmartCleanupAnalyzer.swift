@@ -8,40 +8,56 @@ final class SmartCleanupAnalyzer: ObservableObject {
     @Published private(set) var screenshotIDs: [String] = []
     @Published private(set) var duplicateIDs: [String] = []
     @Published private(set) var memoryIDs: [String] = []
+    @Published private(set) var photoIDs: [String] = []
+    @Published private(set) var videoIDs: [String] = []
     @Published private(set) var screenshotBytes: Int64 = 0
+    @Published private(set) var photoBytes: Int64 = 0
+    @Published private(set) var videoBytes: Int64 = 0
     @Published private(set) var duplicateBytes: Int64 = 0
 
     var screenshotCount: Int { screenshotIDs.count }
     var duplicateCount: Int { duplicateIDs.count }
     var memoryCount: Int { memoryIDs.count }
+    var photoCount: Int { photoIDs.count }
+    var videoCount: Int { videoIDs.count }
+    var totalCount: Int { photoCount + videoCount + screenshotCount }
 
     func scan() async {
         guard !isScanning else { return }
         isScanning = true
         defer { isScanning = false }
 
-        // Keep discovery local and lightweight. Exact byte counting below never downloads
-        // iCloud-only originals: it only counts resources already present on this iPhone.
         let result = PHAsset.fetchAssets(with: nil)
         var shots: [String] = []
+        var photos: [String] = []
+        var videos: [String] = []
         var memories: [String] = []
 
         result.enumerateObjects { asset, _, _ in
             if asset.mediaType == .image && asset.mediaSubtypes.contains(.photoScreenshot) {
                 shots.append(asset.localIdentifier)
-            } else {
+            } else if asset.mediaType == .video {
+                videos.append(asset.localIdentifier)
+                memories.append(asset.localIdentifier)
+            } else if asset.mediaType == .image {
+                photos.append(asset.localIdentifier)
                 memories.append(asset.localIdentifier)
             }
         }
 
         screenshotIDs = shots
+        photoIDs = photos
+        videoIDs = videos
         memoryIDs = memories
         duplicateIDs = []
         duplicateBytes = 0
 
-        // Count the real local bytes with the public Photos API. This replaces the old
-        // hard-coded 0 KB while avoiding private/KVC file-size access and iCloud downloads.
-        screenshotBytes = await localByteCount(for: shots)
+        async let shotBytes = localByteCount(for: shots)
+        async let photosBytes = localByteCount(for: photos)
+        async let videosBytes = localByteCount(for: videos)
+        screenshotBytes = await shotBytes
+        photoBytes = await photosBytes
+        videoBytes = await videosBytes
     }
 
     func deleteScreenshots() async throws { try await delete(ids: screenshotIDs) }
@@ -52,7 +68,6 @@ final class SmartCleanupAnalyzer: ObservableObject {
         guard !ids.isEmpty else { return 0 }
         let assets = PHAsset.fetchAssets(withLocalIdentifiers: ids, options: nil)
         var total: Int64 = 0
-
         for index in 0..<assets.count {
             let asset = assets.object(at: index)
             for resource in PHAssetResource.assetResources(for: asset) {
@@ -70,12 +85,8 @@ final class SmartCleanupAnalyzer: ObservableObject {
             PHAssetResourceManager.default().requestData(
                 for: resource,
                 options: options,
-                dataReceivedHandler: { data in
-                    bytes += Int64(data.count)
-                },
-                completionHandler: { error in
-                    continuation.resume(returning: error == nil ? bytes : 0)
-                }
+                dataReceivedHandler: { data in bytes += Int64(data.count) },
+                completionHandler: { error in continuation.resume(returning: error == nil ? bytes : 0) }
             )
         }
     }
