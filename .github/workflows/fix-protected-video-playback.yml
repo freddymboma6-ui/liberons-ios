@@ -1,4 +1,4 @@
-name: Protected video progressive streaming repair
+name: Protected video stream-purpose repair
 on: [push]
 permissions:
   contents: write
@@ -10,26 +10,42 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: library-protected-media
-      - name: Apply progressive video streaming
+      - name: Separate playback from restore delivery
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          p=Path('Liberons/SupabaseService.swift')
+          s=p.read_text()
+          old='''static func cloudMediaURL(assetID: UUID, variant:String="original") async throws -> URL {
+        let body = try JSONSerialization.data(withJSONObject: ["asset_id": assetID.uuidString,"variant":variant])'''
+          new='''static func cloudMediaURL(assetID: UUID, variant:String="original", purpose:String="restore") async throws -> URL {
+        let body = try JSONSerialization.data(withJSONObject: ["asset_id": assetID.uuidString,"variant":variant,"purpose":purpose])'''
+          if old not in s: raise SystemExit('cloudMediaURL anchor not found')
+          s=s.replace(old,new,1)
+          old='''static func cloudOriginalURL(assetID:UUID) async throws -> URL { try await cloudMediaURL(assetID:assetID,variant:"original") }'''
+          new='''static func cloudOriginalURL(assetID:UUID) async throws -> URL { try await cloudMediaURL(assetID:assetID,variant:"original",purpose:"restore") }
+    static func cloudStreamURL(assetID:UUID) async throws -> URL { try await cloudMediaURL(assetID:assetID,variant:"original",purpose:"stream") }'''
+          if old not in s: raise SystemExit('cloudOriginalURL anchor not found')
+          s=s.replace(old,new,1)
+          p.write_text(s)
+
           p=Path('Liberons/ProtectedLibraryView.swift')
           s=p.read_text()
-          old='''if isVideo{guard !billing.isPaymentRestricted else{return};do{let ext=item.originalFilename.flatMap{let e=URL(fileURLWithPath:$0).pathExtension;return e.isEmpty ? nil:e} ?? "mov";let dir=FileManager.default.urls(for:.cachesDirectory,in:.userDomainMask)[0].appendingPathComponent("LiberonsRecovery",isDirectory:true);try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true);let local=dir.appendingPathComponent("\\(item.id.uuidString).\\(ext)");if !FileManager.default.fileExists(atPath:local.path){let remote=try await SupabaseService.cloudOriginalURL(assetID:item.id);let(downloaded,response)=try await URLSession.shared.download(from:remote);guard let http=response as? HTTPURLResponse,(200..<300).contains(http.statusCode) else{throw URLError(.badServerResponse)};try? FileManager.default.removeItem(at:local);try FileManager.default.moveItem(at:downloaded,to:local)};let asset=AVURLAsset(url:local);guard try await asset.load(.isPlayable) else{try? FileManager.default.removeItem(at:local);throw URLError(.cannotDecodeContentData)};let item=AVPlayerItem(asset:asset);let avPlayer=AVPlayer(playerItem:item);player=avPlayer;avPlayer.play()}catch{loadFailed=true};return}'''
-          new='''if isVideo{guard !billing.isPaymentRestricted else{return};do{let remote=try await SupabaseService.cloudOriginalURL(assetID:item.id);let asset=AVURLAsset(url:remote,options:["AVURLAssetHTTPHeaderFieldsKey":["Accept":"video/*","Range":"bytes=0-"]]);let playable=try await asset.load(.isPlayable);guard playable else{throw URLError(.cannotDecodeContentData)};let playerItem=AVPlayerItem(asset:asset);playerItem.preferredForwardBufferDuration=3;playerItem.canUseNetworkResourcesForLiveStreamingWhilePaused=true;let avPlayer=AVPlayer(playerItem:playerItem);avPlayer.automaticallyWaitsToMinimizeStalling=true;player=avPlayer;avPlayer.play()}catch{loadFailed=true};return}'''
-          if old not in s: raise SystemExit('local-download playback anchor not found')
+          old='''let remote=try await SupabaseService.cloudOriginalURL(assetID:item.id);let asset=AVURLAsset(url:remote,options:["AVURLAssetHTTPHeaderFieldsKey":["Accept":"video/*","Range":"bytes=0-"]])'''
+          new='''let remote=try await SupabaseService.cloudStreamURL(assetID:item.id);let asset=AVURLAsset(url:remote)'''
+          if old not in s: raise SystemExit('video stream anchor not found')
           s=s.replace(old,new,1)
           p.write_text(s)
           PY
       - name: Validate and commit
         run: |
           git diff --check
-          grep -q 'preferredForwardBufferDuration=3' Liberons/ProtectedLibraryView.swift
-          grep -q 'Range":"bytes=0-' Liberons/ProtectedLibraryView.swift
-          grep -q 'Video taken' Liberons/ProtectedLibraryView.swift
+          grep -q 'cloudStreamURL' Liberons/SupabaseService.swift
+          grep -q 'purpose:String="restore"' Liberons/SupabaseService.swift
+          grep -q 'SupabaseService.cloudStreamURL' Liberons/ProtectedLibraryView.swift
+          if grep -q 'AVURLAssetHTTPHeaderFieldsKey' Liberons/ProtectedLibraryView.swift; then exit 1; fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add Liberons/ProtectedLibraryView.swift
-          git commit -m 'Stream protected videos progressively'
+          git add Liberons/SupabaseService.swift Liberons/ProtectedLibraryView.swift
+          git commit -m 'Separate protected video streaming from restore'
           git push origin HEAD:library-protected-media
