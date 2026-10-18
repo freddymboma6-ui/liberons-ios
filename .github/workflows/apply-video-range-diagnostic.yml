@@ -1,4 +1,4 @@
-name: Apply video range diagnostic
+name: Apply direct protected video player fix
 on:
   push:
     branches:
@@ -13,32 +13,36 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: library-protected-media
-      - name: Patch Swift diagnostic
+      - name: Patch Swift player
         shell: bash
         run: |
           python3 <<'PY'
           from pathlib import Path
           p = Path('Liberons/ProtectedLibraryView.swift')
           s = p.read_text()
-          old = 'let remote=try await SupabaseService.cloudStreamURL(assetID:item.id);let asset=AVURLAsset(url:remote)'
-          new = 'let remote=try await SupabaseService.cloudStreamURL(assetID:item.id);await liberonsProbeVideoRange(remote,assetID:item.id);let asset=AVURLAsset(url:remote)'
-          if new not in s:
-              if old not in s:
-                  raise SystemExit('video playback anchor not found')
-              s = s.replace(old, new, 1)
-          if 'private func liberonsProbeVideoRange' not in s:
-              s += '''\n\nprivate func liberonsProbeVideoRange(_ url:URL,assetID:UUID) async {\n    var request=URLRequest(url:url)\n    request.httpMethod="GET"\n    request.setValue("bytes=0-1023",forHTTPHeaderField:"Range")\n    request.timeoutInterval=20\n    do {\n        let (data,response)=try await URLSession.shared.data(for:request)\n        guard let http=response as? HTTPURLResponse else { print("[LiberonsVideo] non-HTTP response asset=\\(assetID)"); return }\n        let prefix=data.prefix(32).map{String(format:"%02x",$0)}.joined()\n        print("[LiberonsVideo] range asset=\\(assetID) status=\\(http.statusCode) bytes=\\(data.count) type=\\(http.value(forHTTPHeaderField:\"Content-Type\") ?? \"nil\") length=\\(http.value(forHTTPHeaderField:\"Content-Length\") ?? \"nil\") ranges=\\(http.value(forHTTPHeaderField:\"Accept-Ranges\") ?? \"nil\") contentRange=\\(http.value(forHTTPHeaderField:\"Content-Range\") ?? \"nil\") prefixHex=\\(prefix)")\n    } catch {\n        print("[LiberonsVideo] range failed asset=\\(assetID) error=\\(error)")\n    }\n}\n'''
+          old = 'if isVideo{guard !billing.isPaymentRestricted else{return};do{let remote=try await SupabaseService.cloudStreamURL(assetID:item.id);await liberonsProbeVideoRange(remote,assetID:item.id);let asset=AVURLAsset(url:remote);let playable=try await asset.load(.isPlayable);guard playable else{throw URLError(.cannotDecodeContentData)};let playerItem=AVPlayerItem(asset:asset);playerItem.preferredForwardBufferDuration=3;playerItem.canUseNetworkResourcesForLiveStreamingWhilePaused=true;let avPlayer=AVPlayer(playerItem:playerItem);avPlayer.automaticallyWaitsToMinimizeStalling=true;player=avPlayer;avPlayer.play()}catch{loadFailed=true};return}'
+          new = 'if isVideo{guard !billing.isPaymentRestricted else{return};do{let remote=try await SupabaseService.cloudStreamURL(assetID:item.id);let playerItem=AVPlayerItem(url:remote);playerItem.preferredForwardBufferDuration=3;playerItem.canUseNetworkResourcesForLiveStreamingWhilePaused=true;let avPlayer=AVPlayer(playerItem:playerItem);avPlayer.automaticallyWaitsToMinimizeStalling=true;player=avPlayer;avPlayer.play()}catch{loadFailed=true};return}'
+          if old not in s:
+              if new in s:
+                  raise SystemExit(0)
+              raise SystemExit('current video block not found')
+          s = s.replace(old,new,1)
+          marker = '\n\nprivate func liberonsProbeVideoRange(_ url:URL,assetID:UUID) async {'
+          if marker in s:
+              start = s.index(marker)
+              s = s[:start].rstrip() + '\n'
           p.write_text(s)
           PY
-      - name: Commit patch
+      - name: Commit Swift fix
         shell: bash
         run: |
-          grep -q 'liberonsProbeVideoRange' Liberons/ProtectedLibraryView.swift
-          grep -q 'bytes=0-1023' Liberons/ProtectedLibraryView.swift
+          grep -q 'AVPlayerItem(url:remote)' Liberons/ProtectedLibraryView.swift
+          if grep -q 'asset.load(.isPlayable)' Liberons/ProtectedLibraryView.swift; then echo 'isPlayable preflight still present' && exit 1; fi
+          if grep -q 'liberonsProbeVideoRange' Liberons/ProtectedLibraryView.swift; then echo 'diagnostic probe still present' && exit 1; fi
           git diff --check
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add Liberons/ProtectedLibraryView.swift
           if git diff --cached --quiet; then exit 0; fi
-          git commit -m 'Instrument protected video range response'
+          git commit -m 'Play protected videos without AVAsset preflight'
           git push origin HEAD:library-protected-media
