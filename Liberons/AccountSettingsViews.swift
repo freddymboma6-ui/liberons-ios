@@ -130,7 +130,7 @@ struct LiberonsHelpSupportView: View {
         }
     }
 
-    private var groupedCategories: [String] { categories.map(\.0).filter { $0 != "all" && filteredItems.contains(where: { $0.category == $0 }) } }
+    private var groupedCategories: [String] { categories.map(\.0).filter { categoryID in categoryID != "all" && filteredItems.contains(where: { item in item.category == categoryID }) } }
 
     var body: some View {
         List {
