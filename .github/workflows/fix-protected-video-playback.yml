@@ -4,17 +4,23 @@ permissions:
   contents: write
 jobs:
   repair:
+    if: github.actor != 'github-actions-bot'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Patch video playback
+        with:
+          ref: library-protected-media
+      - name: Repair malformed Swift path
         run: |
-          python3 -c "from pathlib import Path; p=Path('Liberons/ProtectedLibraryView.swift'); s=p.read_text(); old='if isVideo{guard !billing.isPaymentRestricted else{return};do{player=AVPlayer(url:try await SupabaseService.cloudOriginalURL(assetID:item.id))}catch{};return}'; new='if isVideo{guard !billing.isPaymentRestricted else{return};do{let remote=try await SupabaseService.cloudOriginalURL(assetID:item.id);let(data,response)=try await URLSession.shared.data(from:remote);guard let http=response as? HTTPURLResponse,(200..<300).contains(http.statusCode) else{throw URLError(.badServerResponse)};let ext=item.originalFilename.flatMap{let e=URL(fileURLWithPath:$0).pathExtension;return e.isEmpty ? nil:e} ?? \"mov\";let local=FileManager.default.temporaryDirectory.appendingPathComponent(\"liberons-video-\\(item.id.uuidString).\\(ext)\");try? FileManager.default.removeItem(at:local);try data.write(to:local,options:.atomic);player=AVPlayer(url:local);player?.play()}catch{};return}'; assert old in s; p.write_text(s.replace(old,new,1))"
+          echo 'ZnJvbSBwYXRobGliIGltcG9ydCBQYXRoCnA9UGF0aCgiTGliZXJvbnMvUHJvdGVjdGVkTGlicmFyeVZpZXcuc3dpZnQiKQpzPXAucmVhZF90ZXh0KCkKYmFkPSdVUkwoZmlsZVVSTFdpdGhQYXRoOi9ob21lL3J1bm5lci93b3JrL190ZW1wL2Y2YmY3MTA0LTE0MzMtNGM5MC1hMGMyLTg2YjQ3NzU1YTMyNi5zaCknCmlmIGJhZCBub3QgaW4gczoKICAgIHJhaXNlIFN5c3RlbUV4aXQoImJhZCBpbmplY3RlZCBydW5uZXIgcGF0aCBub3QgZm91bmQiKQpzPXMucmVwbGFjZShiYWQsICdVUkwoZmlsZVVSTFdpdGhQYXRoOiQwKScsIDEpCnAud3JpdGVfdGV4dChzKQo=' | base64 --decode > /tmp/repair.py
+          python3 /tmp/repair.py
+          grep -Fq 'URL(fileURLWithPath:$0)' Liberons/ProtectedLibraryView.swift
+          ! grep -Fq '/home/runner/' Liberons/ProtectedLibraryView.swift
           git diff --check
-      - name: Commit
+      - name: Commit repair
         run: |
           git config user.name github-actions-bot
           git config user.email github-actions-bot@users.noreply.github.com
           git add Liberons/ProtectedLibraryView.swift
-          git commit -m 'Fix protected video playback'
-          git push
+          git commit -m 'Repair protected video playback Swift code'
+          git push origin HEAD:library-protected-media
