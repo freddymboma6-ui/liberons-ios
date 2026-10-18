@@ -1,0 +1,74 @@
+name: Fix protected video restore premium delete
+on:
+  push:
+    branches: [library-protected-media]
+    paths: ['.github/workflows/fix-video-restore-premium-delete.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: library-protected-media
+      - name: Patch only ProtectedLibraryView
+        shell: python
+        run: |
+          from pathlib import Path
+          p=Path('Liberons/ProtectedLibraryView.swift')
+          s=p.read_text()
+
+          old='''    let item:ProtectedCloudMedia;@ObservedObject var language:LanguageStore;@ObservedObject var billing:CloudStorageSummary;@State private var image:UIImage?;@State private var player:AVPlayer?;@State private var loading=true'''
+          new='''    let item:ProtectedCloudMedia;@ObservedObject var language:LanguageStore;@ObservedObject var billing:CloudStorageSummary;@State private var image:UIImage?;@State private var player:AVPlayer?;@State private var videoFileURL:URL?;@State private var loading=true;@State private var loadFailed=false'''
+          assert old in s
+          s=s.replace(old,new,1)
+
+          old='''    var body:some View{ZStack{Color.black;if isVideo,let player{VideoPlayer(player:player).onAppear{player.play()}.onDisappear{player.pause()}}else if let image{Image(uiImage:image).resizable().scaledToFit()}else if loading{ProgressView().tint(.white)}else{Image(systemName:"exclamationmark.icloud").foregroundStyle(.white)}}.task(id:item.id){await load()}}'''
+          new='''    var body:some View{ZStack{Color.black;if isVideo,let player{VideoPlayer(player:player).onAppear{player.play()}}else if let image{Image(uiImage:image).resizable().scaledToFit()}else if loading{ProgressView().tint(.white)}else if loadFailed{VStack(spacing:10){Image(systemName:"exclamationmark.icloud").font(.title).foregroundStyle(.white);Text(language.text("Unable to load this video.","Impossible de charger cette vidéo.")).font(.footnote).foregroundStyle(.white.opacity(0.8))}}else{Image(systemName:"exclamationmark.icloud").foregroundStyle(.white)}}.task(id:item.id){await load()}.onDisappear{cleanupVideo()}}'''
+          assert old in s
+          s=s.replace(old,new,1)
+
+          old='''        if isVideo{guard !billing.isPaymentRestricted else{return};do{let remote=try await SupabaseService.cloudOriginalURL(assetID:item.id);let(data,response)=try await URLSession.shared.data(from:remote);guard let http=response as? HTTPURLResponse,(200..<300).contains(http.statusCode) else{throw URLError(.badServerResponse)};let ext=item.originalFilename.flatMap{let e=URL(fileURLWithPath:$0).pathExtension;return e.isEmpty ? nil:e} ?? "mov";let local=FileManager.default.temporaryDirectory.appendingPathComponent("liberons-video-\\(item.id.uuidString).\\(ext)");try? FileManager.default.removeItem(at:local);try data.write(to:local,options:.atomic);player=AVPlayer(url:local);player?.play()}catch{};return}'''
+          new='''        if isVideo{guard !billing.isPaymentRestricted else{return};loadFailed=false;do{cleanupVideo();let remote=try await SupabaseService.cloudOriginalURL(assetID:item.id);let(downloaded,response)=try await URLSession.shared.download(from:remote);guard let http=response as? HTTPURLResponse,(200..<300).contains(http.statusCode) else{throw URLError(.badServerResponse)};let ext=item.originalFilename.flatMap{let e=URL(fileURLWithPath:$0).pathExtension;return e.isEmpty ? nil:e} ?? "mov";let local=FileManager.default.temporaryDirectory.appendingPathComponent("liberons-video-\\(UUID().uuidString).\\(ext)");try? FileManager.default.removeItem(at:local);try FileManager.default.moveItem(at:downloaded,to:local);let asset=AVURLAsset(url:local);guard try await asset.load(.isPlayable) else{throw URLError(.cannotDecodeContentData)};videoFileURL=local;let avPlayer=AVPlayer(playerItem:AVPlayerItem(asset:asset));player=avPlayer;avPlayer.play()}catch{loadFailed=true};return}'''
+          assert old in s
+          s=s.replace(old,new,1)
+
+          anchor='''    }\n}\n\nprivate enum ProtectedAction:Hashable'''
+          cleanup='''    }\n    @MainActor private func cleanupVideo(){player?.pause();player=nil;if let videoFileURL{try? FileManager.default.removeItem(at:videoFileURL);self.videoFileURL=nil}}\n}\n\nprivate enum ProtectedAction:Hashable'''
+          assert anchor in s
+          s=s.replace(anchor,cleanup,1)
+
+          old='''        if !localExists && !isVideo{actionButton(billing.isPaymentRestricted ? language.text("Restore unavailable — payment required","Restauration indisponible — paiement requis"):language.text("Restore to Photos","Restaurer dans Photos"),icon:billing.isPaymentRestricted ? "lock.fill":"square.and.arrow.down",color:billing.isPaymentRestricted ? .secondary:.blue){if !billing.isPaymentRestricted{pendingAction = .restore}}.disabled(restoring||deleting||billing.isPaymentRestricted)}'''
+          new='''        if !localExists{actionButton(billing.isPaymentRestricted ? language.text("Restore unavailable — payment required","Restauration indisponible — paiement requis"):language.text("Restore to Photos","Restaurer dans Photos"),icon:billing.isPaymentRestricted ? "lock.fill":"square.and.arrow.down",color:billing.isPaymentRestricted ? .secondary:.blue){if !billing.isPaymentRestricted{pendingAction = .restore}}.disabled(restoring||deleting||billing.isPaymentRestricted)}'''
+          assert old in s
+          s=s.replace(old,new,1)
+
+          start=s.index('    @MainActor private func restoreToPhotos()async{')
+          end=s.index('\n    @MainActor private func removeFromDevice()',start)
+          restore='''    @MainActor private func restoreToPhotos()async{guard !billing.isPaymentRestricted else{operationError=language.text("Payment must be regularized before restoring originals to Photos.","Le paiement doit être régularisé avant de restaurer des originaux dans Photos.");return};restoring=true;operationError=nil;restoredSuccessfully=false;var temporaryURL:URL?;defer{restoring=false;if let temporaryURL{try? FileManager.default.removeItem(at:temporaryURL)}};do{let remote=try await SupabaseService.cloudOriginalURL(assetID:item.id);let(downloaded,response)=try await URLSession.shared.download(from:remote);guard let http=response as? HTTPURLResponse,(200..<300).contains(http.statusCode) else{throw URLError(.badServerResponse)};let ext=item.originalFilename.flatMap{let e=URL(fileURLWithPath:$0).pathExtension;return e.isEmpty ? nil:e} ?? (isVideo ? "mov":"jpg");let local=FileManager.default.temporaryDirectory.appendingPathComponent("liberons-restore-\\(UUID().uuidString).\\(ext)");try? FileManager.default.removeItem(at:local);try FileManager.default.moveItem(at:downloaded,to:local);temporaryURL=local;var newIdentifier:String?;try await PHPhotoLibrary.shared().performChanges{let request=PHAssetCreationRequest.forAsset();request.creationDate=item.capturedAt;let options=PHAssetResourceCreationOptions();options.originalFilename=item.originalFilename;request.addResource(with:isVideo ? .video:.photo,fileURL:local,options:options);newIdentifier=request.placeholderForCreatedAsset?.localIdentifier};guard let newIdentifier else{throw NSError(domain:"LiberonsRestore",code:2)};currentLocalIdentifier=newIdentifier;localExists=true;restoredSuccessfully=true;try? await SupabaseService.updateLocalIdentifier(assetID:item.id,localIdentifier:newIdentifier)}catch{operationError=language.text(isVideo ? "Unable to restore this video.":"Unable to restore this photo.",isVideo ? "Impossible de restaurer cette vidéo.":"Impossible de restaurer cette photo.");refreshLocalState();await billing.refresh()}}'''
+          s=s[:start]+restore+s[end:]
+
+          old='''.confirmationDialog(language.text("Delete selected memories from Libérons?", "Supprimer les souvenirs sélectionnés de Libérons ?"), isPresented: $showBulkDelete) { Button(language.text("Delete permanently", "Supprimer définitivement"), role: .destructive) { Task { await deleteSelected() } } }'''
+          new='''.sheet(isPresented:$showBulkDelete){VStack(spacing:0){Capsule().fill(.secondary.opacity(0.35)).frame(width:38,height:5).padding(.top,10);VStack(spacing:18){Image(systemName:"trash.fill").font(.system(size:28,weight:.semibold)).foregroundStyle(.red).frame(width:62,height:62).background(Color.red.opacity(0.10),in:Circle());VStack(spacing:8){Text(language.text("Delete from Libérons?","Supprimer de Libérons ?")).font(.title2.bold()).multilineTextAlignment(.center);Text(language.text("The selected protected memories will be permanently removed from Libérons Cloud.","Les souvenirs protégés sélectionnés seront supprimés définitivement de Libérons Cloud.")).font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)};Label(language.text("This cannot be undone.","Cette action est irréversible."),systemImage:"exclamationmark.triangle.fill").font(.footnote.bold()).foregroundStyle(.red).padding(12).frame(maxWidth:.infinity).background(Color.red.opacity(0.08),in:RoundedRectangle(cornerRadius:14));Button{showBulkDelete=false;Task{await deleteSelected()}}label:{Text(language.text("Delete permanently","Supprimer définitivement")).font(.headline).frame(maxWidth:.infinity).padding(.vertical,15).foregroundStyle(.white).background(Color.red,in:RoundedRectangle(cornerRadius:16))}.buttonStyle(.plain);Button(language.text("Cancel","Annuler")){showBulkDelete=false}.font(.headline).foregroundStyle(.primary).padding(.bottom,4)}.padding(24)}.presentationDetents([.height(410)]).presentationDragIndicator(.hidden).presentationCornerRadius(30)}'''
+          assert old in s
+          s=s.replace(old,new,1)
+
+          s=s.replace('''language.text("A copy of this protected photo will be added back to your Photos library.","Une copie de cette photo protégée sera ajoutée à nouveau dans votre photothèque Photos.")''','''language.text(isVideo ? "A copy of this protected video will be added back to your Photos library.":"A copy of this protected photo will be added back to your Photos library.",isVideo ? "Une copie de cette vidéo protégée sera ajoutée à nouveau dans votre photothèque Photos.":"Une copie de cette photo protégée sera ajoutée à nouveau dans votre photothèque Photos.")''',1)
+
+          p.write_text(s)
+      - name: Validate patch
+        run: |
+          grep -q 'download(from:remote)' Liberons/ProtectedLibraryView.swift
+          grep -q 'request.addResource(with:isVideo ? .video:.photo,fileURL:local' Liberons/ProtectedLibraryView.swift
+          grep -q 'if !localExists{actionButton' Liberons/ProtectedLibraryView.swift
+          grep -q 'presentationCornerRadius(30)' Liberons/ProtectedLibraryView.swift
+          git diff --check
+      - name: Commit
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Liberons/ProtectedLibraryView.swift
+          git commit -m 'Fix protected video playback restore and premium bulk delete'
+          git push origin HEAD:library-protected-media
