@@ -61,8 +61,8 @@ enum SupabaseService {
         return data
     }
 
-    static func cloudMediaURL(assetID: UUID, variant:String="original") async throws -> URL {
-        let body = try JSONSerialization.data(withJSONObject: ["asset_id": assetID.uuidString,"variant":variant])
+    static func cloudMediaURL(assetID: UUID, variant:String="original", purpose:String="restore") async throws -> URL {
+        let body = try JSONSerialization.data(withJSONObject: ["asset_id": assetID.uuidString,"variant":variant,"purpose":purpose])
         let data = try await callFunction("get-media-url", json: body)
         struct Response: Decodable { let url: String }
         let response = try JSONDecoder().decode(Response.self, from: data)
@@ -71,7 +71,8 @@ enum SupabaseService {
     }
 
     static func cloudPreviewURL(assetID:UUID) async throws -> URL { try await cloudMediaURL(assetID:assetID,variant:"thumbnail") }
-    static func cloudOriginalURL(assetID:UUID) async throws -> URL { try await cloudMediaURL(assetID:assetID,variant:"original") }
+    static func cloudOriginalURL(assetID:UUID) async throws -> URL { try await cloudMediaURL(assetID:assetID,variant:"original",purpose:"restore") }
+    static func cloudStreamURL(assetID:UUID) async throws -> URL { try await cloudMediaURL(assetID:assetID,variant:"original",purpose:"stream") }
 
     static func deleteCloudMedia(assetID: UUID) async throws -> Int64 {
         let body = try JSONSerialization.data(withJSONObject: ["asset_id": assetID.uuidString]);let data = try await callFunction("delete-media", json: body)
