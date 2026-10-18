@@ -1,0 +1,1 @@
+Trigger the protected video B2 range diagnostics workflow after f1140cb5.
