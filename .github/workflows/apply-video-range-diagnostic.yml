@@ -1,13 +1,14 @@
 name: Apply protected video streaming-first playback
 on:
   push:
-    branches:
-      - library-protected-media
+    branches: [library-protected-media]
+    paths:
+      - '.github/workflows/apply-video-range-diagnostic.yml'
+  workflow_dispatch:
 permissions:
   contents: write
 jobs:
   patch:
-    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,76 +24,76 @@ jobs:
           start = s.index('    @MainActor private func loadProtectedVideo() async throws {')
           end = s.index('\n}\n\nprivate final class ProtectedMediaCache', start)
           replacement = '''    @MainActor private func loadProtectedVideo() async throws {
-        let fm = FileManager.default
-        let dir = fm.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("LiberonsPlayback", isDirectory: true)
-        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+              let fm = FileManager.default
+              let dir = fm.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+                  .appendingPathComponent("LiberonsPlayback", isDirectory: true)
+              try fm.createDirectory(at: dir, withIntermediateDirectories: true)
 
-        let filename = item.originalFilename ?? "protected-video.mov"
-        var ext = URL(fileURLWithPath: filename).pathExtension.lowercased()
-        if ext.isEmpty { ext = "mov" }
-        let local = dir.appendingPathComponent(item.id.uuidString).appendingPathExtension(ext)
+              let filename = item.originalFilename ?? "protected-video.mov"
+              var ext = URL(fileURLWithPath: filename).pathExtension.lowercased()
+              if ext.isEmpty { ext = "mov" }
+              let local = dir.appendingPathComponent(item.id.uuidString).appendingPathExtension(ext)
 
-        if fm.fileExists(atPath: local.path) {
-            playProtectedVideo(at: local)
-            return
-        }
+              if fm.fileExists(atPath: local.path) {
+                  playProtectedVideo(at: local)
+                  return
+              }
 
-        do {
-            let request = try await SupabaseService.protectedStreamRequest(assetID: item.id)
-            guard let url = request.url else { throw URLError(.badURL) }
-            let options: [String: Any] = [
-                "AVURLAssetHTTPHeaderFieldsKey": request.allHTTPHeaderFields ?? [:]
-            ]
-            let asset = AVURLAsset(url: url, options: options)
-            let playable = try await asset.load(.isPlayable)
-            guard playable else { throw URLError(.cannotDecodeContentData) }
-            let playerItem = AVPlayerItem(asset: asset)
-            playerItem.preferredForwardBufferDuration = 3
-            let avPlayer = AVPlayer(playerItem: playerItem)
-            avPlayer.automaticallyWaitsToMinimizeStalling = true
-            player = avPlayer
-            avPlayer.play()
-            return
-        } catch {
-            print("[Libérons Video] Fast stream unavailable, using protected fallback:", item.id, error.localizedDescription)
-        }
+              do {
+                  let request = try await SupabaseService.protectedStreamRequest(assetID: item.id)
+                  guard let url = request.url else { throw URLError(.badURL) }
+                  let options: [String: Any] = [
+                      "AVURLAssetHTTPHeaderFieldsKey": request.allHTTPHeaderFields ?? [:]
+                  ]
+                  let asset = AVURLAsset(url: url, options: options)
+                  let playable = try await asset.load(.isPlayable)
+                  guard playable else { throw URLError(.cannotDecodeContentData) }
+                  let playerItem = AVPlayerItem(asset: asset)
+                  playerItem.preferredForwardBufferDuration = 3
+                  let avPlayer = AVPlayer(playerItem: playerItem)
+                  avPlayer.automaticallyWaitsToMinimizeStalling = true
+                  player = avPlayer
+                  avPlayer.play()
+                  return
+              } catch {
+                  print("[Libérons Video] Fast stream unavailable, using protected fallback:", item.id, error.localizedDescription)
+              }
 
-        let remote = try await SupabaseService.cloudStreamURL(assetID: item.id)
-        let (downloaded, response) = try await URLSession.shared.download(from: remote)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw URLError(.badServerResponse)
-        }
-        let attrs = try fm.attributesOfItem(atPath: downloaded.path)
-        let downloadedSize = (attrs[.size] as? NSNumber)?.int64Value ?? 0
-        guard downloadedSize > 0 else { throw URLError(.zeroByteResource) }
-        if item.sizeBytes > 0 && downloadedSize != item.sizeBytes {
-            throw NSError(domain: "LiberonsProtectedVideo", code: 1001,
-                          userInfo: [NSLocalizedDescriptionKey: "Protected video download is incomplete."])
-        }
-        try? fm.removeItem(at: local)
-        try fm.moveItem(at: downloaded, to: local)
-        playProtectedVideo(at: local)
-    }
+              let remote = try await SupabaseService.cloudStreamURL(assetID: item.id)
+              let (downloaded, response) = try await URLSession.shared.download(from: remote)
+              guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                  throw URLError(.badServerResponse)
+              }
+              let attrs = try fm.attributesOfItem(atPath: downloaded.path)
+              let downloadedSize = (attrs[.size] as? NSNumber)?.int64Value ?? 0
+              guard downloadedSize > 0 else { throw URLError(.zeroByteResource) }
+              if item.sizeBytes > 0 && downloadedSize != item.sizeBytes {
+                  throw NSError(domain: "LiberonsProtectedVideo", code: 1001,
+                                userInfo: [NSLocalizedDescriptionKey: "Protected video download is incomplete."])
+              }
+              try? fm.removeItem(at: local)
+              try fm.moveItem(at: downloaded, to: local)
+              playProtectedVideo(at: local)
+          }
 
-    @MainActor private func playProtectedVideo(at url: URL) {
-        playbackFile = url
-        let playerItem = AVPlayerItem(url: url)
-        let avPlayer = AVPlayer(playerItem: playerItem)
-        avPlayer.automaticallyWaitsToMinimizeStalling = true
-        player = avPlayer
-        avPlayer.play()
-    }'''
+          @MainActor private func playProtectedVideo(at url: URL) {
+              playbackFile = url
+              let playerItem = AVPlayerItem(url: url)
+              let avPlayer = AVPlayer(playerItem: playerItem)
+              avPlayer.automaticallyWaitsToMinimizeStalling = true
+              player = avPlayer
+              avPlayer.play()
+          }'''
           s = s[:start] + replacement + s[end:]
           p.write_text(s)
           PY
-      - name: Commit Swift fix
+      - name: Validate and commit Swift fix
         shell: bash
         run: |
+          git diff --check
           grep -q 'protectedStreamRequest' Liberons/ProtectedLibraryView.swift
           grep -q 'Fast stream unavailable' Liberons/ProtectedLibraryView.swift
           grep -q 'playProtectedVideo' Liberons/ProtectedLibraryView.swift
-          git diff --check
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add Liberons/ProtectedLibraryView.swift
