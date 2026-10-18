@@ -19,8 +19,17 @@ final class CloudStorageSummary: ObservableObject {
     @Published private(set) var isLoading = false
     @Published private(set) var planLoadFailed = false
     var isOwner: Bool { accountRole.lowercased() == "owner" }
-    var isPaymentGrace: Bool { ["past_due","grace","unpaid"].contains(subscriptionStatus) && (gracePeriodEnd.map { Date() < $0 } ?? false) }
-    var isPaymentRestricted: Bool { ["past_due","grace","unpaid","restricted"].contains(subscriptionStatus) && (gracePeriodEnd.map { Date() >= $0 } ?? subscriptionStatus == "restricted") }
+    var isPaymentGrace: Bool {
+        let graceStatuses = ["past_due", "grace", "unpaid"]
+        guard graceStatuses.contains(subscriptionStatus), let end = gracePeriodEnd else { return false }
+        return Date() < end
+    }
+    var isPaymentRestricted: Bool {
+        if subscriptionStatus == "restricted" { return true }
+        let paymentFailureStatuses = ["past_due", "grace", "unpaid"]
+        guard paymentFailureStatuses.contains(subscriptionStatus), let end = gracePeriodEnd else { return false }
+        return Date() >= end
+    }
     var graceDaysRemaining: Int { guard let end = gracePeriodEnd, end > Date() else { return 0 }; return max(1, Calendar.current.dateComponents([.day], from: Date(), to: end).day ?? 1) }
     private var observer: NSObjectProtocol?
 
