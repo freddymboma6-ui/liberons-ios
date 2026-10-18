@@ -1,0 +1,47 @@
+name: Add direct delete storage UI
+
+on:
+  push:
+    paths:
+      - '.github/workflows/add-direct-delete-storage-ui.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: library-protected-media
+      - name: Patch only StorageAnalysisView
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('Liberons/StorageAnalysisView.swift')
+          s = p.read_text()
+          old = '''Button{let ids=Array(selectedIDs);Task{await backup.backup(localIdentifiers:ids);let protected=backup.newlyProtectedLocalIdentifiers;selectedIDs.subtract(protected);guard !protected.isEmpty else{return};await cleaner.prepareExact(localIdentifiers:protected);if !cleaner.selectedLocalIdentifiers.isEmpty{showFreeOffer=true}}}label:{HStack{if backup.isRunning{ProgressView().tint(.white)};Text(backup.isRunning ? language.text("Protecting…","Protection…"):language.text("Protect selected with Libérons","Protéger la sélection avec Libérons"))}.frame(maxWidth:.infinity).frame(height:44)}.buttonStyle(.borderedProminent).disabled(backup.isRunning);Text(language.text("Your originals stay on this iPhone while Libérons protects them.","Vos originaux restent sur cet iPhone pendant que Libérons les protège.")).font(.caption).foregroundStyle(.secondary)'''
+          new = '''Button{let ids=Array(selectedIDs);Task{await backup.backup(localIdentifiers:ids);let protected=backup.newlyProtectedLocalIdentifiers;selectedIDs.subtract(protected);guard !protected.isEmpty else{return};await cleaner.prepareExact(localIdentifiers:protected);if !cleaner.selectedLocalIdentifiers.isEmpty{showFreeOffer=true}}}label:{HStack{if backup.isRunning{ProgressView().tint(.white)};Text(backup.isRunning ? language.text("Protecting…","Protection…"):language.text("Protect selected with Libérons","Protéger la sélection avec Libérons"))}.frame(maxWidth:.infinity).frame(height:44)}.buttonStyle(.borderedProminent).disabled(backup.isRunning);Button(role:.destructive){let ids=Array(selectedIDs);Task{@MainActor in let assets=PHAsset.fetchAssets(withLocalIdentifiers:ids,options:nil);guard assets.count>0 else{return};do{try await PHPhotoLibrary.shared().performChanges{PHAssetChangeRequest.deleteAssets(assets)};selectedIDs.subtract(ids);await intelligence.scan()}catch{}}}label:{Label(language.text("Delete from iPhone without saving","Supprimer de l’iPhone sans sauvegarder"),systemImage:"trash").fontWeight(.semibold).frame(maxWidth:.infinity).frame(height:44)}.buttonStyle(.bordered).tint(.red).disabled(backup.isRunning);Text(language.text("Your originals stay on this iPhone while Libérons protects them.","Vos originaux restent sur cet iPhone pendant que Libérons les protège.")).font(.caption).foregroundStyle(.secondary)'''
+          if old not in s:
+              raise SystemExit('Exact selectionSheet anchor not found; refusing to alter anything')
+          if 'Delete from iPhone without saving' in s:
+              raise SystemExit('Direct-delete UI already present; refusing duplicate')
+          s2 = s.replace(old, new, 1)
+          p.write_text(s2)
+      - name: Validate scope
+        run: |
+          git diff --check
+          test "$(git diff --name-only | wc -l | tr -d ' ')" = "1"
+          test "$(git diff --name-only)" = "Liberons/StorageAnalysisView.swift"
+          grep -q 'Delete from iPhone without saving' Liberons/StorageAnalysisView.swift
+          grep -q 'Protect selected with Libérons' Liberons/StorageAnalysisView.swift
+      - name: Commit
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add Liberons/StorageAnalysisView.swift
+          git commit -m "Add direct iPhone deletion option to storage selection"
+          git push origin HEAD:library-protected-media
