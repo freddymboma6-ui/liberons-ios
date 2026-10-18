@@ -5,7 +5,7 @@ import CryptoKit
 
 struct StorageInsightItem: Identifiable, Hashable, Codable {
     enum Kind: String, Hashable, Codable {
-        case duplicate, screenshot, video, largeVideo, longVideo, slowMotion, timeLapse, livePhoto, rawPhoto, video4K, other
+        case photo, duplicate, screenshot, video, largeVideo, longVideo, slowMotion, timeLapse, livePhoto, rawPhoto, video4K, other
     }
     let id: String
     let kind: Kind
@@ -52,7 +52,7 @@ final class StorageIntelligence: ObservableObject {
 
     init() {
         let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
-        cacheURL = base.appendingPathComponent("liberons-storage-analysis-v2.json")
+        cacheURL = base.appendingPathComponent("liberons-storage-analysis-v3.json")
         loadCache()
     }
 
@@ -104,7 +104,7 @@ final class StorageIntelligence: ObservableObject {
                     }
 
                     let subtypes = asset.mediaSubtypes
-                    var kind: StorageInsightItem.Kind = .other
+                    var kind: StorageInsightItem.Kind = asset.mediaType == .video ? .video : .photo
                     if subtypes.contains(.photoScreenshot) { kind = .screenshot }
                     else if subtypes.contains(.videoHighFrameRate) { kind = .slowMotion }
                     else if subtypes.contains(.videoTimelapse) { kind = .timeLapse }
@@ -117,13 +117,11 @@ final class StorageIntelligence: ObservableObject {
                     } else if names.contains(where: { $0.hasSuffix(".dng") }) { kind = .rawPhoto }
 
                     let item = StorageInsightItem(id: asset.localIdentifier, kind: kind, bytes: bytes, duration: asset.duration, creationDate: asset.creationDate, pixelWidth: asset.pixelWidth, pixelHeight: asset.pixelHeight)
-                    if kind != .other || bytes >= 100_000_000 { output.append(item) }
+                    output.append(item)
                     if bytes > 0, let primary = resources.first { candidates.append(AssetCandidate(asset: asset, item: item, primaryResource: primary, mediaType: asset.mediaType)) }
                 }
             }
 
-            // First narrow the library using safe metadata. Only small candidate groups are read.
-            // Then compare SHA-256 of the local original bytes before calling anything a duplicate.
             let grouped = Dictionary(grouping: candidates) { candidate in
                 "\(candidate.mediaType.rawValue)|\(candidate.item.pixelWidth)x\(candidate.item.pixelHeight)|\(Int(candidate.item.duration.rounded()))|\(candidate.item.bytes)"
             }
@@ -138,19 +136,13 @@ final class StorageIntelligence: ObservableObject {
                     let semaphore = DispatchSemaphore(value: 0)
                     let options = PHAssetResourceRequestOptions()
                     options.isNetworkAccessAllowed = false
-                    manager.requestData(for: resource, options: options, dataReceivedHandler: { data in
-                        hasher.update(data: data)
-                    }, completionHandler: { error in
-                        failed = error != nil
-                        semaphore.signal()
-                    })
+                    manager.requestData(for: resource, options: options, dataReceivedHandler: { data in hasher.update(data: data) }, completionHandler: { error in failed = error != nil; semaphore.signal() })
                     semaphore.wait()
                     guard !failed else { continue }
                     let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
                     hashes[digest, default: []].append(candidate)
                 }
                 for matches in hashes.values where matches.count > 1 {
-                    // Keep the oldest copy by default; only extra byte-identical copies are recoverable.
                     let ordered = matches.sorted { ($0.item.creationDate ?? .distantPast) < ($1.item.creationDate ?? .distantPast) }
                     for extra in ordered.dropFirst() {
                         duplicateOutput.append(StorageInsightItem(id: extra.item.id, kind: .duplicate, bytes: extra.item.bytes, duration: extra.item.duration, creationDate: extra.item.creationDate, pixelWidth: extra.item.pixelWidth, pixelHeight: extra.item.pixelHeight))
@@ -177,12 +169,8 @@ final class StorageIntelligence: ObservableObject {
 
     private func rebuildCategories() {
         let grouped = Dictionary(grouping: items, by: \.kind)
-        var built = grouped.map { kind, values in
-            StorageInsightCategory(kind: kind, count: values.count, bytes: values.reduce(0) { $0 + $1.bytes })
-        }
-        if !duplicateItems.isEmpty {
-            built.append(StorageInsightCategory(kind: .duplicate, count: duplicateItems.count, bytes: duplicateItems.reduce(0) { $0 + $1.bytes }))
-        }
+        var built = grouped.map { kind, values in StorageInsightCategory(kind: kind, count: values.count, bytes: values.reduce(0) { $0 + $1.bytes }) }
+        if !duplicateItems.isEmpty { built.append(StorageInsightCategory(kind: .duplicate, count: duplicateItems.count, bytes: duplicateItems.reduce(0) { $0 + $1.bytes })) }
         categories = built.sorted { $0.bytes > $1.bytes }
     }
 
