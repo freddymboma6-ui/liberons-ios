@@ -1,0 +1,43 @@
+name: Fix cloud library media
+on:
+  push:
+    paths:
+      - '.github/workflows/fix-cloud-library-media.yml'
+permissions:
+  contents: write
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: library-protected-media
+      - name: Repair photo fallback and video playback
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('Liberons/ProtectedLibraryView.swift')
+          s=p.read_text()
+          s=s.replace('import Photos\n','import Photos\nimport AVKit\nimport AVFoundation\n',1)
+
+          old='''private struct CloudPhotoPage:View{\n    let item:ProtectedCloudMedia;@ObservedObject var language:LanguageStore;@ObservedObject var billing:CloudStorageSummary;@State private var image:UIImage?;@State private var loading=true\n    private var isVideo:Bool{item.mediaType.lowercased().contains("video")}\n    var body:some View{ZStack{Color.black;if let image{Image(uiImage:image).resizable().scaledToFit()}else if loading{ProgressView().tint(.white)}else{Image(systemName:"exclamationmark.icloud").foregroundStyle(.white)};if isVideo{Image(systemName:"play.circle.fill").font(.system(size:68)).foregroundStyle(.white)}}.task(id:item.id){await load()}}\n    @MainActor private func load()async{guard !isVideo else{loading=false;return};do{let url = billing.isPaymentRestricted ? try await SupabaseService.cloudPreviewURL(assetID:item.id) : try await SupabaseService.cloudOriginalURL(assetID:item.id);let(data,_)=try await URLSession.shared.data(from:url);image=UIImage(data:data)}catch{if let url=try? await SupabaseService.cloudPreviewURL(assetID:item.id),let(data,_)=try? await URLSession.shared.data(from:url){image=UIImage(data:data)}};loading=false}\n}'''
+          new='''private struct CloudPhotoPage:View{\n    let item:ProtectedCloudMedia;@ObservedObject var language:LanguageStore;@ObservedObject var billing:CloudStorageSummary;@State private var image:UIImage?;@State private var player:AVPlayer?;@State private var loading=true\n    private var isVideo:Bool{item.mediaType.lowercased().contains("video")}\n    var body:some View{ZStack{Color.black;if isVideo,let player{VideoPlayer(player:player).onAppear{player.play()}.onDisappear{player.pause()}}else if let image{Image(uiImage:image).resizable().scaledToFit()}else if loading{ProgressView().tint(.white)}else{Image(systemName:"exclamationmark.icloud").foregroundStyle(.white)}}.task(id:item.id){await load()}}\n    @MainActor private func load()async{\n        loading=true\n        defer{loading=false}\n        if isVideo{guard !billing.isPaymentRestricted else{return};do{player=AVPlayer(url:try await SupabaseService.cloudOriginalURL(assetID:item.id))}catch{};return}\n        if let id=item.iosLocalIdentifier,let asset=PHAsset.fetchAssets(withLocalIdentifiers:[id],options:nil).firstObject{\n            let options=PHImageRequestOptions();options.isNetworkAccessAllowed=true;options.deliveryMode = .highQualityFormat\n            PHImageManager.default().requestImage(for:asset,targetSize:PHImageManagerMaximumSize,contentMode:.aspectFit,options:options){value,_ in if let value{Task{@MainActor in image=value}}}\n            return\n        }\n        if let preview=try? await SupabaseService.cloudPreviewURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:preview),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300,let decoded=UIImage(data:data){image=decoded;return}\n        guard !billing.isPaymentRestricted else{return}\n        if let original=try? await SupabaseService.cloudOriginalURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:original),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300{image=UIImage(data:data)}\n    }\n}'''
+          if old not in s:
+              raise SystemExit('CloudPhotoPage block not found')
+          s=s.replace(old,new,1)
+
+          old_thumb=''';@MainActor private func loadThumbnail()async{if let id=item.iosLocalIdentifier,let asset=PHAsset.fetchAssets(withLocalIdentifiers:[id],options:nil).firstObject{let options=PHImageRequestOptions();options.isNetworkAccessAllowed=true;PHImageManager.default().requestImage(for:asset,targetSize:CGSize(width:500,height:500),contentMode:.aspectFill,options:options){value,_ in if let value{Task{@MainActor in image=value}}};return};guard !isVideo else{return};do{let url=try await SupabaseService.cloudPreviewURL(assetID:item.id);let(data,_)=try await URLSession.shared.data(from:url);image=UIImage(data:data)}catch{}}}'''
+          new_thumb=''';@MainActor private func loadThumbnail()async{if let id=item.iosLocalIdentifier,let asset=PHAsset.fetchAssets(withLocalIdentifiers:[id],options:nil).firstObject{let options=PHImageRequestOptions();options.isNetworkAccessAllowed=true;PHImageManager.default().requestImage(for:asset,targetSize:CGSize(width:500,height:500),contentMode:.aspectFill,options:options){value,_ in if let value{Task{@MainActor in image=value}}};return};if let preview=try? await SupabaseService.cloudPreviewURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:preview),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300,let decoded=UIImage(data:data){image=decoded;return};if isVideo{if let url=try? await SupabaseService.cloudOriginalURL(assetID:item.id){let asset=AVURLAsset(url:url);let generator=AVAssetImageGenerator(asset:asset);generator.appliesPreferredTrackTransform=true;if let cg=try? await generator.image(at:.zero).image{image=UIImage(cgImage:cg)}};return};if let url=try? await SupabaseService.cloudOriginalURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:url),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300{image=UIImage(data:data)}}}'''
+          if old_thumb not in s:
+              raise SystemExit('thumbnail loader not found')
+          s=s.replace(old_thumb,new_thumb,1)
+          p.write_text(s)
+          PY
+      - name: Commit repair
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Liberons/ProtectedLibraryView.swift
+          git diff --cached --check
+          git commit -m 'Restore cloud thumbnails and video playback'
+          git push origin HEAD:library-protected-media
