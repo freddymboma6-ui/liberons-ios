@@ -57,9 +57,7 @@ struct BackupQueueView: View {
                     }
                     Text(backup.isStopping ? language.text("Finishing active transfers safely. No new item will start.","Fin sécurisée des transferts actifs. Aucun nouvel élément ne démarrera.") : backup.isPaused ? language.text("Backup is paused. Your selection stays locked until you resume or stop.","La sauvegarde est en pause. Votre sélection reste verrouillée jusqu’à la reprise ou l’arrêt.") : language.text("\(backup.queuePercent)% complete · \(backup.queueRemaining) remaining","\(backup.queuePercent)% terminé · \(backup.queueRemaining) restants")).font(.caption).foregroundStyle(backup.isPaused ? .orange:.secondary)
                     if let name=backup.currentQueueFilename{Text(language.text("Now: ","En cours : ")+name).font(.caption).foregroundStyle(.secondary).lineLimit(1)}
-                }else{
-                    taskResultCard
-                }
+                }else{taskResultCard}
             }
             if !backup.newlyProtectedLocalIdentifiers.isEmpty && !protectedStillOnDevice.isEmpty{Divider();VStack(alignment:.leading,spacing:10){Label(language.text("Already protected in Libérons","Déjà protégés dans Libérons"),systemImage:"checkmark.shield.fill").font(.subheadline.bold()).foregroundStyle(.green);Text(language.text("\(protectedStillOnDevice.count) protected item(s) are still in Apple Photos. You can keep them there or free the local space now.","\(protectedStillOnDevice.count) élément(s) protégé(s) sont encore dans Photos. Vous pouvez les garder ou libérer l’espace local maintenant.")).font(.caption).foregroundStyle(.secondary);Button(role:.destructive){showPostBackupCleanup=true}label:{Label(language.text("Remove protected originals from iPhone","Supprimer les originaux protégés de l’iPhone"),systemImage:"iphone.slash").frame(maxWidth:.infinity).frame(height:34)}.buttonStyle(.bordered).disabled(deletingProtectedBatch);if let cleanupError{Text(cleanupError).font(.caption).foregroundStyle(.red)}}}
             Divider();Text(language.text("Automatic selection","Sélection automatique")).font(.caption.bold()).foregroundStyle(.secondary);Text("\(preferences.backupPercent)% · "+language.text("about \(requestedCount.formatted()) items","environ \(requestedCount.formatted()) éléments")).font(.subheadline.bold());if smartMode{Label(language.text("Screenshots excluded","Captures d’écran exclues"),systemImage:"checkmark.shield.fill").font(.caption.bold()).foregroundStyle(.green)};Text(language.text("Estimated \(estimatedSize). Choose which end of your library Libérons starts with.","Environ \(estimatedSize). Choisissez par quel côté de votre photothèque Libérons commence.")).font(.caption).foregroundStyle(.secondary)
@@ -73,8 +71,21 @@ struct BackupQueueView: View {
         .sheet(isPresented:$showScreenshotDelete){premiumScreenshotReview}
         .sheet(isPresented:$showPostBackupCleanup){premiumProtectedCleanupReview}
         .sheet(isPresented:$showRecentlyDeletedGuide){recentlyDeletedGuide}
-        .confirmationDialog(language.text("Stop this backup?","Arrêter cette sauvegarde ?"),isPresented:$showStopConfirmation,titleVisibility:.visible){Button(language.text("Stop backup","Arrêter la sauvegarde"),role:.destructive){backup.stop()};Button(language.text("Keep backing up","Continuer la sauvegarde"),role:.cancel){}}message:{Text(language.text("Items already protected stay protected. Active transfers finish safely, then Libérons stops without starting new items.","Les éléments déjà protégés restent protégés. Les transferts actifs se terminent en sécurité, puis Libérons s’arrête sans démarrer de nouveaux éléments."))}
+        .sheet(isPresented:$showStopConfirmation){premiumStopConfirmation.presentationDetents([.height(470)]).presentationDragIndicator(.visible).presentationCornerRadius(32)}
         .onChange(of:backup.protectionBatchID){_,_ in if !backup.newlyProtectedLocalIdentifiers.isEmpty{showPostBackupCleanup=true}}
+    }
+
+    private var premiumStopConfirmation: some View {
+        VStack(alignment:.leading,spacing:18){
+            Capsule().fill(Color.secondary.opacity(0.25)).frame(width:38,height:5).frame(maxWidth:.infinity)
+            ZStack{Circle().fill(Color.red.opacity(0.12)).frame(width:58,height:58);Image(systemName:"stop.fill").font(.title2.bold()).foregroundStyle(.red)}
+            Text(language.text("Stop this backup?","Arrêter cette sauvegarde ?")).font(.title2.bold())
+            Text(language.text("Items already protected stay protected. Libérons stops safely and will not start another item from this selection.","Les éléments déjà protégés restent protégés. Libérons s’arrête en sécurité et ne démarrera aucun nouvel élément de cette sélection.")).font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
+            HStack(spacing:0){resultMetric(value:backup.queueCompleted,label:language.text("Protected","Protégés"),icon:"checkmark.shield.fill",tint:.green);Divider().frame(height:46);resultMetric(value:backup.queueRemaining,label:language.text("Remaining","Restants"),icon:"clock.fill",tint:.orange)}.padding(16).background(Color(uiColor:.secondarySystemGroupedBackground),in:RoundedRectangle(cornerRadius:20,style:.continuous))
+            Spacer(minLength:0)
+            Button(role:.destructive){showStopConfirmation=false;backup.stop()}label:{Label(language.text("Stop backup","Arrêter la sauvegarde"),systemImage:"stop.fill").fontWeight(.bold).frame(maxWidth:.infinity).frame(height:48)}.buttonStyle(.borderedProminent).tint(.red)
+            Button{showStopConfirmation=false}label:{Text(language.text("Keep backing up","Continuer la sauvegarde")).fontWeight(.semibold).frame(maxWidth:.infinity).frame(height:44)}.buttonStyle(.bordered)
+        }.padding(.horizontal,24).padding(.top,10).padding(.bottom,18).interactiveDismissDisabled(false)
     }
 
     private var taskResultCard:some View{
