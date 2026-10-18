@@ -1,9 +1,20 @@
 name: Video repair
 on: [push]
+permissions:
+  contents: write
 jobs:
   repair:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: echo cHJpbnQoJ29rJykK | base64 -d > /tmp/repair.py
-      - run: python3 /tmp/repair.py
+      - name: Patch video playback
+        run: |
+          python3 -c "from pathlib import Path; p=Path('Liberons/ProtectedLibraryView.swift'); s=p.read_text(); old='if isVideo{guard !billing.isPaymentRestricted else{return};do{player=AVPlayer(url:try await SupabaseService.cloudOriginalURL(assetID:item.id))}catch{};return}'; new='if isVideo{guard !billing.isPaymentRestricted else{return};do{let remote=try await SupabaseService.cloudOriginalURL(assetID:item.id);let(data,response)=try await URLSession.shared.data(from:remote);guard let http=response as? HTTPURLResponse,(200..<300).contains(http.statusCode) else{throw URLError(.badServerResponse)};let ext=item.originalFilename.flatMap{let e=URL(fileURLWithPath:$0).pathExtension;return e.isEmpty ? nil:e} ?? \"mov\";let local=FileManager.default.temporaryDirectory.appendingPathComponent(\"liberons-video-\\(item.id.uuidString).\\(ext)\");try? FileManager.default.removeItem(at:local);try data.write(to:local,options:.atomic);player=AVPlayer(url:local);player?.play()}catch{};return}'; assert old in s; p.write_text(s.replace(old,new,1))"
+          git diff --check
+      - name: Commit
+        run: |
+          git config user.name github-actions-bot
+          git config user.email github-actions-bot@users.noreply.github.com
+          git add Liberons/ProtectedLibraryView.swift
+          git commit -m 'Fix protected video playback'
+          git push
