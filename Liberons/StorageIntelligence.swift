@@ -5,7 +5,7 @@ import CryptoKit
 
 struct StorageInsightItem: Identifiable, Hashable, Codable {
     enum Kind: String, Hashable, Codable {
-        case duplicate, screenshot, video, largeVideo, longVideo, slowMotion, timeLapse, livePhoto, rawPhoto, video4K, other
+        case duplicate, photo, screenshot, video, largeVideo, longVideo, slowMotion, timeLapse, livePhoto, rawPhoto, video4K, other
     }
     let id: String
     let kind: Kind
@@ -52,7 +52,7 @@ final class StorageIntelligence: ObservableObject {
 
     init() {
         let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
-        cacheURL = base.appendingPathComponent("liberons-storage-analysis-v3.json")
+        cacheURL = base.appendingPathComponent("liberons-storage-analysis-v4.json")
         loadCache()
     }
 
@@ -104,7 +104,7 @@ final class StorageIntelligence: ObservableObject {
                     }
 
                     let subtypes = asset.mediaSubtypes
-                    var kind: StorageInsightItem.Kind = asset.mediaType == .video ? .video : .other
+                    var kind: StorageInsightItem.Kind = asset.mediaType == .video ? .video : .photo
                     if subtypes.contains(.photoScreenshot) { kind = .screenshot }
                     else if subtypes.contains(.videoHighFrameRate) { kind = .slowMotion }
                     else if subtypes.contains(.videoTimelapse) { kind = .timeLapse }
@@ -115,6 +115,7 @@ final class StorageIntelligence: ObservableObject {
                         else if bytes >= 500_000_000 { kind = .largeVideo }
                         else { kind = .video }
                     } else if names.contains(where: { $0.hasSuffix(".dng") }) { kind = .rawPhoto }
+                    else if asset.mediaType != .image { kind = .other }
 
                     let item = StorageInsightItem(id: asset.localIdentifier, kind: kind, bytes: bytes, duration: asset.duration, creationDate: asset.creationDate, pixelWidth: asset.pixelWidth, pixelHeight: asset.pixelHeight)
                     output.append(item)
@@ -164,14 +165,27 @@ final class StorageIntelligence: ObservableObject {
 
     func items(for kind: StorageInsightItem.Kind) -> [StorageInsightItem] {
         if kind == .duplicate { return duplicateItems }
+        if kind == .photo {
+            return items.filter { [.photo, .livePhoto, .rawPhoto].contains($0.kind) }.sorted { $0.bytes > $1.bytes }
+        }
+        if kind == .video {
+            return items.filter { [.video, .largeVideo, .longVideo, .slowMotion, .timeLapse, .video4K].contains($0.kind) }.sorted { $0.bytes > $1.bytes }
+        }
         return items.filter { $0.kind == kind }.sorted { $0.bytes > $1.bytes }
     }
 
     private func rebuildCategories() {
-        let grouped = Dictionary(grouping: items, by: \.kind)
-        var built = grouped.map { kind, values in StorageInsightCategory(kind: kind, count: values.count, bytes: values.reduce(0) { $0 + $1.bytes }) }
+        let photoKinds: Set<StorageInsightItem.Kind> = [.photo, .livePhoto, .rawPhoto]
+        let videoKinds: Set<StorageInsightItem.Kind> = [.video, .largeVideo, .longVideo, .slowMotion, .timeLapse, .video4K]
+        let photos = items.filter { photoKinds.contains($0.kind) }
+        let videos = items.filter { videoKinds.contains($0.kind) }
+        let screenshots = items.filter { $0.kind == .screenshot }
+        var built: [StorageInsightCategory] = []
+        if !photos.isEmpty { built.append(StorageInsightCategory(kind: .photo, count: photos.count, bytes: photos.reduce(0) { $0 + $1.bytes })) }
+        if !videos.isEmpty { built.append(StorageInsightCategory(kind: .video, count: videos.count, bytes: videos.reduce(0) { $0 + $1.bytes })) }
+        if !screenshots.isEmpty { built.append(StorageInsightCategory(kind: .screenshot, count: screenshots.count, bytes: screenshots.reduce(0) { $0 + $1.bytes })) }
         if !duplicateItems.isEmpty { built.append(StorageInsightCategory(kind: .duplicate, count: duplicateItems.count, bytes: duplicateItems.reduce(0) { $0 + $1.bytes })) }
-        categories = built.sorted { $0.bytes > $1.bytes }
+        categories = built
     }
 
     private func loadCache() {
