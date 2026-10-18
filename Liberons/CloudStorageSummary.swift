@@ -50,8 +50,12 @@ final class CloudStorageSummary: ObservableObject {
         do {
             let plan: ServerPlan = try await SupabaseService.client.functions.invoke("account-storage-plan", options: FunctionInvokeOptions(headers: ["Authorization": "Bearer \(session.accessToken)"]), decode: { data, _ in try decoder.decode(ServerPlan.self, from: data) })
             guard plan.user_id.lowercased() == userID.lowercased(), plan.source == "server", plan.quota_bytes > 0 else { throw NSError(domain: "LiberonsPlan", code: 1) }
-            quotaBytes = plan.quota_bytes; protectedBytes = max(0, plan.protected_bytes); pendingBytes = max(0, plan.pending_bytes); accountRole = plan.role.lowercased()
-            subscriptionStatus = plan.subscription?.status?.lowercased() ?? "free"; gracePeriodEnd = plan.subscription?.grace_period_end; lastPaymentFailedAt = plan.subscription?.last_payment_failed_at; planLoadFailed = false
+            quotaBytes = plan.quota_bytes
+            accountRole = plan.role.lowercased()
+            subscriptionStatus = plan.subscription?.status?.lowercased() ?? "free"
+            gracePeriodEnd = plan.subscription?.grace_period_end
+            lastPaymentFailedAt = plan.subscription?.last_payment_failed_at
+            planLoadFailed = false
         } catch { planLoadFailed = true }
         do {
             let pageSize = 1000
@@ -73,8 +77,11 @@ final class CloudStorageSummary: ObservableObject {
             }
             protectedCount = allAssets.count
             lastProtectedAt = allAssets.first?.protected_at
-            let actualAssetBytes = allAssets.reduce(Int64(0)) { $0 + max(0, $1.size_bytes ?? 0) }
-            if actualAssetBytes > 0 { protectedBytes = actualAssetBytes }
+            protectedBytes = allAssets.reduce(Int64(0)) { $0 + max(0, $1.size_bytes ?? 0) }
+            // The customer-facing storage meter has one source of truth: media whose
+            // cloud copy is verified and whose status is `protected`. Old/stale upload
+            // reservations must never inflate the displayed plan usage.
+            pendingBytes = 0
         } catch { }
     }
 }
