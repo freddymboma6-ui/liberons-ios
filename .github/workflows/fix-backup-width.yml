@@ -1,0 +1,40 @@
+name: Fix backup screen width
+
+on:
+  push:
+    branches: [library-protected-media]
+    paths:
+      - '.github/workflows/fix-backup-width.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: library-protected-media
+      - name: Constrain backup card to screen width
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('Liberons/BackupQueueView.swift')
+          s = p.read_text()
+          old = '        .padding(20).background(Color(uiColor:.systemBackground),in:RoundedRectangle(cornerRadius:28,style:.continuous)).shadow(color:.black.opacity(0.045),radius:18,y:7)'
+          new = '        .frame(maxWidth:.infinity,alignment:.leading)\n        .padding(20).background(Color(uiColor:.systemBackground),in:RoundedRectangle(cornerRadius:28,style:.continuous)).shadow(color:.black.opacity(0.045),radius:18,y:7)'
+          if old not in s:
+              raise SystemExit('Expected BackupQueueView anchor not found; refusing broad edit')
+          if s.count(old) != 1:
+              raise SystemExit('Expected exactly one anchor; refusing ambiguous edit')
+          p.write_text(s.replace(old, new, 1))
+          PY
+      - name: Commit exact fix
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add Liberons/BackupQueueView.swift
+          git diff --cached --check
+          git commit -m 'Constrain backup screen to iPhone width'
+          git push origin library-protected-media
