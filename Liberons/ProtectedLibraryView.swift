@@ -173,44 +173,66 @@ private struct CloudPhotoPage: View {
     }
 
     @MainActor private func loadProtectedVideo() async throws {
-        let fm = FileManager.default
-        let dir = fm.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("LiberonsPlayback", isDirectory: true)
-        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+    let fm = FileManager.default
+    let dir = fm.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("LiberonsPlayback", isDirectory: true)
+    try fm.createDirectory(at: dir, withIntermediateDirectories: true)
 
-        let filename = item.originalFilename ?? "protected-video.mov"
-        var ext = URL(fileURLWithPath: filename).pathExtension.lowercased()
-        if ext.isEmpty { ext = "mov" }
+    let filename = item.originalFilename ?? "protected-video.mov"
+    var ext = URL(fileURLWithPath: filename).pathExtension.lowercased()
+    if ext.isEmpty { ext = "mov" }
+    let local = dir.appendingPathComponent(item.id.uuidString).appendingPathExtension(ext)
 
-        let local = dir.appendingPathComponent(item.id.uuidString).appendingPathExtension(ext)
+    if fm.fileExists(atPath: local.path) {
+        playProtectedVideo(at: local)
+        return
+    }
 
-        if !fm.fileExists(atPath: local.path) {
-            let remote = try await SupabaseService.cloudStreamURL(assetID: item.id)
-            let (downloaded, response) = try await URLSession.shared.download(from: remote)
-            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-                throw URLError(.badServerResponse)
-            }
-
-            let attrs = try fm.attributesOfItem(atPath: downloaded.path)
-            let downloadedSize = (attrs[.size] as? NSNumber)?.int64Value ?? 0
-            guard downloadedSize > 0 else { throw URLError(.zeroByteResource) }
-
-            if item.sizeBytes > 0 && downloadedSize != item.sizeBytes {
-                throw NSError(domain: "LiberonsProtectedVideo", code: 1001,
-                              userInfo: [NSLocalizedDescriptionKey: "Protected video download is incomplete."])
-            }
-
-            try? fm.removeItem(at: local)
-            try fm.moveItem(at: downloaded, to: local)
-        }
-
-        playbackFile = local
-        let playerItem = AVPlayerItem(url: local)
+    do {
+        let request = try await SupabaseService.protectedStreamRequest(assetID: item.id)
+        guard let url = request.url else { throw URLError(.badURL) }
+        let options: [String: Any] = [
+            "AVURLAssetHTTPHeaderFieldsKey": request.allHTTPHeaderFields ?? [:]
+        ]
+        let asset = AVURLAsset(url: url, options: options)
+        let playable = try await asset.load(.isPlayable)
+        guard playable else { throw URLError(.cannotDecodeContentData) }
+        let playerItem = AVPlayerItem(asset: asset)
+        playerItem.preferredForwardBufferDuration = 3
         let avPlayer = AVPlayer(playerItem: playerItem)
         avPlayer.automaticallyWaitsToMinimizeStalling = true
         player = avPlayer
         avPlayer.play()
+        return
+    } catch {
+        print("[Libérons Video] Fast stream unavailable, using protected fallback:", item.id, error.localizedDescription)
     }
+
+    let remote = try await SupabaseService.cloudStreamURL(assetID: item.id)
+    let (downloaded, response) = try await URLSession.shared.download(from: remote)
+    guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+        throw URLError(.badServerResponse)
+    }
+    let attrs = try fm.attributesOfItem(atPath: downloaded.path)
+    let downloadedSize = (attrs[.size] as? NSNumber)?.int64Value ?? 0
+    guard downloadedSize > 0 else { throw URLError(.zeroByteResource) }
+    if item.sizeBytes > 0 && downloadedSize != item.sizeBytes {
+        throw NSError(domain: "LiberonsProtectedVideo", code: 1001,
+                      userInfo: [NSLocalizedDescriptionKey: "Protected video download is incomplete."])
+    }
+    try? fm.removeItem(at: local)
+    try fm.moveItem(at: downloaded, to: local)
+    playProtectedVideo(at: local)
+}
+
+@MainActor private func playProtectedVideo(at url: URL) {
+    playbackFile = url
+    let playerItem = AVPlayerItem(url: url)
+    let avPlayer = AVPlayer(playerItem: playerItem)
+    avPlayer.automaticallyWaitsToMinimizeStalling = true
+    player = avPlayer
+    avPlayer.play()
+}
 }
 
 private final class ProtectedMediaCache: @unchecked Sendable {
