@@ -1,4 +1,4 @@
-name: Apply direct protected video player fix
+name: Apply protected video streaming-first playback
 on:
   push:
     branches:
@@ -20,29 +20,82 @@ jobs:
           from pathlib import Path
           p = Path('Liberons/ProtectedLibraryView.swift')
           s = p.read_text()
-          old = 'if isVideo{guard !billing.isPaymentRestricted else{return};do{let remote=try await SupabaseService.cloudStreamURL(assetID:item.id);await liberonsProbeVideoRange(remote,assetID:item.id);let asset=AVURLAsset(url:remote);let playable=try await asset.load(.isPlayable);guard playable else{throw URLError(.cannotDecodeContentData)};let playerItem=AVPlayerItem(asset:asset);playerItem.preferredForwardBufferDuration=3;playerItem.canUseNetworkResourcesForLiveStreamingWhilePaused=true;let avPlayer=AVPlayer(playerItem:playerItem);avPlayer.automaticallyWaitsToMinimizeStalling=true;player=avPlayer;avPlayer.play()}catch{loadFailed=true};return}'
-          new = 'if isVideo{guard !billing.isPaymentRestricted else{return};do{let remote=try await SupabaseService.cloudStreamURL(assetID:item.id);let playerItem=AVPlayerItem(url:remote);playerItem.preferredForwardBufferDuration=3;playerItem.canUseNetworkResourcesForLiveStreamingWhilePaused=true;let avPlayer=AVPlayer(playerItem:playerItem);avPlayer.automaticallyWaitsToMinimizeStalling=true;player=avPlayer;avPlayer.play()}catch{loadFailed=true};return}'
-          if old not in s:
-              if new in s:
-                  raise SystemExit(0)
-              raise SystemExit('current video block not found')
-          s = s.replace(old,new,1)
-          marker = '\n\nprivate func liberonsProbeVideoRange(_ url:URL,assetID:UUID) async {'
-          if marker in s:
-              start = s.index(marker)
-              s = s[:start].rstrip() + '\n'
+          start = s.index('    @MainActor private func loadProtectedVideo() async throws {')
+          end = s.index('\n}\n\nprivate final class ProtectedMediaCache', start)
+          replacement = '''    @MainActor private func loadProtectedVideo() async throws {
+        let fm = FileManager.default
+        let dir = fm.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("LiberonsPlayback", isDirectory: true)
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        let filename = item.originalFilename ?? "protected-video.mov"
+        var ext = URL(fileURLWithPath: filename).pathExtension.lowercased()
+        if ext.isEmpty { ext = "mov" }
+        let local = dir.appendingPathComponent(item.id.uuidString).appendingPathExtension(ext)
+
+        if fm.fileExists(atPath: local.path) {
+            playProtectedVideo(at: local)
+            return
+        }
+
+        do {
+            let request = try await SupabaseService.protectedStreamRequest(assetID: item.id)
+            guard let url = request.url else { throw URLError(.badURL) }
+            let options: [String: Any] = [
+                "AVURLAssetHTTPHeaderFieldsKey": request.allHTTPHeaderFields ?? [:]
+            ]
+            let asset = AVURLAsset(url: url, options: options)
+            let playable = try await asset.load(.isPlayable)
+            guard playable else { throw URLError(.cannotDecodeContentData) }
+            let playerItem = AVPlayerItem(asset: asset)
+            playerItem.preferredForwardBufferDuration = 3
+            let avPlayer = AVPlayer(playerItem: playerItem)
+            avPlayer.automaticallyWaitsToMinimizeStalling = true
+            player = avPlayer
+            avPlayer.play()
+            return
+        } catch {
+            print("[Libérons Video] Fast stream unavailable, using protected fallback:", item.id, error.localizedDescription)
+        }
+
+        let remote = try await SupabaseService.cloudStreamURL(assetID: item.id)
+        let (downloaded, response) = try await URLSession.shared.download(from: remote)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+        let attrs = try fm.attributesOfItem(atPath: downloaded.path)
+        let downloadedSize = (attrs[.size] as? NSNumber)?.int64Value ?? 0
+        guard downloadedSize > 0 else { throw URLError(.zeroByteResource) }
+        if item.sizeBytes > 0 && downloadedSize != item.sizeBytes {
+            throw NSError(domain: "LiberonsProtectedVideo", code: 1001,
+                          userInfo: [NSLocalizedDescriptionKey: "Protected video download is incomplete."])
+        }
+        try? fm.removeItem(at: local)
+        try fm.moveItem(at: downloaded, to: local)
+        playProtectedVideo(at: local)
+    }
+
+    @MainActor private func playProtectedVideo(at url: URL) {
+        playbackFile = url
+        let playerItem = AVPlayerItem(url: url)
+        let avPlayer = AVPlayer(playerItem: playerItem)
+        avPlayer.automaticallyWaitsToMinimizeStalling = true
+        player = avPlayer
+        avPlayer.play()
+    }'''
+          s = s[:start] + replacement + s[end:]
           p.write_text(s)
           PY
       - name: Commit Swift fix
         shell: bash
         run: |
-          grep -q 'AVPlayerItem(url:remote)' Liberons/ProtectedLibraryView.swift
-          if grep -q 'asset.load(.isPlayable)' Liberons/ProtectedLibraryView.swift; then echo 'isPlayable preflight still present' && exit 1; fi
-          if grep -q 'liberonsProbeVideoRange' Liberons/ProtectedLibraryView.swift; then echo 'diagnostic probe still present' && exit 1; fi
+          grep -q 'protectedStreamRequest' Liberons/ProtectedLibraryView.swift
+          grep -q 'Fast stream unavailable' Liberons/ProtectedLibraryView.swift
+          grep -q 'playProtectedVideo' Liberons/ProtectedLibraryView.swift
           git diff --check
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add Liberons/ProtectedLibraryView.swift
           if git diff --cached --quiet; then exit 0; fi
-          git commit -m 'Play protected videos without AVAsset preflight'
+          git commit -m 'Stream protected videos before download fallback'
           git push origin HEAD:library-protected-media
