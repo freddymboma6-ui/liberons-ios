@@ -12,32 +12,122 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: library-protected-media
-      - name: Repair photo fallback and video playback
+      - name: Repair bulk actions and video playback
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import re
           p=Path('Liberons/ProtectedLibraryView.swift')
           s=p.read_text()
-          s=s.replace('import Photos\n','import Photos\nimport AVKit\nimport AVFoundation\n',1)
 
-          old='''private struct CloudPhotoPage:View{\n    let item:ProtectedCloudMedia;@ObservedObject var language:LanguageStore;@ObservedObject var billing:CloudStorageSummary;@State private var image:UIImage?;@State private var loading=true\n    private var isVideo:Bool{item.mediaType.lowercased().contains("video")}\n    var body:some View{ZStack{Color.black;if let image{Image(uiImage:image).resizable().scaledToFit()}else if loading{ProgressView().tint(.white)}else{Image(systemName:"exclamationmark.icloud").foregroundStyle(.white)};if isVideo{Image(systemName:"play.circle.fill").font(.system(size:68)).foregroundStyle(.white)}}.task(id:item.id){await load()}}\n    @MainActor private func load()async{guard !isVideo else{loading=false;return};do{let url = billing.isPaymentRestricted ? try await SupabaseService.cloudPreviewURL(assetID:item.id) : try await SupabaseService.cloudOriginalURL(assetID:item.id);let(data,_)=try await URLSession.shared.data(from:url);image=UIImage(data:data)}catch{if let url=try? await SupabaseService.cloudPreviewURL(assetID:item.id),let(data,_)=try? await URLSession.shared.data(from:url){image=UIImage(data:data)}};loading=false}\n}'''
-          new='''private struct CloudPhotoPage:View{\n    let item:ProtectedCloudMedia;@ObservedObject var language:LanguageStore;@ObservedObject var billing:CloudStorageSummary;@State private var image:UIImage?;@State private var player:AVPlayer?;@State private var loading=true\n    private var isVideo:Bool{item.mediaType.lowercased().contains("video")}\n    var body:some View{ZStack{Color.black;if isVideo,let player{VideoPlayer(player:player).onAppear{player.play()}.onDisappear{player.pause()}}else if let image{Image(uiImage:image).resizable().scaledToFit()}else if loading{ProgressView().tint(.white)}else{Image(systemName:"exclamationmark.icloud").foregroundStyle(.white)}}.task(id:item.id){await load()}}\n    @MainActor private func load()async{\n        loading=true\n        defer{loading=false}\n        if isVideo{guard !billing.isPaymentRestricted else{return};do{player=AVPlayer(url:try await SupabaseService.cloudOriginalURL(assetID:item.id))}catch{};return}\n        if let id=item.iosLocalIdentifier,let asset=PHAsset.fetchAssets(withLocalIdentifiers:[id],options:nil).firstObject{\n            let options=PHImageRequestOptions();options.isNetworkAccessAllowed=true;options.deliveryMode = .highQualityFormat\n            PHImageManager.default().requestImage(for:asset,targetSize:PHImageManagerMaximumSize,contentMode:.aspectFit,options:options){value,_ in if let value{Task{@MainActor in image=value}}}\n            return\n        }\n        if let preview=try? await SupabaseService.cloudPreviewURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:preview),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300,let decoded=UIImage(data:data){image=decoded;return}\n        guard !billing.isPaymentRestricted else{return}\n        if let original=try? await SupabaseService.cloudOriginalURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:original),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300{image=UIImage(data:data)}\n    }\n}'''
+          # Selection state: add bulk restore state.
+          s=s.replace('@State private var deletingSelection = false\n', '@State private var deletingSelection = false\n    @State private var restoringSelection = false\n    @State private var bulkError: String?\n', 1)
+
+          # Replace selection bottom toolbar with explicit recovery + permanent delete actions.
+          old='ToolbarItemGroup(placement: .bottomBar) { Button(language.text("Select all", "Tout sélectionner")) { selectedIDs = Set(store.items.map(\\.id)) }; Spacer(); Button(language.text("Delete", "Supprimer"), role: .destructive) { showBulkDelete = true }.disabled(selectedIDs.isEmpty || deletingSelection) }'
+          new='ToolbarItemGroup(placement: .bottomBar) { Button(language.text("Select all", "Tout sélectionner")) { selectedIDs = Set(store.items.map(\\.id)) }; Spacer(); Button { Task { await restoreSelected() } } label: { Label(language.text("Recover", "Récupérer"), systemImage: "square.and.arrow.down") }.disabled(selectedIDs.isEmpty || deletingSelection || restoringSelection || billing.isPaymentRestricted); Spacer(); Button(role: .destructive) { showBulkDelete = true } label: { Label(language.text("Delete", "Supprimer"), systemImage: "trash") }.disabled(selectedIDs.isEmpty || deletingSelection || restoringSelection) }'
           if old not in s:
-              raise SystemExit('CloudPhotoPage block not found')
+              raise SystemExit('selection toolbar block not found')
           s=s.replace(old,new,1)
 
-          old_thumb=''';@MainActor private func loadThumbnail()async{if let id=item.iosLocalIdentifier,let asset=PHAsset.fetchAssets(withLocalIdentifiers:[id],options:nil).firstObject{let options=PHImageRequestOptions();options.isNetworkAccessAllowed=true;PHImageManager.default().requestImage(for:asset,targetSize:CGSize(width:500,height:500),contentMode:.aspectFill,options:options){value,_ in if let value{Task{@MainActor in image=value}}};return};guard !isVideo else{return};do{let url=try await SupabaseService.cloudPreviewURL(assetID:item.id);let(data,_)=try await URLSession.shared.data(from:url);image=UIImage(data:data)}catch{}}}'''
-          new_thumb=''';@MainActor private func loadThumbnail()async{if let id=item.iosLocalIdentifier,let asset=PHAsset.fetchAssets(withLocalIdentifiers:[id],options:nil).firstObject{let options=PHImageRequestOptions();options.isNetworkAccessAllowed=true;PHImageManager.default().requestImage(for:asset,targetSize:CGSize(width:500,height:500),contentMode:.aspectFill,options:options){value,_ in if let value{Task{@MainActor in image=value}}};return};if let preview=try? await SupabaseService.cloudPreviewURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:preview),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300,let decoded=UIImage(data:data){image=decoded;return};if isVideo{if let url=try? await SupabaseService.cloudOriginalURL(assetID:item.id){let asset=AVURLAsset(url:url);let generator=AVAssetImageGenerator(asset:asset);generator.appliesPreferredTrackTransform=true;if let cg=try? await generator.image(at:.zero).image{image=UIImage(cgImage:cg)}};return};if let url=try? await SupabaseService.cloudOriginalURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:url),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300{image=UIImage(data:data)}}}'''
-          if old_thumb not in s:
-              raise SystemExit('thumbnail loader not found')
-          s=s.replace(old_thumb,new_thumb,1)
+          # Add visible bulk error and robust restore implementation before deleteSelected.
+          needle='    @MainActor private func deleteSelected() async {'
+          insert='''    @MainActor private func restoreSelected() async {
+        guard !billing.isPaymentRestricted else { return }
+        restoringSelection = true
+        bulkError = nil
+        var failures = 0
+        let chosen = store.items.filter { selectedIDs.contains($0.id) }
+        for item in chosen {
+            do {
+                let remote = try await SupabaseService.cloudOriginalURL(assetID: item.id)
+                let (downloaded, response) = try await URLSession.shared.download(from: remote)
+                guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
+                let ext = (item.originalFilename as NSString?)?.pathExtension.nonEmpty ?? (item.mediaType.lowercased().contains("video") ? "mov" : "jpg")
+                let local = FileManager.default.temporaryDirectory.appendingPathComponent("liberons-restore-\\(UUID().uuidString).\\(ext)")
+                try? FileManager.default.removeItem(at: local)
+                try FileManager.default.moveItem(at: downloaded, to: local)
+                defer { try? FileManager.default.removeItem(at: local) }
+                try await PHPhotoLibrary.shared().performChanges {
+                    if item.mediaType.lowercased().contains("video") { PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: local) }
+                    else { PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: local) }
+                }
+            } catch { failures += 1 }
+        }
+        restoringSelection = false
+        if failures == 0 { selectedIDs.removeAll(); isSelecting = false }
+        else { bulkError = language.text("Some selected memories could not be recovered.", "Certains souvenirs sélectionnés n’ont pas pu être récupérés.") }
+    }
+'''
+          if needle not in s:
+              raise SystemExit('deleteSelected function not found')
+          s=s.replace(needle,insert+needle,1)
+
+          # NSString helper is avoided by using URL pathExtension instead.
+          s=s.replace('(item.originalFilename as NSString?)?.pathExtension.nonEmpty ?? (item.mediaType.lowercased().contains("video") ? "mov" : "jpg")', 'item.originalFilename.flatMap { URL(fileURLWithPath: $0).pathExtension.isEmpty ? nil : URL(fileURLWithPath: $0).pathExtension } ?? (item.mediaType.lowercased().contains("video") ? "mov" : "jpg")')
+
+          # Replace cloud page. Streamed signed URLs were unreliable in AVPlayer; download a temporary verified file first.
+          start=s.index('private struct CloudPhotoPage:View{')
+          end=s.index('private enum ProtectedAction:', start)
+          cloud='''private struct CloudPhotoPage:View{
+    let item:ProtectedCloudMedia;@ObservedObject var language:LanguageStore;@ObservedObject var billing:CloudStorageSummary
+    @State private var image:UIImage?;@State private var player:AVPlayer?;@State private var videoFileURL:URL?;@State private var loading=true;@State private var loadFailed=false
+    private var isVideo:Bool{item.mediaType.lowercased().contains("video")}
+    var body:some View{
+        ZStack{
+            Color.black
+            if isVideo,let player { VideoPlayer(player:player).onAppear{player.play()}.onDisappear{player.pause()} }
+            else if let image { Image(uiImage:image).resizable().scaledToFit() }
+            else if loading { ProgressView().tint(.white) }
+            else if loadFailed { VStack(spacing:10){Image(systemName:"exclamationmark.icloud").font(.title).foregroundStyle(.white);Text(language.text("Unable to load this memory", "Impossible de charger ce souvenir")).font(.footnote).foregroundStyle(.white.opacity(0.8))} }
+        }
+        .task(id:item.id){await load()}
+        .onDisappear{player?.pause();player=nil;if let videoFileURL{try? FileManager.default.removeItem(at:videoFileURL);self.videoFileURL=nil}}
+    }
+    @MainActor private func load()async{
+        loading=true;loadFailed=false
+        defer{loading=false}
+        if isVideo {
+            guard !billing.isPaymentRestricted else { loadFailed=true;return }
+            do {
+                let remote=try await SupabaseService.cloudOriginalURL(assetID:item.id)
+                let(downloaded,response)=try await URLSession.shared.download(from:remote)
+                guard let http=response as? HTTPURLResponse,(200..<300).contains(http.statusCode) else{throw URLError(.badServerResponse)}
+                let ext=item.originalFilename.flatMap{let e=URL(fileURLWithPath:$0).pathExtension;return e.isEmpty ? nil:e} ?? "mov"
+                let local=FileManager.default.temporaryDirectory.appendingPathComponent("liberons-play-\\(item.id.uuidString).\\(ext)")
+                try? FileManager.default.removeItem(at:local)
+                try FileManager.default.moveItem(at:downloaded,to:local)
+                videoFileURL=local
+                let p=AVPlayer(url:local);player=p;p.play()
+            } catch { loadFailed=true }
+            return
+        }
+        if let id=item.iosLocalIdentifier,let asset=PHAsset.fetchAssets(withLocalIdentifiers:[id],options:nil).firstObject{
+            let options=PHImageRequestOptions();options.isNetworkAccessAllowed=true;options.deliveryMode = .highQualityFormat
+            PHImageManager.default().requestImage(for:asset,targetSize:PHImageManagerMaximumSize,contentMode:.aspectFit,options:options){value,_ in if let value{Task{@MainActor in image=value}}}
+            return
+        }
+        if let preview=try? await SupabaseService.cloudPreviewURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:preview),let http=response as? HTTPURLResponse,(200..<300).contains(http.statusCode),let decoded=UIImage(data:data){image=decoded;return}
+        guard !billing.isPaymentRestricted else{loadFailed=true;return}
+        if let original=try? await SupabaseService.cloudOriginalURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:original),let http=response as? HTTPURLResponse,(200..<300).contains(http.statusCode),let decoded=UIImage(data:data){image=decoded;return}
+        loadFailed=true
+    }
+}
+
+'''
+          s=s[:start]+cloud+s[end:]
           p.write_text(s)
           PY
+      - name: Validate patch
+        run: |
+          grep -q 'Button(language.text("Recover", "Récupérer")' Liberons/ProtectedLibraryView.swift || grep -q 'language.text("Recover", "Récupérer")' Liberons/ProtectedLibraryView.swift
+          grep -q 'URLSession.shared.download(from:remote)' Liberons/ProtectedLibraryView.swift
+          git diff --check
       - name: Commit repair
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add Liberons/ProtectedLibraryView.swift
           git diff --cached --check
-          git commit -m 'Restore cloud thumbnails and video playback'
+          git commit -m 'Add bulk recovery and reliable cloud video playback'
           git push origin HEAD:library-protected-media
