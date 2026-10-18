@@ -57,14 +57,14 @@ struct LiberonsPrivacySecurityView: View {
                 external(.terms, icon: "doc.text.fill", language.text("Terms of Use", "Conditions d’utilisation"))
                 external(.refunds, icon: "arrow.uturn.backward.circle.fill", language.text("Refund Policy", "Politique de remboursement"))
             } header: {
-                Text(language.text("Official policies", "Politiques officielles"))
+                Text(language.text("Legal & privacy", "Cadre juridique et confidentialité"))
             } footer: {
-                Text(language.text("Official policies open on liberons.com in the same language selected in the app.", "Les politiques officielles s’ouvrent sur liberons.com dans la même langue que celle sélectionnée dans l’app."))
+                Text(language.text("Review the legal terms and privacy commitments that govern your use of Libérons.", "Consultez les conditions juridiques et les engagements de confidentialité applicables à votre utilisation de Libérons."))
             }
             Section(language.text("This iPhone", "Cet iPhone")) { Button(language.text("Open Libérons settings", "Ouvrir les réglages de Libérons")) { openAppSettings() } }
         }.navigationTitle(language.text("Privacy & security", "Confidentialité et sécurité")).navigationBarTitleDisplayMode(.inline).onAppear { photoStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite) }
     }
-    @ViewBuilder private func external(_ destination: LiberonsWebDestination, icon: String, _ title: String) -> some View { LiberonsExternalRow(icon: icon, title: title, subtitle: "liberons.com") { open(destination) } }
+    @ViewBuilder private func external(_ destination: LiberonsWebDestination, icon: String, _ title: String) -> some View { LiberonsExternalRow(icon: icon, title: title, subtitle: language.text("Legal document", "Document juridique")) { open(destination) } }
     private var photoAccessText: String { switch photoStatus { case .authorized: return language.text("All photos allowed", "Toutes les photos autorisées"); case .limited: return language.text("Selected photos only", "Certaines photos seulement"); case .denied, .restricted: return language.text("Access is off", "Accès désactivé"); case .notDetermined: return language.text("Not set up yet", "Pas encore configuré"); @unknown default: return "—" } }
     private func open(_ destination: LiberonsWebDestination) { guard let url = destination.url(for: language.language) else { return }; UIApplication.shared.open(url) }
     private func openAppSettings() { guard let url = URL(string: UIApplication.openSettingsURLString) else { return }; UIApplication.shared.open(url) }
@@ -77,7 +77,7 @@ struct LiberonsHelpSupportView: View {
             Section { VStack(alignment: .leading, spacing: 8) { Label(language.text("Libérons Support", "Assistance Libérons"), systemImage: "message.badge.fill").font(.headline).foregroundStyle(.blue); Text(language.text("Get help with backups, storage, restores, your account or billing. Never send your password or full card number to support.", "Obtenez de l’aide pour les sauvegardes, le stockage, les restaurations, votre compte ou la facturation. Ne transmettez jamais votre mot de passe ni votre numéro complet de carte au support.")).font(.subheadline).foregroundStyle(.secondary) }.padding(.vertical, 4) }
             Section(language.text("Contact", "Contact")) {
                 LiberonsExternalRow(icon: "envelope.fill", title: "support@liberons.com", subtitle: language.text("Email Libérons Support", "Écrire à l’assistance Libérons")) { emailSupport() }
-                LiberonsExternalRow(icon: "safari.fill", title: language.text("Support on liberons.com", "Assistance sur liberons.com"), subtitle: language.text("Open the official help page", "Ouvrir la page d’aide officielle")) { open(.support) }
+                LiberonsExternalRow(icon: "safari.fill", title: language.text("Help Center", "Centre d’aide"), subtitle: language.text("Guides and support resources", "Guides et ressources d’assistance")) { open(.support) }
             }
             Section(language.text("Backup & space", "Sauvegarde et espace")) {
                 faq(language.text("What happens when I free space?", "Que se passe-t-il quand je libère de l’espace ?"), language.text("Only originals already confirmed as protected are eligible. When you confirm removal, the iPhone copy is removed while the protected Libérons copy remains available.", "Seuls les originaux dont la protection a été confirmée sont éligibles. Lorsque vous confirmez le retrait, la copie de l’iPhone est supprimée tandis que la copie protégée dans Libérons reste disponible."))
@@ -85,8 +85,8 @@ struct LiberonsHelpSupportView: View {
                 faq(language.text("What if my Libérons storage is full?", "Que se passe-t-il si mon stockage Libérons est plein ?"), language.text("Existing protected memories remain in your Library. New backups pause until enough capacity is available.", "Les souvenirs déjà protégés restent dans votre Bibliothèque. Les nouvelles sauvegardes sont suspendues jusqu’à ce que suffisamment d’espace soit disponible."))
             }
             Section(language.text("Account & billing", "Compte et facturation")) {
-                faq(language.text("Does deleting the app cancel my subscription?", "Supprimer l’app annule-t-il mon abonnement ?"), language.text("No. Uninstalling Libérons or signing out does not cancel a subscription. Manage your plan using the official account and billing controls.", "Non. Désinstaller Libérons ou vous déconnecter n’annule pas un abonnement. Gérez votre forfait avec les contrôles officiels du compte et de facturation."))
-                faq(language.text("Where can I read the official policies?", "Où consulter les politiques officielles ?"), language.text("Privacy, Terms of Use and Refund Policy are available on liberons.com and from Privacy & security in the app.", "La confidentialité, les conditions d’utilisation et la politique de remboursement sont disponibles sur liberons.com et dans Confidentialité et sécurité dans l’app."))
+                faq(language.text("Does deleting the app cancel my subscription?", "Supprimer l’app annule-t-il mon abonnement ?"), language.text("No. Uninstalling Libérons or signing out does not cancel a subscription. Manage your plan using the official account and billing controls.", "Non. Désinstaller Libérons ou vous déconnecter n’annule pas un abonnement. Gérez votre forfait depuis les paramètres de votre compte."))
+                faq(language.text("Where can I review the legal terms?", "Où consulter les conditions juridiques ?"), language.text("Privacy, Terms of Use and Refund Policy are available from Privacy & security.", "La politique de confidentialité, les conditions d’utilisation et la politique de remboursement sont accessibles depuis Confidentialité et sécurité."))
             }
         }.navigationTitle(language.text("Help & support", "Aide et support")).navigationBarTitleDisplayMode(.inline)
     }
@@ -103,29 +103,29 @@ struct LiberonsAboutView: View {
                 ZStack { RoundedRectangle(cornerRadius: 28).fill(Color.blue.gradient).frame(width: 92, height: 92); Image(systemName: "icloud.and.arrow.up.fill").font(.system(size: 40, weight: .semibold)).foregroundStyle(.white) }
                 VStack(spacing: 6) { Text("Libérons").font(.system(size: 34, weight: .bold, design: .rounded)); Text(language.text("Keep your memories. Free your space.", "Gardez vos souvenirs. Libérez votre espace.")).font(.headline).foregroundStyle(.secondary).multilineTextAlignment(.center) }
                 aboutCard {
-                    Text(language.text("Cloud storage designed around your memories", "Un stockage cloud pensé autour de vos souvenirs")).font(.title3.bold())
-                    Text(language.text("Libérons helps you protect photos and videos in Libérons Cloud, recover space on your iPhone when you choose, and keep protected memories available from your account.", "Libérons vous aide à protéger vos photos et vidéos dans Libérons Cloud, à récupérer de l’espace sur votre iPhone lorsque vous le décidez et à garder vos souvenirs protégés accessibles depuis votre compte."))
+                    Text(language.text("Your memories, protected. Your space, reclaimed.", "Vos souvenirs protégés. Votre espace retrouvé.")).font(.title3.bold())
+                    Text(language.text("Libérons securely protects your photos and videos in the cloud so you can reclaim space on your iPhone without giving up the memories that matter.", "Libérons protège vos photos et vidéos dans le cloud afin de vous permettre de récupérer de l’espace sur votre iPhone, sans renoncer aux souvenirs qui comptent."))
                     Divider()
-                    aboutPoint("checkmark.icloud.fill", language.text("Verified protection", "Protection vérifiée"), language.text("A media item is treated as protected only after the cloud copy is confirmed.", "Un média est considéré comme protégé uniquement après confirmation de sa copie dans le cloud."))
-                    aboutPoint("iphone", language.text("You stay in control", "Vous gardez le contrôle"), language.text("Cloud backup and removal from your iPhone are separate actions.", "La sauvegarde cloud et le retrait de votre iPhone sont deux actions distinctes."))
-                    aboutPoint("arrow.down.to.line.compact", language.text("Restore when needed", "Récupérez quand nécessaire"), language.text("Protected memories can be accessed from your Libérons Library and restored according to your account status.", "Les souvenirs protégés restent accessibles dans votre Bibliothèque Libérons et peuvent être restaurés selon l’état de votre compte."))
+                    aboutPoint("checkmark.icloud.fill", language.text("Protection you can verify", "Une protection vérifiable"), language.text("A media item is considered protected only after its cloud copy has been confirmed.", "Un média n’est considéré comme protégé qu’après confirmation de sa copie dans le cloud."))
+                    aboutPoint("iphone", language.text("You remain in control", "Vous gardez le contrôle"), language.text("Backing up and removing a local copy are always separate actions.", "La sauvegarde et le retrait d’une copie locale restent toujours deux actions distinctes."))
+                    aboutPoint("arrow.down.to.line.compact", language.text("Access when you need it", "Vos souvenirs, quand vous en avez besoin"), language.text("Your protected memories remain available in your Libérons Library, subject to your account access and service terms.", "Vos souvenirs protégés restent accessibles dans votre Bibliothèque Libérons, selon les conditions d’accès associées à votre compte."))
                 }
                 aboutCard {
-                    Text(language.text("Official information", "Informations officielles")).font(.headline)
-                    external(.home, icon: "globe", language.text("Visit liberons.com", "Visiter liberons.com")); Divider()
+                    Text(language.text("Legal & service information", "Informations légales et service")).font(.headline)
+                    external(.home, icon: "globe", language.text("Libérons website", "Site Libérons")); Divider()
                     external(.privacy, icon: "hand.raised.square.fill", language.text("Privacy Policy", "Politique de confidentialité")); Divider()
                     external(.terms, icon: "doc.text.fill", language.text("Terms of Use", "Conditions d’utilisation")); Divider()
                     external(.refunds, icon: "arrow.uturn.backward.circle.fill", language.text("Refund Policy", "Politique de remboursement"))
                 }
                 aboutCard { HStack { Text(language.text("App version", "Version de l’app")); Spacer(); Text(version).foregroundStyle(.secondary) }; Divider(); HStack { Text(language.text("Service operator", "Exploitant du service")); Spacer(); Text("Freddy Mboma").foregroundStyle(.secondary) }; Divider(); HStack { Text(language.text("Based in", "Établi au")); Spacer(); Text("Canada").foregroundStyle(.secondary) } }
-                Text(language.text("Official legal information and policies are published on liberons.com.", "Les informations juridiques et politiques officielles sont publiées sur liberons.com.")).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                Text(language.text("Libérons · Built to protect what matters and give your space back.", "Libérons · Protéger ce qui compte. Retrouver votre espace.")).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 Text("© 2026 Libérons").font(.caption).foregroundStyle(.secondary).padding(.bottom, 12)
             }.padding(24)
         }.background(LiberonsTheme.canvas).navigationTitle(language.text("About Libérons", "À propos de Libérons")).navigationBarTitleDisplayMode(.inline)
     }
     @ViewBuilder private func aboutCard<Content: View>(@ViewBuilder content: () -> Content) -> some View { VStack(alignment: .leading, spacing: 14) { content() }.frame(maxWidth: .infinity, alignment: .leading).padding(20).background(LiberonsTheme.card, in: RoundedRectangle(cornerRadius: 24, style: .continuous)) }
     @ViewBuilder private func aboutPoint(_ icon: String, _ title: String, _ detail: String) -> some View { HStack(alignment: .top, spacing: 12) { Image(systemName: icon).foregroundStyle(.blue).frame(width: 24).padding(.top, 2); VStack(alignment: .leading, spacing: 3) { Text(title).font(.subheadline.bold()); Text(detail).font(.subheadline).foregroundStyle(.secondary) } } }
-    @ViewBuilder private func external(_ destination: LiberonsWebDestination, icon: String, _ title: String) -> some View { LiberonsExternalRow(icon: icon, title: title, subtitle: "liberons.com") { open(destination) } }
+    @ViewBuilder private func external(_ destination: LiberonsWebDestination, icon: String, _ title: String) -> some View { LiberonsExternalRow(icon: icon, title: title, subtitle: language.text("Learn more", "En savoir plus")) { open(destination) } }
     private func open(_ destination: LiberonsWebDestination) { guard let url = destination.url(for: language.language) else { return }; UIApplication.shared.open(url) }
     private var version: String { let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"; let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—"; return "\(version) (\(build))" }
 }
