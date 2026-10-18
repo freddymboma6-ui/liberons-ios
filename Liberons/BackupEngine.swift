@@ -43,7 +43,11 @@ final class BackupEngine: ObservableObject {
 
     private struct InitiateResponse:Decodable{struct Upload:Decodable{let url:String;let headers:[String:String]};let asset_id:String;let upload_session_id:String;let upload:Upload}
     private struct ProtectedResult:Sendable{let localIdentifier:String;let filename:String;let bytes:Int64;let isVideo:Bool}
-    private struct BackupFailure:Error,Sendable{let reason:String;let underlying:String}
+    private struct BackupFailure:Error,Sendable{
+        let reason:String
+        let diagnostic:String
+        init(reason:String, diagnostic:String){self.reason=reason;self.diagnostic=diagnostic}
+    }
 
     func prepareOldestAsset(){let options=PHFetchOptions();options.sortDescriptors=[NSSortDescriptor(key:"creationDate",ascending:true)];options.fetchLimit=1;guard let asset=PHAsset.fetchAssets(with:options).firstObject,let resource=primaryResource(for:asset) else{selectedLocalIdentifier=nil;selectedFilename=nil;message="No media found";return};setPreview(asset:asset,resource:resource);selectionConfirmed=true;message="Oldest item ready — tap again to protect"}
     func backupSelectedAsset()async{guard !isRunning else{return};guard let id=selectedLocalIdentifier else{message="Select media first";return};await backup(localIdentifiers:[id])}
@@ -73,10 +77,7 @@ final class BackupEngine: ObservableObject {
                 case .failure(let failure):
                     queueFailed+=1;lastFailureReason=failure.reason;failureSummary[failure.reason,default:0]+=1
                     if repeatedFailureReason==failure.reason{repeatedFailureCount+=1}else{repeatedFailureReason=failure.reason;repeatedFailureCount=1}
-                    if repeatedFailureCount>=repeatedFailureSafetyLimit{
-                        stopRequested=true;isStopping=true
-                        message="Stopped: \(failure.reason)"
-                    }
+                    if repeatedFailureCount>=repeatedFailureSafetyLimit{stopRequested=true;isStopping=true;message="Stopped: \(failure.reason)"}
                 }
                 if stopRequested{message=lastFailureReason.map{"Stopped safely • \($0)"} ?? (activeTransfers>0 ? "Stopping safely…":"Backup stopped");continue}
                 await waitIfPaused();guard !stopRequested else{continue}
@@ -93,10 +94,10 @@ final class BackupEngine: ObservableObject {
     private func setPreview(asset:PHAsset,resource:PHAssetResource){selectedLocalIdentifier=asset.localIdentifier;selectedFilename=resource.originalFilename;selectedIsVideo=asset.mediaType == .video;selectedCreationDate=asset.creationDate;selectedBytes=Int64(resource.value(forKey:"fileSize") as? CLong ?? 0)}
 
     private func protectResultWithRetry(asset:PHAsset)async->Result<ProtectedResult,BackupFailure>{
-        guard let resource=primaryResource(for:asset) else{return .failure(BackupFailure(reason:"Original media unavailable in Photos",underlying:"No media resource found"))}
+        guard let resource=primaryResource(for:asset) else{return .failure(BackupFailure(reason:"Original media unavailable in Photos",diagnostic:"No media resource found"))}
         var finalError:Error?
         for attempt in 1...3{
-            if Task.isCancelled{return .failure(BackupFailure(reason:"Transfer cancelled",underlying:"Task cancelled"))}
+            if Task.isCancelled{return .failure(BackupFailure(reason:"Transfer cancelled",diagnostic:"Task cancelled"))}
             do{return .success(try await protect(asset:asset,resource:resource))}
             catch{finalError=error;if attempt<3{try? await Task.sleep(for:.milliseconds(500*attempt))}}
         }
@@ -111,12 +112,13 @@ final class BackupEngine: ObservableObject {
         let reason:String
         if ns.domain==NSURLErrorDomain || lower.contains("network") || lower.contains("internet") || lower.contains("timed out") || lower.contains("connection") {reason="Network connection failed after 3 attempts"}
         else if lower.contains("unauthorized") || lower.contains("jwt") || ns.code==401 {reason="Libérons session is no longer authorized"}
-        else if lower.contains("quota") || lower.contains("storage") && lower.contains("limit") {reason="Cloud storage quota was refused"}
+        else if lower.contains("quota") || (lower.contains("storage") && lower.contains("limit")) {reason="Cloud storage quota was refused"}
         else if lower.contains("export") || lower.contains("icloud") || ns.domain.contains("Photos") {reason="Original could not be downloaded from Photos/iCloud"}
         else if lower.contains("signed upload") {reason="Cloud upload authorization could not be created"}
         else if lower.contains("protected") || lower.contains("verify") {reason="Cloud upload completed but verification failed"}
         else {reason="Upload failed: \(detail)"}
-        return BackupFailure(reason:reason,underlying="\(ns.domain) \(ns.code): \(detail)")
+        let diagnostic="\(ns.domain) \(ns.code): \(detail)"
+        return BackupFailure(reason:reason,diagnostic:diagnostic)
     }
 
     private func protect(asset:PHAsset,resource:PHAssetResource)async throws->ProtectedResult{
