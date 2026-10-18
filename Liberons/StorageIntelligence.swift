@@ -5,7 +5,7 @@ import CryptoKit
 
 struct StorageInsightItem: Identifiable, Hashable, Codable {
     enum Kind: String, Hashable, Codable {
-        case photo, duplicate, screenshot, video, largeVideo, longVideo, slowMotion, timeLapse, livePhoto, rawPhoto, video4K, other
+        case duplicate, screenshot, video, largeVideo, longVideo, slowMotion, timeLapse, livePhoto, rawPhoto, video4K, other
     }
     let id: String
     let kind: Kind
@@ -104,7 +104,7 @@ final class StorageIntelligence: ObservableObject {
                     }
 
                     let subtypes = asset.mediaSubtypes
-                    var kind: StorageInsightItem.Kind = asset.mediaType == .video ? .video : .photo
+                    var kind: StorageInsightItem.Kind = asset.mediaType == .video ? .video : .other
                     if subtypes.contains(.photoScreenshot) { kind = .screenshot }
                     else if subtypes.contains(.videoHighFrameRate) { kind = .slowMotion }
                     else if subtypes.contains(.videoTimelapse) { kind = .timeLapse }
