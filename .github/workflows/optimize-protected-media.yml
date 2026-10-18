@@ -33,14 +33,11 @@ jobs:
         if ext.isEmpty { ext = "mov" }
         let local = dir.appendingPathComponent(item.id.uuidString).appendingPathExtension(ext)
 
-        // A previously downloaded copy is the fastest and most reliable path.
         if fm.fileExists(atPath: local.path) {
             try playProtectedVideo(at: local)
             return
         }
 
-        // Fast path: stream through the authenticated range proxy. The proxy
-        // supplies the real MIME type and byte-range semantics AVFoundation needs.
         do {
             let request = try await SupabaseService.protectedStreamRequest(assetID: item.id)
             guard let url = request.url else { throw URLError(.badURL) }
@@ -61,9 +58,6 @@ jobs:
             print("[Libérons Video] Fast stream unavailable, using protected fallback:", item.id, error.localizedDescription)
         }
 
-        // Safety fallback retained deliberately: download the verified original,
-        // give it its real extension locally, then play it. This is the path that
-        // already proved reliable for legacy protected objects.
         let remote = try await SupabaseService.cloudStreamURL(assetID: item.id)
         let (downloaded, response) = try await URLSession.shared.download(from: remote)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
