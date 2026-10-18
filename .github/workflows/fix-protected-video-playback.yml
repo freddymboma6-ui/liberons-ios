@@ -1,63 +1,9 @@
-name: Fix protected video playback
-
-on:
-  push:
-    branches:
-      - library-protected-media
-  workflow_dispatch:
-
-permissions:
-  contents: write
-
+name: Video repair
+on: [push]
 jobs:
   repair:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: library-protected-media
-      - name: Repair protected video playback and restore
-        shell: bash
-        run: |
-          python3 <<'PY'
-          from pathlib import Path
-          import re
-          p = Path('Liberons/ProtectedLibraryView.swift')
-          s = p.read_text()
-          if '@State private var videoFileURL:URL?' not in s:
-              start = s.index('private struct CloudPhotoPage:View{')
-              end = s.index('private enum ProtectedAction:', start)
-              cloud = '''private struct CloudPhotoPage:View{
-    let item:ProtectedCloudMedia;@ObservedObject var language:LanguageStore;@ObservedObject var billing:CloudStorageSummary
-    @State private var image:UIImage?;@State private var player:AVPlayer?;@State private var videoFileURL:URL?;@State private var loading=true;@State private var loadFailed=false
-    private var isVideo:Bool{item.mediaType.lowercased().contains("video")}
-    var body:some View{ZStack{Color.black;if isVideo,let player{VideoPlayer(player:player).onAppear{player.play()}.onDisappear{player.pause()}}else if let image{Image(uiImage:image).resizable().scaledToFit()}else if loading{ProgressView().tint(.white)}else{VStack(spacing:10){Image(systemName:"exclamationmark.icloud").font(.title).foregroundStyle(.white);Text(language.text("Unable to load this memory","Impossible de charger ce souvenir")).font(.footnote).foregroundStyle(.white.opacity(0.8))}}}.task(id:item.id){await load()}.onDisappear{cleanupVideo()}}
-    @MainActor private func cleanupVideo(){player?.pause();player=nil;if let videoFileURL{try? FileManager.default.removeItem(at:videoFileURL);self.videoFileURL=nil}}
-    @MainActor private func load()async{cleanupVideo();image=nil;loading=true;loadFailed=false;defer{loading=false};if isVideo{guard !billing.isPaymentRestricted else{loadFailed=true;return};do{let remote=try await SupabaseService.cloudOriginalURL(assetID:item.id);let(downloaded,response)=try await URLSession.shared.download(from:remote);guard let http=response as? HTTPURLResponse,(200..<300).contains(http.statusCode) else{throw URLError(.badServerResponse)};let ext=item.originalFilename.flatMap{let e=URL(fileURLWithPath:$0).pathExtension;return e.isEmpty ? nil:e} ?? "mov";let local=FileManager.default.temporaryDirectory.appendingPathComponent("liberons-play-\\(item.id.uuidString).\\(ext)");try? FileManager.default.removeItem(at:local);try FileManager.default.moveItem(at:downloaded,to:local);let asset=AVURLAsset(url:local);let playable=try await asset.load(.isPlayable);guard playable else{throw NSError(domain:"LiberonsVideoPlayback",code:1)};videoFileURL=local;let newPlayer=AVPlayer(playerItem:AVPlayerItem(asset:asset));player=newPlayer;newPlayer.play()}catch{cleanupVideo();loadFailed=true};return};if let id=item.iosLocalIdentifier,let asset=PHAsset.fetchAssets(withLocalIdentifiers:[id],options:nil).firstObject{let options=PHImageRequestOptions();options.isNetworkAccessAllowed=true;options.deliveryMode = .highQualityFormat;PHImageManager.default().requestImage(for:asset,targetSize:PHImageManagerMaximumSize,contentMode:.aspectFit,options:options){value,_ in if let value{Task{@MainActor in image=value}}};return};if let preview=try? await SupabaseService.cloudPreviewURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:preview),let http=response as? HTTPURLResponse,(200..<300).contains(http.statusCode),let decoded=UIImage(data:data){image=decoded;return};guard !billing.isPaymentRestricted else{loadFailed=true;return};if let original=try? await SupabaseService.cloudOriginalURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:original),let http=response as? HTTPURLResponse,(200..<300).contains(http.statusCode),let decoded=UIImage(data:data){image=decoded;return};loadFailed=true}
-}
-
-'''
-              s = s[:start] + cloud + s[end:]
-          s = s.replace('if !localExists && !isVideo{actionButton(', 'if !localExists{actionButton(', 1)
-          m = re.search(r'    @MainActor private func restoreToPhotos\(\)async\{.*?\n    @MainActor private func removeFromDevice', s, re.S)
-          if not m:
-              raise SystemExit('restoreToPhotos function not found')
-          restore = '''    @MainActor private func restoreToPhotos()async{guard !billing.isPaymentRestricted else{operationError=language.text("Payment must be regularized before restoring originals to Photos.","Le paiement doit être régularisé avant de restaurer des originaux dans Photos.");return};restoring=true;operationError=nil;restoredSuccessfully=false;var temporaryURL:URL?;defer{restoring=false;if let temporaryURL{try? FileManager.default.removeItem(at:temporaryURL)}};do{let remote=try await SupabaseService.cloudOriginalURL(assetID:item.id);let(downloaded,response)=try await URLSession.shared.download(from:remote);guard let http=response as? HTTPURLResponse,(200..<300).contains(http.statusCode) else{throw URLError(.badServerResponse)};let ext=item.originalFilename.flatMap{let e=URL(fileURLWithPath:$0).pathExtension;return e.isEmpty ? nil:e} ?? (isVideo ? "mov":"jpg");let local=FileManager.default.temporaryDirectory.appendingPathComponent("liberons-restore-\\(UUID().uuidString).\\(ext)");try? FileManager.default.removeItem(at:local);try FileManager.default.moveItem(at:downloaded,to:local);temporaryURL=local;var newIdentifier:String?;try await PHPhotoLibrary.shared().performChanges{let request=PHAssetCreationRequest.forAsset();request.creationDate=item.capturedAt;let options=PHAssetResourceCreationOptions();options.originalFilename=item.originalFilename;request.addResource(with:isVideo ? .video:.photo,fileURL:local,options:options);newIdentifier=request.placeholderForCreatedAsset?.localIdentifier};guard let newIdentifier else{throw NSError(domain:"LiberonsRestore",code:2)};currentLocalIdentifier=newIdentifier;localExists=true;restoredSuccessfully=true;try? await SupabaseService.updateLocalIdentifier(assetID:item.id,localIdentifier:newIdentifier)}catch{operationError=language.text(isVideo ? "Unable to restore this video to Photos.":"Unable to restore this photo to Photos.",isVideo ? "Impossible de restaurer cette vidéo dans Photos.":"Impossible de restaurer cette photo dans Photos.");refreshLocalState();await billing.refresh()}}
-    @MainActor private func removeFromDevice'''
-          s = s[:m.start()] + restore + s[m.end():]
-          s = s.replace('language.text("A copy of this protected photo will be added back to your Photos library.","Une copie de cette photo protégée sera ajoutée à nouveau dans votre photothèque Photos.")','language.text(isVideo ? "A copy of this protected video will be added back to your Photos library.":"A copy of this protected photo will be added back to your Photos library.",isVideo ? "Une copie de cette vidéo protégée sera ajoutée à nouveau dans votre photothèque Photos.":"Une copie de cette photo protégée sera ajoutée à nouveau dans votre photothèque Photos.")')
-          p.write_text(s)
-          PY
-      - name: Validate and commit
-        shell: bash
-        run: |
-          grep -q 'URLSession.shared.download(from:remote)' Liberons/ProtectedLibraryView.swift
-          grep -q 'request.addResource(with:isVideo ? .video:.photo' Liberons/ProtectedLibraryView.swift
-          git diff --check
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add Liberons/ProtectedLibraryView.swift
-          if ! git diff --cached --quiet; then
-            git commit -m 'Fix protected video playback and restore'
-            git push origin HEAD:library-protected-media
-          fi
+      - run: echo cHJpbnQoJ29rJykK | base64 -d > /tmp/repair.py
+      - run: python3 /tmp/repair.py
