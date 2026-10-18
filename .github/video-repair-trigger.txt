@@ -1,0 +1,1 @@
+Trigger the protected video playback repair workflow after fixing its configuration.
