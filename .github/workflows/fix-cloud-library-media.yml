@@ -1,4 +1,4 @@
-name: Fix cloud library media
+name: Add direct iPhone deletion
 on:
   push:
     paths:
@@ -7,127 +7,66 @@ permissions:
   contents: write
 jobs:
   repair:
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: library-protected-media
-      - name: Repair bulk actions and video playback
+      - name: Add direct Photos deletion
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          import re
-          p=Path('Liberons/ProtectedLibraryView.swift')
+          p=Path('Liberons/StorageAnalysisView.swift')
           s=p.read_text()
-
-          # Selection state: add bulk restore state.
-          s=s.replace('@State private var deletingSelection = false\n', '@State private var deletingSelection = false\n    @State private var restoringSelection = false\n    @State private var bulkError: String?\n', 1)
-
-          # Replace selection bottom toolbar with explicit recovery + permanent delete actions.
-          old='ToolbarItemGroup(placement: .bottomBar) { Button(language.text("Select all", "Tout sélectionner")) { selectedIDs = Set(store.items.map(\\.id)) }; Spacer(); Button(language.text("Delete", "Supprimer"), role: .destructive) { showBulkDelete = true }.disabled(selectedIDs.isEmpty || deletingSelection) }'
-          new='ToolbarItemGroup(placement: .bottomBar) { Button(language.text("Select all", "Tout sélectionner")) { selectedIDs = Set(store.items.map(\\.id)) }; Spacer(); Button { Task { await restoreSelected() } } label: { Label(language.text("Recover", "Récupérer"), systemImage: "square.and.arrow.down") }.disabled(selectedIDs.isEmpty || deletingSelection || restoringSelection || billing.isPaymentRestricted); Spacer(); Button(role: .destructive) { showBulkDelete = true } label: { Label(language.text("Delete", "Supprimer"), systemImage: "trash") }.disabled(selectedIDs.isEmpty || deletingSelection || restoringSelection) }'
+          state='    @State private var preview: AssetPreviewSelection?\n'
+          if '@State private var isDeletingSelection' not in s:
+              s=s.replace(state,state+'    @State private var isDeletingSelection = false\n    @State private var deletionErrorMessage: String?\n',1)
+          old='}.buttonStyle(.borderedProminent).disabled(backup.isRunning);Text(language.text("Your originals stay on this iPhone while Libérons protects them.","Vos originaux restent sur cet iPhone pendant que Libérons les protège.")).font(.caption).foregroundStyle(.secondary)'
+          new='''}.buttonStyle(.borderedProminent).disabled(backup.isRunning || isDeletingSelection);Button(role:.destructive){let ids=Array(selectedIDs);Task{await deleteSelectedFromIPhone(ids)}}label:{HStack{if isDeletingSelection{ProgressView().tint(.red)};Label(isDeletingSelection ? language.text("Deleting…","Suppression…") : language.text("Delete from iPhone","Supprimer de l’iPhone"),systemImage:"trash").fontWeight(.semibold)}.frame(maxWidth:.infinity).frame(height:44)}.buttonStyle(.bordered).tint(.red).disabled(isDeletingSelection || backup.isRunning);Text(language.text("Delete removes these originals from Apple Photos without uploading them to Libérons.","Supprimer retire ces originaux d’Apple Photos sans les envoyer vers Libérons.")).font(.caption).foregroundStyle(.secondary);Text(language.text("Your originals stay on this iPhone while Libérons protects them.","Vos originaux restent sur cet iPhone pendant que Libérons les protège.")).font(.caption).foregroundStyle(.secondary)'''
           if old not in s:
-              raise SystemExit('selection toolbar block not found')
+              raise SystemExit('selection action block not found')
           s=s.replace(old,new,1)
-
-          # Add visible bulk error and robust restore implementation before deleteSelected.
-          needle='    @MainActor private func deleteSelected() async {'
-          insert='''    @MainActor private func restoreSelected() async {
-        guard !billing.isPaymentRestricted else { return }
-        restoringSelection = true
-        bulkError = nil
-        var failures = 0
-        let chosen = store.items.filter { selectedIDs.contains($0.id) }
-        for item in chosen {
-            do {
-                let remote = try await SupabaseService.cloudOriginalURL(assetID: item.id)
-                let (downloaded, response) = try await URLSession.shared.download(from: remote)
-                guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
-                let ext = (item.originalFilename as NSString?)?.pathExtension.nonEmpty ?? (item.mediaType.lowercased().contains("video") ? "mov" : "jpg")
-                let local = FileManager.default.temporaryDirectory.appendingPathComponent("liberons-restore-\\(UUID().uuidString).\\(ext)")
-                try? FileManager.default.removeItem(at: local)
-                try FileManager.default.moveItem(at: downloaded, to: local)
-                defer { try? FileManager.default.removeItem(at: local) }
-                try await PHPhotoLibrary.shared().performChanges {
-                    if item.mediaType.lowercased().contains("video") { PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: local) }
-                    else { PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: local) }
-                }
-            } catch { failures += 1 }
+          needle='    private var freeSpaceOffer:some View{'
+          helper='''    @MainActor private func deleteSelectedFromIPhone(_ ids:[String]) async {
+        guard !ids.isEmpty else{return}
+        isDeletingSelection=true
+        deletionErrorMessage=nil
+        defer{isDeletingSelection=false}
+        let result=PHAsset.fetchAssets(withLocalIdentifiers:ids,options:nil)
+        var assets:[PHAsset]=[]
+        result.enumerateObjects{asset,_,_ in assets.append(asset)}
+        guard !assets.isEmpty else{deletionErrorMessage=language.text("The selected items are no longer available in Apple Photos.","Les éléments sélectionnés ne sont plus disponibles dans Apple Photos.");return}
+        do{
+            try await PHPhotoLibrary.shared().performChanges{PHAssetChangeRequest.deleteAssets(assets as NSArray)}
+            selectedIDs.subtract(Set(ids))
+            intelligence.refreshDeviceStorage()
+            await intelligence.scan()
+        }catch{
+            deletionErrorMessage=language.text("The selected items could not be deleted from Apple Photos. Check Photos access and try again.","Impossible de supprimer la sélection d’Apple Photos. Vérifiez l’accès aux Photos puis réessayez.")
         }
-        restoringSelection = false
-        if failures == 0 { selectedIDs.removeAll(); isSelecting = false }
-        else { bulkError = language.text("Some selected memories could not be recovered.", "Certains souvenirs sélectionnés n’ont pas pu être récupérés.") }
     }
-'''
-          if needle not in s:
-              raise SystemExit('deleteSelected function not found')
-          s=s.replace(needle,insert+needle,1)
-
-          # NSString helper is avoided by using URL pathExtension instead.
-          s=s.replace('(item.originalFilename as NSString?)?.pathExtension.nonEmpty ?? (item.mediaType.lowercased().contains("video") ? "mov" : "jpg")', 'item.originalFilename.flatMap { URL(fileURLWithPath: $0).pathExtension.isEmpty ? nil : URL(fileURLWithPath: $0).pathExtension } ?? (item.mediaType.lowercased().contains("video") ? "mov" : "jpg")')
-
-          # Replace cloud page. Streamed signed URLs were unreliable in AVPlayer; download a temporary verified file first.
-          start=s.index('private struct CloudPhotoPage:View{')
-          end=s.index('private enum ProtectedAction:', start)
-          cloud='''private struct CloudPhotoPage:View{
-    let item:ProtectedCloudMedia;@ObservedObject var language:LanguageStore;@ObservedObject var billing:CloudStorageSummary
-    @State private var image:UIImage?;@State private var player:AVPlayer?;@State private var videoFileURL:URL?;@State private var loading=true;@State private var loadFailed=false
-    private var isVideo:Bool{item.mediaType.lowercased().contains("video")}
-    var body:some View{
-        ZStack{
-            Color.black
-            if isVideo,let player { VideoPlayer(player:player).onAppear{player.play()}.onDisappear{player.pause()} }
-            else if let image { Image(uiImage:image).resizable().scaledToFit() }
-            else if loading { ProgressView().tint(.white) }
-            else if loadFailed { VStack(spacing:10){Image(systemName:"exclamationmark.icloud").font(.title).foregroundStyle(.white);Text(language.text("Unable to load this memory", "Impossible de charger ce souvenir")).font(.footnote).foregroundStyle(.white.opacity(0.8))} }
-        }
-        .task(id:item.id){await load()}
-        .onDisappear{player?.pause();player=nil;if let videoFileURL{try? FileManager.default.removeItem(at:videoFileURL);self.videoFileURL=nil}}
-    }
-    @MainActor private func load()async{
-        loading=true;loadFailed=false
-        defer{loading=false}
-        if isVideo {
-            guard !billing.isPaymentRestricted else { loadFailed=true;return }
-            do {
-                let remote=try await SupabaseService.cloudOriginalURL(assetID:item.id)
-                let(downloaded,response)=try await URLSession.shared.download(from:remote)
-                guard let http=response as? HTTPURLResponse,(200..<300).contains(http.statusCode) else{throw URLError(.badServerResponse)}
-                let ext=item.originalFilename.flatMap{let e=URL(fileURLWithPath:$0).pathExtension;return e.isEmpty ? nil:e} ?? "mov"
-                let local=FileManager.default.temporaryDirectory.appendingPathComponent("liberons-play-\\(item.id.uuidString).\\(ext)")
-                try? FileManager.default.removeItem(at:local)
-                try FileManager.default.moveItem(at:downloaded,to:local)
-                videoFileURL=local
-                let p=AVPlayer(url:local);player=p;p.play()
-            } catch { loadFailed=true }
-            return
-        }
-        if let id=item.iosLocalIdentifier,let asset=PHAsset.fetchAssets(withLocalIdentifiers:[id],options:nil).firstObject{
-            let options=PHImageRequestOptions();options.isNetworkAccessAllowed=true;options.deliveryMode = .highQualityFormat
-            PHImageManager.default().requestImage(for:asset,targetSize:PHImageManagerMaximumSize,contentMode:.aspectFit,options:options){value,_ in if let value{Task{@MainActor in image=value}}}
-            return
-        }
-        if let preview=try? await SupabaseService.cloudPreviewURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:preview),let http=response as? HTTPURLResponse,(200..<300).contains(http.statusCode),let decoded=UIImage(data:data){image=decoded;return}
-        guard !billing.isPaymentRestricted else{loadFailed=true;return}
-        if let original=try? await SupabaseService.cloudOriginalURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:original),let http=response as? HTTPURLResponse,(200..<300).contains(http.statusCode),let decoded=UIImage(data:data){image=decoded;return}
-        loadFailed=true
-    }
-}
 
 '''
-          s=s[:start]+cloud+s[end:]
+          if 'private func deleteSelectedFromIPhone' not in s:
+              if needle not in s: raise SystemExit('freeSpaceOffer anchor not found')
+              s=s.replace(needle,helper+needle,1)
+          alert='.alert(language.text("Couldn’t delete","Suppression impossible"),isPresented:Binding(get:{deletionErrorMessage != nil},set:{if !$0{deletionErrorMessage=nil}})){Button("OK",role:.cancel){deletionErrorMessage=nil}}message:{Text(deletionErrorMessage ?? "")}\n'
+          anchor='        .sheet(isPresented:$showFreeOffer){freeSpaceOffer}\n'
+          if 'Suppression impossible' not in s:
+              s=s.replace(anchor,anchor+'        '+alert,1)
           p.write_text(s)
           PY
-      - name: Validate patch
+      - name: Validate
         run: |
-          grep -q 'Button(language.text("Recover", "Récupérer")' Liberons/ProtectedLibraryView.swift || grep -q 'language.text("Recover", "Récupérer")' Liberons/ProtectedLibraryView.swift
-          grep -q 'URLSession.shared.download(from:remote)' Liberons/ProtectedLibraryView.swift
+          grep -q 'deleteSelectedFromIPhone' Liberons/StorageAnalysisView.swift
+          grep -q 'Supprimer de l’iPhone' Liberons/StorageAnalysisView.swift
           git diff --check
-      - name: Commit repair
+      - name: Commit
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add Liberons/ProtectedLibraryView.swift
+          git add Liberons/StorageAnalysisView.swift
           git diff --cached --check
-          git commit -m 'Add bulk recovery and reliable cloud video playback'
+          git commit -m 'Add direct iPhone deletion to storage selections'
           git push origin HEAD:library-protected-media
