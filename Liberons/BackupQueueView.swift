@@ -74,11 +74,9 @@ struct BackupQueueView: View {
         .sheet(isPresented:$showScreenshotDelete){premiumScreenshotReview}
         .sheet(isPresented:$showPostBackupCleanup){premiumProtectedCleanupReview}
         .sheet(isPresented:$showRecentlyDeletedGuide){recentlyDeletedGuide}
-        .sheet(isPresented:$showStopConfirmation,onDismiss:{if backup.isRunning && backup.isStopping==false && pendingStop{pendingStop=false;backup.stop()}}){premiumStopConfirmation.presentationDetents([.height(470)]).presentationDragIndicator(.visible).presentationCornerRadius(32)}
-        .onChange(of:backup.protectionBatchID){_,_ in if !backup.newlyProtectedLocalIdentifiers.isEmpty{showPostBackupCleanup=true}}
+        .sheet(isPresented:$showStopConfirmation){premiumStopConfirmation.presentationDetents([.height(470)]).presentationDragIndicator(.visible).presentationCornerRadius(32)}
+        .onChange(of:backup.protectionBatchID){_,_ in if !backup.newlyProtectedLocalIdentifiers.isEmpty && backup.queueRemaining == 0 && !backup.isStopping{showPostBackupCleanup=true}}
     }
-
-    @State private var pendingStop = false
 
     private var premiumStopConfirmation: some View {
         VStack(alignment:.leading,spacing:18){
@@ -88,8 +86,8 @@ struct BackupQueueView: View {
             Text(language.text("Items already protected stay protected. Libérons stops safely and will not start another item from this selection.","Les éléments déjà protégés restent protégés. Libérons s’arrête en sécurité et ne démarrera aucun nouvel élément de cette sélection.")).font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
             HStack(spacing:0){resultMetric(value:backup.queueCompleted,label:language.text("Protected","Protégés"),icon:"checkmark.shield.fill",tint:.green);Divider().frame(height:46);resultMetric(value:backup.queueRemaining,label:language.text("Remaining","Restants"),icon:"clock.fill",tint:.orange)}.padding(16).background(Color(uiColor:.secondarySystemGroupedBackground),in:RoundedRectangle(cornerRadius:20,style:.continuous))
             Spacer(minLength:0)
-            Button(role:.destructive){pendingStop=true;showStopConfirmation=false}label:{Label(language.text("Stop backup","Arrêter la sauvegarde"),systemImage:"stop.fill").fontWeight(.bold).frame(maxWidth:.infinity).frame(height:48)}.buttonStyle(.borderedProminent).tint(.red)
-            Button{pendingStop=false;showStopConfirmation=false}label:{Text(language.text("Keep backing up","Continuer la sauvegarde")).fontWeight(.semibold).frame(maxWidth:.infinity).frame(height:44)}.buttonStyle(.bordered)
+            Button(role:.destructive){backup.stop();showStopConfirmation=false}label:{Label(language.text("Stop backup","Arrêter la sauvegarde"),systemImage:"stop.fill").fontWeight(.bold).frame(maxWidth:.infinity).frame(height:48)}.buttonStyle(.borderedProminent).tint(.red)
+            Button{showStopConfirmation=false}label:{Text(language.text("Keep backing up","Continuer la sauvegarde")).fontWeight(.semibold).frame(maxWidth:.infinity).frame(height:44)}.buttonStyle(.bordered)
         }.padding(.horizontal,24).padding(.top,10).padding(.bottom,18).interactiveDismissDisabled(false)
     }
 
