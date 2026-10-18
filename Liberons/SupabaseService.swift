@@ -53,7 +53,7 @@ enum SupabaseService {
             switch payload?.tier {
             case "payment_restricted": message="Votre paiement doit être régularisé avant de pouvoir restaurer des originaux dans Photos. Vos souvenirs restent protégés et visibles dans Libérons."
             case "payment_grace_limit": message="La limite de récupération disponible pendant votre période de grâce a été atteinte. Vos souvenirs restent protégés dans Libérons."
-            case "cooldown": message="Utilisation intensive détectée. Les restaurations sont temporairement ralenties. Vos fichiers restent protégés et disponibles dans Libérons."
+            case "cooldown": message="Utilisation intensive détectée. Les restaurations sont temporairement ralenties. Vos fichiers restent protégés dans Libérons."
             default: message=payload?.message ?? payload?.error ?? "La demande n’a pas pu être effectuée."
             }
             throw NSError(domain:"LiberonsCloud",code:http.statusCode,userInfo:[NSLocalizedDescriptionKey:message,"LiberonsTier":payload?.tier ?? "","RetryAfterSeconds":payload?.retry_after_seconds ?? 0])
@@ -73,6 +73,16 @@ enum SupabaseService {
     static func cloudPreviewURL(assetID:UUID) async throws -> URL { try await cloudMediaURL(assetID:assetID,variant:"thumbnail") }
     static func cloudOriginalURL(assetID:UUID) async throws -> URL { try await cloudMediaURL(assetID:assetID,variant:"original",purpose:"restore") }
     static func cloudStreamURL(assetID:UUID) async throws -> URL { try await cloudMediaURL(assetID:assetID,variant:"original",purpose:"stream") }
+
+    static func protectedStreamRequest(assetID:UUID) async throws -> URLRequest {
+        let session=try await client.auth.session
+        var components=URLComponents(url:projectURL.appendingPathComponent("functions").appendingPathComponent("v1").appendingPathComponent("stream-media"),resolvingAgainstBaseURL:false)!
+        components.queryItems=[URLQueryItem(name:"asset_id",value:assetID.uuidString)]
+        guard let url=components.url else{throw NSError(domain:"LiberonsCloud",code:-3,userInfo:[NSLocalizedDescriptionKey:"Invalid protected stream URL"])}
+        var request=URLRequest(url:url)
+        request.setValue("Bearer \(session.accessToken)",forHTTPHeaderField:"Authorization")
+        return request
+    }
 
     static func deleteCloudMedia(assetID: UUID) async throws -> Int64 {
         let body = try JSONSerialization.data(withJSONObject: ["asset_id": assetID.uuidString]);let data = try await callFunction("delete-media", json: body)
