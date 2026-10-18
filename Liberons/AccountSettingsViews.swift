@@ -156,7 +156,7 @@ struct LiberonsHelpSupportView: View {
                     ContentUnavailableView(language.text("No answer found", "Aucune réponse trouvée"), systemImage: "magnifyingglass", description: Text(language.text("Try another word, choose All, or contact Libérons Support.", "Essayez un autre mot, choisissez Tout ou contactez l’assistance Libérons.")))
                 }
             } else {
-                ForEach(categories.filter { $0.0 != "all" && filteredItems.contains(where: { item in item.category == $0.0 }) }, id: \.0) { category in
+                ForEach(categories.filter { category in category.0 != "all" && filteredItems.contains(where: { item in item.category == category.0 }) }, id: \.0) { category in
                     Section(language.text(category.1, category.2)) {
                         ForEach(filteredItems.filter { $0.category == category.0 }) { entry in
                             faq(language.text(entry.questionEN, entry.questionFR), language.text(entry.answerEN, entry.answerFR))
