@@ -1,4 +1,5 @@
 name: Optimize protected media
+# Trigger repair after workflow registration
 on:
   push:
     paths:
@@ -65,7 +66,6 @@ jobs:
 '''
           if marker not in s: raise SystemExit('cache marker not found')
           s=s.replace(marker,cache+marker,1)
-          # Persistent restore: Photos import is detached from the detail view task and uses a stable cache file.
           start=s.index('    @MainActor private func restoreToPhotos()async{')
           end=s.index('\n    @MainActor private func removeFromDevice()',start)
           restore='''    @MainActor private func restoreToPhotos()async{
@@ -89,9 +89,6 @@ jobs:
         }
     }'''
           s=s[:start]+restore+s[end:]
-          # Thumbnail tile: memory cache before network and cache decoded preview.
-          s=s.replace('private struct ProtectedLibraryTile:View{let item:ProtectedCloudMedia;@State private var image:UIImage?;', 'private struct ProtectedLibraryTile:View{let item:ProtectedCloudMedia;@State private var image:UIImage?;',1)
-          # broad safe substitutions in tile/load paths
           s=s.replace('if let preview=try? await SupabaseService.cloudPreviewURL(assetID:item.id)', 'if let cached=ProtectedMediaCache.shared.image(for:item.id){image=cached;return};if let preview=try? await SupabaseService.cloudPreviewURL(assetID:item.id)',1)
           s=s.replace('let decoded=UIImage(data:data){image=decoded;return}', 'let decoded=UIImage(data:data){ProtectedMediaCache.shared.store(decoded,for:item.id);image=decoded;return}',1)
           p.write_text(s)
