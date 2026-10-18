@@ -1,0 +1,44 @@
+name: Apply video range diagnostic
+on:
+  push:
+    branches:
+      - library-protected-media
+permissions:
+  contents: write
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: library-protected-media
+      - name: Patch Swift diagnostic
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          p = Path('Liberons/ProtectedLibraryView.swift')
+          s = p.read_text()
+          old = 'let remote=try await SupabaseService.cloudStreamURL(assetID:item.id);let asset=AVURLAsset(url:remote)'
+          new = 'let remote=try await SupabaseService.cloudStreamURL(assetID:item.id);await liberonsProbeVideoRange(remote,assetID:item.id);let asset=AVURLAsset(url:remote)'
+          if new not in s:
+              if old not in s:
+                  raise SystemExit('video playback anchor not found')
+              s = s.replace(old, new, 1)
+          if 'private func liberonsProbeVideoRange' not in s:
+              s += '''\n\nprivate func liberonsProbeVideoRange(_ url:URL,assetID:UUID) async {\n    var request=URLRequest(url:url)\n    request.httpMethod="GET"\n    request.setValue("bytes=0-1023",forHTTPHeaderField:"Range")\n    request.timeoutInterval=20\n    do {\n        let (data,response)=try await URLSession.shared.data(for:request)\n        guard let http=response as? HTTPURLResponse else { print("[LiberonsVideo] non-HTTP response asset=\\(assetID)"); return }\n        let prefix=data.prefix(32).map{String(format:"%02x",$0)}.joined()\n        print("[LiberonsVideo] range asset=\\(assetID) status=\\(http.statusCode) bytes=\\(data.count) type=\\(http.value(forHTTPHeaderField:\"Content-Type\") ?? \"nil\") length=\\(http.value(forHTTPHeaderField:\"Content-Length\") ?? \"nil\") ranges=\\(http.value(forHTTPHeaderField:\"Accept-Ranges\") ?? \"nil\") contentRange=\\(http.value(forHTTPHeaderField:\"Content-Range\") ?? \"nil\") prefixHex=\\(prefix)")\n    } catch {\n        print("[LiberonsVideo] range failed asset=\\(assetID) error=\\(error)")\n    }\n}\n'''
+          p.write_text(s)
+          PY
+      - name: Commit patch
+        shell: bash
+        run: |
+          grep -q 'liberonsProbeVideoRange' Liberons/ProtectedLibraryView.swift
+          grep -q 'bytes=0-1023' Liberons/ProtectedLibraryView.swift
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Liberons/ProtectedLibraryView.swift
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'Instrument protected video range response'
+          git push origin HEAD:library-protected-media
