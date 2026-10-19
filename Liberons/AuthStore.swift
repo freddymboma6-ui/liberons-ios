@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import UIKit
 import Supabase
 import Auth
 import Realtime
