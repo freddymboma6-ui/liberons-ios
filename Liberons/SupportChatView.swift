@@ -33,15 +33,17 @@ private final class SupportChatStore: ObservableObject {
     private let client = SupabaseService.client
     private var userID: UUID?
 
+    private func isClosedStatus(_ status: String) -> Bool {
+        let value = status.lowercased()
+        return value == "closed" || value == "resolved"
+    }
+
     func start(restrictionContext: Bool, language: LanguageStore) async {
         isLoading = true; errorMessage = nil
         do {
             let session = try await client.auth.session; userID = session.user.id
             let tickets: [SupportTicket] = try await client.from("support_tickets").select("id,subject,status,created_at,updated_at").order("updated_at", ascending: false).limit(20).execute().value
-
-            // Reuse only a live conversation. A closed restriction ticket must never be
-            // resurrected: the next restriction creates a fresh ticket in the current language.
-            if let existing = tickets.first(where: { $0.status.lowercased() != "closed" }) {
+            if let existing = tickets.first(where: { !isClosedStatus($0.status) }) {
                 ticket = existing
                 await loadMessages(language: language)
             } else if restrictionContext {
@@ -51,7 +53,14 @@ private final class SupportChatStore: ObservableObject {
         isLoading = false
     }
 
-    func refresh(language: LanguageStore) async { guard ticket != nil else { return }; await loadMessages(language: language) }
+    func refresh(language: LanguageStore) async {
+        guard let current = ticket else { return }
+        do {
+            let rows: [SupportTicket] = try await client.from("support_tickets").select("id,subject,status,created_at,updated_at").eq("id", value: current.id.uuidString).limit(1).execute().value
+            if let fresh = rows.first { ticket = fresh }
+        } catch { }
+        await loadMessages(language: language)
+    }
 
     func send(language: LanguageStore) async {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -61,11 +70,11 @@ private final class SupportChatStore: ObservableObject {
                 try await createTicket(subject: language.text("Libérons Support", "Assistance Libérons"), firstMessage: text, language: language)
                 return
             }
-            guard let ticket, ticket.status.lowercased() != "closed", let userID else { return }
+            guard let ticket, !isClosedStatus(ticket.status), let userID else { return }
             isSending = true
             try await client.from("support_messages").insert(NewSupportMessage(ticket_id: ticket.id, sender_id: userID, sender_type: "user", body: text)).execute()
             draft = ""
-            await loadMessages(language: language)
+            await refresh(language: language)
         } catch { errorMessage = language.text("Your message could not be sent.", "Le message n’a pas pu être envoyé.") }
         isSending = false
     }
@@ -98,6 +107,11 @@ private final class SupportChatStore: ObservableObject {
             messages = try await client.from("support_messages").select("id,ticket_id,sender_id,sender_type,body,created_at").eq("ticket_id", value: ticket.id.uuidString).order("created_at", ascending: true).execute().value
         } catch { errorMessage = language.text("Unable to refresh the conversation.", "Impossible d’actualiser la conversation.") }
     }
+
+    func closed(_ ticket: SupportTicket?) -> Bool {
+        guard let ticket else { return false }
+        return isClosedStatus(ticket.status)
+    }
 }
 
 struct SupportChatView: View {
@@ -113,7 +127,7 @@ struct SupportChatView: View {
             header
             Divider().opacity(0.45)
             conversation
-            if store.ticket?.status.lowercased() != "closed" { composer }
+            if !store.closed(store.ticket) { composer }
         }
         .background(Color(uiColor: .systemGroupedBackground).ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
@@ -131,7 +145,9 @@ struct SupportChatView: View {
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text("Libérons Support").font(.headline)
-                Text(language.text("Private support conversation", "Conversation privée avec le support"))
+                Text(store.closed(store.ticket)
+                     ? language.text("Conversation closed", "Conversation fermée")
+                     : language.text("Private support conversation", "Conversation privée avec le support"))
                     .font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
@@ -156,9 +172,12 @@ struct SupportChatView: View {
                 ScrollView {
                     LazyVStack(spacing: 10) {
                         ForEach(store.messages) { message in bubble(message).id(message.id) }
-                        if store.ticket?.status.lowercased() == "closed" {
-                            Text(language.text("This conversation is closed.", "Cette conversation est fermée."))
-                                .font(.caption).foregroundStyle(.secondary).padding(.vertical, 14)
+                        if store.closed(store.ticket) {
+                            HStack(spacing: 7) {
+                                Image(systemName: "checkmark.circle.fill")
+                                Text(language.text("This conversation is closed.", "Cette conversation est fermée."))
+                            }
+                            .font(.caption.weight(.medium)).foregroundStyle(.secondary).padding(.vertical, 14)
                         }
                     }
                     .padding(16)
@@ -172,8 +191,6 @@ struct SupportChatView: View {
     }
 
     private func displayedBody(_ body: String) -> String {
-        // Existing tickets created before the language fix are left untouched in Supabase.
-        // Only the known automatic restriction seed is localized for the user on screen.
         if restrictionContext && body == legacyFrenchRestrictionMessage && language.language == .english {
             return englishRestrictionMessage
         }
