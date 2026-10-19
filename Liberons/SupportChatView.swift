@@ -198,19 +198,16 @@ private final class SupportChatStore: ObservableObject {
                         await self.refresh(language: language)
                     }
                 }
-                group.addTask { [weak self] in
+                group.addTask {
                     for await change in presenceChanges {
-                        guard !Task.isCancelled, let self else { break }
+                        guard !Task.isCancelled else { break }
                         do {
                             let joins = try change.decodeJoins(as: SupportPresence.self)
                             let leaves = try change.decodeLeaves(as: SupportPresence.self)
                             let supportJoined = joins.contains(where: { $0.role == "support" })
                             let supportLeft = leaves.contains(where: { $0.role == "support" })
                             if supportJoined || supportLeft {
-                                await MainActor.run {
-                                    if supportJoined { self.supportOnline = true }
-                                    if supportLeft { self.supportOnline = false }
-                                }
+                                await self.applySupportPresence(joined: supportJoined, left: supportLeft)
                             }
                         } catch { }
                     }
@@ -222,6 +219,11 @@ private final class SupportChatStore: ObservableObject {
             self.realtimeConnected = false
             self.supportOnline = false
         }
+    }
+
+    private func applySupportPresence(joined: Bool, left: Bool) {
+        if joined { supportOnline = true }
+        if left { supportOnline = false }
     }
 
     func closed(_ ticket: SupportTicket?) -> Bool {
