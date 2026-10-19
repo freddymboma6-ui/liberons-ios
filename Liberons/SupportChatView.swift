@@ -204,8 +204,14 @@ private final class SupportChatStore: ObservableObject {
                         do {
                             let joins = try change.decodeJoins(as: SupportPresence.self)
                             let leaves = try change.decodeLeaves(as: SupportPresence.self)
-                            if joins.contains(where: { $0.role == "support" }) { self.supportOnline = true }
-                            if leaves.contains(where: { $0.role == "support" }) { self.supportOnline = false }
+                            let supportJoined = joins.contains(where: { $0.role == "support" })
+                            let supportLeft = leaves.contains(where: { $0.role == "support" })
+                            if supportJoined || supportLeft {
+                                await MainActor.run {
+                                    if supportJoined { self.supportOnline = true }
+                                    if supportLeft { self.supportOnline = false }
+                                }
+                            }
                         } catch { }
                     }
                 }
