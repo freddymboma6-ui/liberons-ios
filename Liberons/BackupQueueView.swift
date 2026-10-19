@@ -66,8 +66,9 @@ struct BackupQueueView: View {
             Button{showBackupReview=true}label:{Label(taskFinished ? language.text("Protect more","Protéger encore"):language.text("Continue","Continuer"),systemImage:taskFinished ? "plus.circle.fill":"arrow.right.circle.fill").frame(maxWidth:.infinity).frame(height:34)}.buttonStyle(.bordered).controlSize(.large).disabled(backup.isRunning || !analyzer.canReadLibrary || selectableCount==0)
             Text(taskFinished ? language.text("Choose another selection whenever you want to start a new protection task.","Choisissez une nouvelle sélection quand vous voulez lancer une autre protection.") : language.text("Nothing starts or deletes automatically. Libérons always shows a review first.","Rien ne démarre ni ne se supprime automatiquement. Libérons affiche toujours un récapitulatif d’abord.")).font(.caption).foregroundStyle(.secondary)
         }
-        .frame(width:max(0,UIScreen.main.bounds.width-40),alignment:.leading)
-        .padding(20).background(Color(uiColor:.systemBackground),in:RoundedRectangle(cornerRadius:28,style:.continuous)).shadow(color:.black.opacity(0.045),radius:18,y:7)
+        .padding(20)
+        .frame(maxWidth:.infinity,alignment:.leading)
+        .background(Color(uiColor:.systemBackground),in:RoundedRectangle(cornerRadius:28,style:.continuous)).shadow(color:.black.opacity(0.045),radius:18,y:7)
         .clipped()
         .sheet(isPresented:$showMediaPicker){MediaSelectionView(backup:backup,language:language)}
         .sheet(isPresented:$showBackupReview){premiumBackupReview}
