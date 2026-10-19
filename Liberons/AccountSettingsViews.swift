@@ -166,7 +166,6 @@ struct LiberonsHelpSupportView: View {
             }
             Section(language.text("Still need help?", "Encore besoin d’aide ?")) {
                 LiberonsExternalRow(icon: "envelope.fill", title: "support@liberons.com", subtitle: language.text("Email Libérons Support", "Écrire à l’assistance Libérons")) { emailSupport() }
-                LiberonsExternalRow(icon: "questionmark.circle.fill", title: language.text("Help Center", "Centre d’aide"), subtitle: language.text("More support resources", "Plus de ressources d’assistance")) { open(.support) }
             }
         }
         .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: language.text("Search backup, billing, restore…", "Rechercher sauvegarde, paiement, restauration…"))
