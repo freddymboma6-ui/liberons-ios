@@ -13,7 +13,7 @@ final class AuthStore: ObservableObject {
     @Published var errorMessage: String?
     @Published var infoMessage: String?
 
-    var isAuthenticated: Bool { session != nil }
+    var isAuthenticated: Bool { session != nil && !isRestricted }
 
     init() { Task { await restoreSession() } }
 
@@ -31,7 +31,8 @@ final class AuthStore: ObservableObject {
         do {
             session = try await SupabaseService.client.auth.signIn(email: email, password: password)
             await refreshRestrictionState()
-            if !isRestricted { await validateDeviceAndFreeTier() }
+            if isRestricted { errorMessage = "account_restricted"; return }
+            await validateDeviceAndFreeTier()
         } catch { errorMessage = friendlyAuthError(error) }
     }
 
@@ -42,7 +43,8 @@ final class AuthStore: ObservableObject {
             if let newSession = response.session {
                 session = newSession
                 await refreshRestrictionState()
-                if !isRestricted { await validateDeviceAndFreeTier() }
+                if isRestricted { errorMessage = "account_restricted"; return false }
+                await validateDeviceAndFreeTier()
                 return true
             }
             infoMessage = "confirmation_required"
@@ -56,9 +58,8 @@ final class AuthStore: ObservableObject {
         do {
             let rows: [RestrictionRow] = try await SupabaseService.client.from("user_subscriptions").select("restricted_at").eq("user_id", value: userID.uuidString).limit(1).execute().value
             isRestricted = rows.first?.restricted_at != nil
-        } catch {
-            // Do not lock a user out because of a transient network failure.
-        }
+            if isRestricted { errorMessage = "account_restricted" }
+        } catch { }
     }
 
     func sendPasswordReset(email: String) async -> Bool {
@@ -69,7 +70,7 @@ final class AuthStore: ObservableObject {
 
     func handleAuthURL(_ url: URL) async -> Bool {
         errorMessage = nil
-        do { session = try await SupabaseService.client.auth.session(from: url); await refreshRestrictionState(); return true }
+        do { session = try await SupabaseService.client.auth.session(from: url); await refreshRestrictionState(); return !isRestricted }
         catch { errorMessage = friendlyAuthError(error); return false }
     }
 
