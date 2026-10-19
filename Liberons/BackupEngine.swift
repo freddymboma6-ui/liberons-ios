@@ -61,7 +61,10 @@ final class BackupEngine: ObservableObject {
         stopRequested=true;isStopping=true;isPaused=false
         let waiters=pauseWaiters;pauseWaiters.removeAll();waiters.forEach{$0.resume()}
         backupTask?.cancel()
-        message="Stopping…"
+        isRunning=false
+        activeTransfers=0
+        currentQueueFilename=nil
+        message="Backup stopped • \(queueCompleted) protected"
     }
     private func waitIfPaused()async{guard isPaused,!stopRequested,!Task.isCancelled else{return};await withCheckedContinuation{continuation in pauseWaiters.append(continuation)}}
 
@@ -146,5 +149,5 @@ final class BackupEngine: ObservableObject {
     private func startDeferredThumbnails(_ jobs:[ThumbnailJob]){Task(priority:.utility){for job in jobs{if ProcessInfo.processInfo.thermalState == .critical{break};let result=PHAsset.fetchAssets(withLocalIdentifiers:[job.localIdentifier],options:nil);guard let asset=result.firstObject,let thumbnail=await self.thumbnailJPEG(for:asset) else{continue};let thumbBody:[String:Any]=["asset_id":job.cloudAssetID,"jpeg_base64":thumbnail.base64EncodedString()];_ = try? await SupabaseService.callFunction("upload-media-thumbnail",json:try JSONSerialization.data(withJSONObject:thumbBody));await Task.yield()};NotificationCenter.default.post(name:.liberonsCloudDidChange,object:nil)}}
     private func thumbnailJPEG(for asset:PHAsset)async->Data?{await withCheckedContinuation{continuation in let options=PHImageRequestOptions();options.deliveryMode = .fastFormat;options.resizeMode = .fast;options.isNetworkAccessAllowed=false;PHImageManager.default().requestImage(for:asset,targetSize:CGSize(width:360,height:360),contentMode:.aspectFill,options:options){image,info in if (info?[PHImageCancelledKey] as? Bool)==true{continuation.resume(returning:nil);return};continuation.resume(returning:image?.jpegData(compressionQuality:0.62))}}}
     private func export(resource:PHAssetResource,to url:URL)async throws{try Task.checkCancellation();try await withTaskCancellationHandler(operation:{try await withCheckedThrowingContinuation{(continuation:CheckedContinuation<Void,Error>) in let options=PHAssetResourceRequestOptions();options.isNetworkAccessAllowed=true;PHAssetResourceManager.default().writeData(for:resource,toFile:url,options:options){error in if let error{continuation.resume(throwing:error)}else{continuation.resume(returning:())}}}},onCancel:{})}
-    nonisolated private static func sha256Detached(fileURL:URL)throws->String{let handle=try FileHandle(forReadingFrom:fileURL);defer{try? handle.close()};var hasher=SHA256();while true{try Task.checkCancellation();let data=try handle.read(upToCount:16_777_216) ?? Data();if data.isEmpty{break};hasher.update(data:data)};return hasher.finalize().map{String(format:"%02x",$0)}.joined()}
+    nonisolated private static func sha256Detached(fileURL:URL)throws->String{let handle=try FileHandle(forReadingFrom:fileURL);defer{try? handle.close()};var hasher=SHA256();while autoreleasepool(invoking:{let data=handle.readData(ofLength:1024*1024);if data.isEmpty{return false};hasher.update(data:data);return true}){};return hasher.finalize().map{String(format:"%02x",$0)}.joined()}
 }
