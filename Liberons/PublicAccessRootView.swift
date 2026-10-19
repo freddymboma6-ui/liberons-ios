@@ -1,11 +1,10 @@
 import SwiftUI
 
 /// Global access gate for the public Libérons app.
-/// A single AuthStore and LanguageStore are shared by the normal app and the
-/// restricted-account experience so access changes and localization stay in sync.
+/// Restriction is monitored independently from the normal UI so an Owner action
+/// can take over immediately without adding polling to the application screens.
 struct PublicAccessRootView: View {
     @StateObject private var auth = AuthStore()
-    @StateObject private var language = LanguageStore()
 
     var body: some View {
         Group {
@@ -15,9 +14,11 @@ struct PublicAccessRootView: View {
                     ProgressView()
                 }
             } else if auth.isRestricted {
-                RestrictedAccountView(auth: auth, language: language)
+                // Create the language store when the restricted experience is shown.
+                // LanguageStore restores the user's persisted EN/FR choice.
+                RestrictedAccountView(auth: auth, language: LanguageStore())
             } else {
-                ContentView(auth: auth, language: language)
+                ContentView()
             }
         }
     }
