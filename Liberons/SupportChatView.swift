@@ -38,7 +38,10 @@ private final class SupportChatStore: ObservableObject {
         do {
             let session = try await client.auth.session; userID = session.user.id
             let tickets: [SupportTicket] = try await client.from("support_tickets").select("id,subject,status,created_at,updated_at").order("updated_at", ascending: false).limit(20).execute().value
-            if let existing = tickets.first(where: { $0.status != "closed" }) ?? tickets.first {
+
+            // Reuse only a live conversation. A closed restriction ticket must never be
+            // resurrected: the next restriction creates a fresh ticket in the current language.
+            if let existing = tickets.first(where: { $0.status.lowercased() != "closed" }) {
                 ticket = existing
                 await loadMessages(language: language)
             } else if restrictionContext {
@@ -55,14 +58,10 @@ private final class SupportChatStore: ObservableObject {
         guard !text.isEmpty, !isSending else { return }
         do {
             if ticket == nil {
-                try await createTicket(
-                    subject: language.text("Libérons Support", "Assistance Libérons"),
-                    firstMessage: text,
-                    language: language
-                )
+                try await createTicket(subject: language.text("Libérons Support", "Assistance Libérons"), firstMessage: text, language: language)
                 return
             }
-            guard let ticket, ticket.status != "closed", let userID else { return }
+            guard let ticket, ticket.status.lowercased() != "closed", let userID else { return }
             isSending = true
             try await client.from("support_messages").insert(NewSupportMessage(ticket_id: ticket.id, sender_id: userID, sender_type: "user", body: text)).execute()
             draft = ""
@@ -72,12 +71,12 @@ private final class SupportChatStore: ObservableObject {
     }
 
     private func createRestrictedAccountTicket(language: LanguageStore) async throws {
+        let english = language.language == .english
         try await createTicket(
-            subject: language.text("Access to my Libérons account", "Accès à mon compte Libérons"),
-            firstMessage: language.text(
-                "Hi, I’d like to contact Support regarding access to my Libérons account.",
-                "Bonjour, je souhaite contacter le support au sujet de l’accès à mon compte Libérons."
-            ),
+            subject: english ? "Access to my Libérons account" : "Accès à mon compte Libérons",
+            firstMessage: english
+                ? "Hi, I’d like to contact Support regarding access to my Libérons account."
+                : "Bonjour, je souhaite contacter le support au sujet de l’accès à mon compte Libérons.",
             language: language
         )
     }
@@ -85,12 +84,12 @@ private final class SupportChatStore: ObservableObject {
     private func createTicket(subject: String, firstMessage: String, language: LanguageStore) async throws {
         guard let userID else { return }
         isSending = true
+        defer { isSending = false }
         let created: SupportTicket = try await client.from("support_tickets").insert(NewSupportTicket(user_id: userID, subject: subject, category: "account")).select("id,subject,status,created_at,updated_at").single().execute().value
         ticket = created
         try await client.from("support_messages").insert(NewSupportMessage(ticket_id: created.id, sender_id: userID, sender_type: "user", body: firstMessage)).execute()
         draft = ""
         await loadMessages(language: language)
-        isSending = false
     }
 
     private func loadMessages(language: LanguageStore) async {
@@ -106,12 +105,15 @@ struct SupportChatView: View {
     let restrictionContext: Bool
     @StateObject private var store = SupportChatStore()
 
+    private let legacyFrenchRestrictionMessage = "Bonjour, je souhaite contacter le support au sujet de l’accès à mon compte Libérons."
+    private let englishRestrictionMessage = "Hi, I’d like to contact Support regarding access to my Libérons account."
+
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider().opacity(0.45)
             conversation
-            if store.ticket?.status != "closed" { composer }
+            if store.ticket?.status.lowercased() != "closed" { composer }
         }
         .background(Color(uiColor: .systemGroupedBackground).ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
@@ -145,11 +147,8 @@ struct SupportChatView: View {
                 Spacer()
                 Image(systemName: "bubble.left.and.bubble.right.fill").font(.system(size: 36)).foregroundStyle(.blue)
                 Text(language.text("Talk to Libérons", "Parlez à Libérons")).font(.title3.bold())
-                Text(language.text(
-                    "Write your message below. It will be sent directly to Libérons Support.",
-                    "Écrivez votre message ci-dessous. Il sera envoyé directement au support Libérons."
-                ))
-                .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center).padding(.horizontal, 36)
+                Text(language.text("Write your message below. It will be sent directly to Libérons Support.", "Écrivez votre message ci-dessous. Il sera envoyé directement au support Libérons."))
+                    .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center).padding(.horizontal, 36)
                 Spacer()
             }
         } else {
@@ -157,7 +156,7 @@ struct SupportChatView: View {
                 ScrollView {
                     LazyVStack(spacing: 10) {
                         ForEach(store.messages) { message in bubble(message).id(message.id) }
-                        if store.ticket?.status == "closed" {
+                        if store.ticket?.status.lowercased() == "closed" {
                             Text(language.text("This conversation is closed.", "Cette conversation est fermée."))
                                 .font(.caption).foregroundStyle(.secondary).padding(.vertical, 14)
                         }
@@ -172,6 +171,15 @@ struct SupportChatView: View {
         }
     }
 
+    private func displayedBody(_ body: String) -> String {
+        // Existing tickets created before the language fix are left untouched in Supabase.
+        // Only the known automatic restriction seed is localized for the user on screen.
+        if restrictionContext && body == legacyFrenchRestrictionMessage && language.language == .english {
+            return englishRestrictionMessage
+        }
+        return body
+    }
+
     private func bubble(_ message: SupportMessage) -> some View {
         let mine = message.sender_type == "user"
         return HStack {
@@ -182,7 +190,7 @@ struct SupportChatView: View {
                         .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
                 }
                 if let body = message.body, !body.isEmpty {
-                    Text(body).font(.body).foregroundStyle(mine ? Color.white : Color.primary)
+                    Text(displayedBody(body)).font(.body).foregroundStyle(mine ? Color.white : Color.primary)
                         .padding(.horizontal, 14).padding(.vertical, 10)
                         .background(mine ? Color.blue : Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                 }
