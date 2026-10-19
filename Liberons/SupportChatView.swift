@@ -19,6 +19,11 @@ private struct SupportMessage: Codable, Identifiable, Hashable {
     let created_at: Date
 }
 
+private struct SupportPresence: Codable {
+    let role: String
+    let online_at: String
+}
+
 private struct NewSupportTicket: Encodable { let user_id: UUID; let subject: String; let category: String }
 private struct NewSupportMessage: Encodable { let ticket_id: UUID; let sender_id: UUID; let sender_type: String; let body: String }
 
@@ -28,10 +33,15 @@ private final class SupportChatStore: ObservableObject {
     @Published var messages: [SupportMessage] = []
     @Published var draft = ""
     @Published var isLoading = true
+    @Published var isRefreshing = false
     @Published var isSending = false
+    @Published var supportOnline = false
+    @Published var realtimeConnected = false
     @Published var errorMessage: String?
+
     private let client = SupabaseService.client
     private var userID: UUID?
+    private var liveTask: Task<Void, Never>?
 
     private func isClosedStatus(_ status: String) -> Bool {
         let value = status.lowercased()
@@ -39,27 +49,51 @@ private final class SupportChatStore: ObservableObject {
     }
 
     func start(restrictionContext: Bool, language: LanguageStore) async {
-        isLoading = true; errorMessage = nil
+        liveTask?.cancel()
+        isLoading = true
+        errorMessage = nil
         do {
-            let session = try await client.auth.session; userID = session.user.id
-            let tickets: [SupportTicket] = try await client.from("support_tickets").select("id,subject,status,created_at,updated_at").order("updated_at", ascending: false).limit(20).execute().value
+            let session = try await client.auth.session
+            userID = session.user.id
+            let tickets: [SupportTicket] = try await client.from("support_tickets")
+                .select("id,subject,status,created_at,updated_at")
+                .order("updated_at", ascending: false).limit(20).execute().value
             if let existing = tickets.first(where: { !isClosedStatus($0.status) }) {
                 ticket = existing
-                await loadMessages(language: language)
+                await loadMessages(language: language, surfaceError: messages.isEmpty)
+                beginLiveUpdates(for: existing.id, language: language)
             } else if restrictionContext {
                 try await createRestrictedAccountTicket(language: language)
             }
-        } catch { errorMessage = language.text("Unable to open support chat right now.", "Impossible d’ouvrir le chat pour le moment.") }
+        } catch {
+            errorMessage = language.text("Unable to open support chat right now.", "Impossible d’ouvrir le chat pour le moment.")
+        }
         isLoading = false
     }
 
+    func stop() {
+        liveTask?.cancel()
+        liveTask = nil
+        supportOnline = false
+        realtimeConnected = false
+    }
+
     func refresh(language: LanguageStore) async {
-        guard let current = ticket else { return }
+        guard let current = ticket, !isRefreshing else { return }
+        isRefreshing = true
+        defer { isRefreshing = false }
         do {
-            let rows: [SupportTicket] = try await client.from("support_tickets").select("id,subject,status,created_at,updated_at").eq("id", value: current.id.uuidString).limit(1).execute().value
+            let rows: [SupportTicket] = try await client.from("support_tickets")
+                .select("id,subject,status,created_at,updated_at")
+                .eq("id", value: current.id.uuidString).limit(1).execute().value
             if let fresh = rows.first { ticket = fresh }
-        } catch { }
-        await loadMessages(language: language)
+            await loadMessages(language: language, surfaceError: messages.isEmpty)
+            errorMessage = nil
+        } catch {
+            if messages.isEmpty {
+                errorMessage = language.text("Unable to refresh the conversation.", "Impossible d’actualiser la conversation.")
+            }
+        }
     }
 
     func send(language: LanguageStore) async {
@@ -72,10 +106,14 @@ private final class SupportChatStore: ObservableObject {
             }
             guard let ticket, !isClosedStatus(ticket.status), let userID else { return }
             isSending = true
-            try await client.from("support_messages").insert(NewSupportMessage(ticket_id: ticket.id, sender_id: userID, sender_type: "user", body: text)).execute()
+            try await client.from("support_messages").insert(
+                NewSupportMessage(ticket_id: ticket.id, sender_id: userID, sender_type: "user", body: text)
+            ).execute()
             draft = ""
-            await refresh(language: language)
-        } catch { errorMessage = language.text("Your message could not be sent.", "Le message n’a pas pu être envoyé.") }
+            await loadMessages(language: language, surfaceError: false)
+        } catch {
+            errorMessage = language.text("Your message could not be sent.", "Le message n’a pas pu être envoyé.")
+        }
         isSending = false
     }
 
@@ -94,18 +132,90 @@ private final class SupportChatStore: ObservableObject {
         guard let userID else { return }
         isSending = true
         defer { isSending = false }
-        let created: SupportTicket = try await client.from("support_tickets").insert(NewSupportTicket(user_id: userID, subject: subject, category: "account")).select("id,subject,status,created_at,updated_at").single().execute().value
+        let created: SupportTicket = try await client.from("support_tickets")
+            .insert(NewSupportTicket(user_id: userID, subject: subject, category: "account"))
+            .select("id,subject,status,created_at,updated_at").single().execute().value
         ticket = created
-        try await client.from("support_messages").insert(NewSupportMessage(ticket_id: created.id, sender_id: userID, sender_type: "user", body: firstMessage)).execute()
+        try await client.from("support_messages").insert(
+            NewSupportMessage(ticket_id: created.id, sender_id: userID, sender_type: "user", body: firstMessage)
+        ).execute()
         draft = ""
-        await loadMessages(language: language)
+        await loadMessages(language: language, surfaceError: true)
+        beginLiveUpdates(for: created.id, language: language)
     }
 
-    private func loadMessages(language: LanguageStore) async {
+    private func loadMessages(language: LanguageStore, surfaceError: Bool) async {
         guard let ticket else { return }
         do {
-            messages = try await client.from("support_messages").select("id,ticket_id,sender_id,sender_type,body,created_at").eq("ticket_id", value: ticket.id.uuidString).order("created_at", ascending: true).execute().value
-        } catch { errorMessage = language.text("Unable to refresh the conversation.", "Impossible d’actualiser la conversation.") }
+            let rows: [SupportMessage] = try await client.from("support_messages")
+                .select("id,ticket_id,sender_id,sender_type,body,created_at")
+                .eq("ticket_id", value: ticket.id.uuidString)
+                .order("created_at", ascending: true).execute().value
+            messages = rows
+            if surfaceError { errorMessage = nil }
+        } catch {
+            if surfaceError {
+                errorMessage = language.text("Unable to refresh the conversation.", "Impossible d’actualiser la conversation.")
+            }
+        }
+    }
+
+    private func beginLiveUpdates(for ticketID: UUID, language: LanguageStore) {
+        liveTask?.cancel()
+        let client = self.client
+        liveTask = Task { [weak self] in
+            guard let self else { return }
+            let channel = client.channel("support-\(ticketID.uuidString.lowercased())")
+            let messageChanges = channel.postgresChange(
+                InsertAction.self,
+                schema: "public",
+                table: "support_messages",
+                filter: .eq("ticket_id", value: ticketID.uuidString)
+            )
+            let ticketChanges = channel.postgresChange(
+                UpdateAction.self,
+                schema: "public",
+                table: "support_tickets",
+                filter: .eq("id", value: ticketID.uuidString)
+            )
+            let presenceChanges = channel.presenceChange()
+
+            await channel.subscribe()
+            if Task.isCancelled { await channel.unsubscribe(); return }
+            self.realtimeConnected = true
+            try? await channel.track(SupportPresence(role: "user", online_at: Date().ISO8601Format()))
+
+            await withTaskGroup(of: Void.self) { group in
+                group.addTask { [weak self] in
+                    for await _ in messageChanges {
+                        guard !Task.isCancelled, let self else { break }
+                        await self.loadMessages(language: language, surfaceError: false)
+                    }
+                }
+                group.addTask { [weak self] in
+                    for await _ in ticketChanges {
+                        guard !Task.isCancelled, let self else { break }
+                        await self.refresh(language: language)
+                    }
+                }
+                group.addTask { [weak self] in
+                    for await change in presenceChanges {
+                        guard !Task.isCancelled, let self else { break }
+                        do {
+                            let joins = try change.decodeJoins(as: SupportPresence.self)
+                            let leaves = try change.decodeLeaves(as: SupportPresence.self)
+                            if joins.contains(where: { $0.role == "support" }) { self.supportOnline = true }
+                            if leaves.contains(where: { $0.role == "support" }) { self.supportOnline = false }
+                        } catch { }
+                    }
+                }
+                await group.waitForAll()
+            }
+            try? await channel.untrack()
+            await channel.unsubscribe()
+            self.realtimeConnected = false
+            self.supportOnline = false
+        }
     }
 
     func closed(_ ticket: SupportTicket?) -> Bool {
@@ -132,6 +242,7 @@ struct SupportChatView: View {
         .background(Color(uiColor: .systemGroupedBackground).ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
         .task { await store.start(restrictionContext: restrictionContext, language: language) }
+        .onDisappear { store.stop() }
         .alert(language.text("Support", "Support"), isPresented: Binding(get: { store.errorMessage != nil }, set: { if !$0 { store.errorMessage = nil } })) {
             Button("OK", role: .cancel) { store.errorMessage = nil }
         } message: { Text(store.errorMessage ?? "") }
@@ -139,18 +250,34 @@ struct SupportChatView: View {
 
     private var header: some View {
         HStack(spacing: 12) {
-            ZStack {
-                Circle().fill(Color.blue.opacity(0.12)).frame(width: 42, height: 42)
-                Image(systemName: "message.fill").foregroundStyle(.blue)
+            ZStack(alignment: .bottomTrailing) {
+                Circle().fill(Color.blue.opacity(0.12)).frame(width: 44, height: 44)
+                Image(systemName: "message.fill").foregroundStyle(Color.blue)
+                if !store.closed(store.ticket) {
+                    Circle()
+                        .fill(store.supportOnline ? Color.green : Color.secondary)
+                        .frame(width: 12, height: 12)
+                        .overlay(Circle().stroke(Color(uiColor: .systemBackground), lineWidth: 2))
+                }
             }
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text("Libérons Support").font(.headline)
-                Text(store.closed(store.ticket)
-                     ? language.text("Conversation closed", "Conversation fermée")
-                     : language.text("Private support conversation", "Conversation privée avec le support"))
-                    .font(.caption).foregroundStyle(.secondary)
+                HStack(spacing: 5) {
+                    if store.closed(store.ticket) {
+                        Text(language.text("Conversation closed", "Conversation fermée"))
+                    } else if store.supportOnline {
+                        Text(language.text("Online now", "En ligne maintenant"))
+                            .foregroundStyle(Color.green)
+                    } else if store.realtimeConnected {
+                        Text(language.text("Offline • messages stay live", "Hors ligne • messages en direct"))
+                    } else {
+                        Text(language.text("Connecting…", "Connexion…"))
+                    }
+                }
+                .font(.caption).foregroundStyle(Color.secondary)
             }
             Spacer()
+            if store.isRefreshing { ProgressView().controlSize(.small) }
         }
         .padding(.horizontal, 18).padding(.vertical, 12).background(.regularMaterial)
     }
@@ -161,10 +288,10 @@ struct SupportChatView: View {
         } else if store.ticket == nil {
             VStack(spacing: 12) {
                 Spacer()
-                Image(systemName: "bubble.left.and.bubble.right.fill").font(.system(size: 36)).foregroundStyle(.blue)
+                Image(systemName: "bubble.left.and.bubble.right.fill").font(.system(size: 36)).foregroundStyle(Color.blue)
                 Text(language.text("Talk to Libérons", "Parlez à Libérons")).font(.title3.bold())
                 Text(language.text("Write your message below. It will be sent directly to Libérons Support.", "Écrivez votre message ci-dessous. Il sera envoyé directement au support Libérons."))
-                    .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center).padding(.horizontal, 36)
+                    .font(.subheadline).foregroundStyle(Color.secondary).multilineTextAlignment(.center).padding(.horizontal, 36)
                 Spacer()
             }
         } else {
@@ -177,13 +304,12 @@ struct SupportChatView: View {
                                 Image(systemName: "checkmark.circle.fill")
                                 Text(language.text("This conversation is closed.", "Cette conversation est fermée."))
                             }
-                            .font(.caption.weight(.medium)).foregroundStyle(.secondary).padding(.vertical, 14)
+                            .font(.caption.weight(.medium)).foregroundStyle(Color.secondary).padding(.vertical, 14)
                         }
-                    }
-                    .padding(16)
+                    }.padding(16)
                 }
                 .refreshable { await store.refresh(language: language) }
-                .onChange(of: store.messages.count) { _ in
+                .onChange(of: store.messages.count) { _, _ in
                     if let id = store.messages.last?.id { withAnimation { proxy.scrollTo(id, anchor: .bottom) } }
                 }
             }
@@ -191,9 +317,7 @@ struct SupportChatView: View {
     }
 
     private func displayedBody(_ body: String) -> String {
-        if restrictionContext && body == legacyFrenchRestrictionMessage && language.language == .english {
-            return englishRestrictionMessage
-        }
+        if restrictionContext && body == legacyFrenchRestrictionMessage && language.language == .english { return englishRestrictionMessage }
         return body
     }
 
@@ -204,7 +328,7 @@ struct SupportChatView: View {
             VStack(alignment: mine ? .trailing : .leading, spacing: 4) {
                 if !mine {
                     Text(message.sender_type == "support" ? "Libérons Support" : "Libérons")
-                        .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                        .font(.caption2.weight(.semibold)).foregroundStyle(Color.secondary)
                 }
                 if let body = message.body, !body.isEmpty {
                     Text(displayedBody(body)).font(.body).foregroundStyle(mine ? Color.white : Color.primary)
@@ -224,8 +348,8 @@ struct SupportChatView: View {
             Button { Task { await store.send(language: language) } } label: {
                 ZStack {
                     Circle().fill(store.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color.secondary.opacity(0.18) : Color.blue).frame(width: 40, height: 40)
-                    if store.isSending { ProgressView().tint(.white).scaleEffect(0.8) }
-                    else { Image(systemName: "arrow.up").font(.system(size: 16, weight: .bold)).foregroundStyle(.white) }
+                    if store.isSending { ProgressView().tint(Color.white).scaleEffect(0.8) }
+                    else { Image(systemName: "arrow.up").font(.system(size: 16, weight: .bold)).foregroundStyle(Color.white) }
                 }
             }
             .disabled(store.isSending || store.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
