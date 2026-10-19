@@ -14,7 +14,7 @@ struct LiberonsApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            PublicAccessRootView()
                 .liberonsCanvas()
                 .liberonsPasswordRecovery()
                 .onOpenURL { url in
