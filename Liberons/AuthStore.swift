@@ -2,6 +2,7 @@ import Foundation
 import Combine
 import Supabase
 import Auth
+import Realtime
 
 @MainActor
 final class AuthStore: ObservableObject {
@@ -13,15 +14,36 @@ final class AuthStore: ObservableObject {
     @Published var errorMessage: String?
     @Published var infoMessage: String?
 
+    private var restrictionRealtimeTask: Task<Void, Never>?
+    private var foregroundObserver: NSObjectProtocol?
+
     var isAuthenticated: Bool { session != nil && !isRestricted }
 
-    init() { Task { await restoreSession() } }
+    init() {
+        foregroundObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.session != nil else { return }
+                await self.refreshRestrictionState()
+            }
+        }
+        Task { await restoreSession() }
+    }
+
+    deinit {
+        restrictionRealtimeTask?.cancel()
+        if let foregroundObserver { NotificationCenter.default.removeObserver(foregroundObserver) }
+    }
 
     func restoreSession() async {
         defer { isLoading = false }
         session = try? await SupabaseService.client.auth.session
         if session != nil {
             await refreshRestrictionState()
+            startRestrictionRealtime()
             if !isRestricted { await validateDeviceAndFreeTier() }
         }
     }
@@ -31,6 +53,7 @@ final class AuthStore: ObservableObject {
         do {
             session = try await SupabaseService.client.auth.signIn(email: email, password: password)
             await refreshRestrictionState()
+            startRestrictionRealtime()
             if isRestricted { errorMessage = "account_restricted"; return }
             await validateDeviceAndFreeTier()
         } catch { errorMessage = friendlyAuthError(error) }
@@ -43,6 +66,7 @@ final class AuthStore: ObservableObject {
             if let newSession = response.session {
                 session = newSession
                 await refreshRestrictionState()
+                startRestrictionRealtime()
                 if isRestricted { errorMessage = "account_restricted"; return false }
                 await validateDeviceAndFreeTier()
                 return true
@@ -56,10 +80,43 @@ final class AuthStore: ObservableObject {
         guard let userID = session?.user.id else { isRestricted = false; return }
         struct RestrictionRow: Decodable { let restricted_at: String? }
         do {
-            let rows: [RestrictionRow] = try await SupabaseService.client.from("user_subscriptions").select("restricted_at").eq("user_id", value: userID.uuidString).limit(1).execute().value
-            isRestricted = rows.first?.restricted_at != nil
-            if isRestricted { errorMessage = "account_restricted" }
-        } catch { }
+            let rows: [RestrictionRow] = try await SupabaseService.client
+                .from("user_subscriptions")
+                .select("restricted_at")
+                .eq("user_id", value: userID.uuidString)
+                .limit(1)
+                .execute().value
+            let restricted = rows.first?.restricted_at != nil
+            if restricted != isRestricted { isRestricted = restricted }
+            if restricted { errorMessage = "account_restricted" }
+            else if errorMessage == "account_restricted" { errorMessage = nil }
+        } catch {
+            // Keep the last trusted state. A transient network failure must not
+            // unlock a restricted account or throw an active user out.
+        }
+    }
+
+    private func startRestrictionRealtime() {
+        restrictionRealtimeTask?.cancel()
+        guard session != nil else { return }
+
+        restrictionRealtimeTask = Task { [weak self] in
+            guard let self else { return }
+            let channel = SupabaseService.client.channel("liberons-account-access")
+            let changes = channel.postgresChange(
+                UpdateAction.self,
+                schema: "public",
+                table: "user_subscriptions"
+            )
+            await channel.subscribe()
+
+            for await _ in changes {
+                if Task.isCancelled { break }
+                await self.refreshRestrictionState()
+            }
+
+            await SupabaseService.client.removeChannel(channel)
+        }
     }
 
     func sendPasswordReset(email: String) async -> Bool {
@@ -70,8 +127,12 @@ final class AuthStore: ObservableObject {
 
     func handleAuthURL(_ url: URL) async -> Bool {
         errorMessage = nil
-        do { session = try await SupabaseService.client.auth.session(from: url); await refreshRestrictionState(); return !isRestricted }
-        catch { errorMessage = friendlyAuthError(error); return false }
+        do {
+            session = try await SupabaseService.client.auth.session(from: url)
+            await refreshRestrictionState()
+            startRestrictionRealtime()
+            return !isRestricted
+        } catch { errorMessage = friendlyAuthError(error); return false }
     }
 
     func updatePassword(_ password: String) async -> Bool {
@@ -81,8 +142,11 @@ final class AuthStore: ObservableObject {
     }
 
     func signOut() async {
-        do { try await SupabaseService.client.auth.signOut(); session = nil; isRestricted = false; freeTierEligible = nil; appAttestVerified = nil; infoMessage = nil }
-        catch { errorMessage = friendlyAuthError(error) }
+        restrictionRealtimeTask?.cancel(); restrictionRealtimeTask = nil
+        do {
+            try await SupabaseService.client.auth.signOut()
+            session = nil; isRestricted = false; freeTierEligible = nil; appAttestVerified = nil; infoMessage = nil
+        } catch { errorMessage = friendlyAuthError(error) }
     }
 
     private func friendlyAuthError(_ error: Error) -> String {
