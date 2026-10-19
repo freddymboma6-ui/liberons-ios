@@ -5,6 +5,14 @@ import CryptoKit
 import UniformTypeIdentifiers
 import UIKit
 
+private final class PhotoExportRequestBox: @unchecked Sendable {
+    private let lock=NSLock()
+    private var requestID:PHAssetResourceDataRequestID?
+    private var cancelled=false
+    func set(_ id:PHAssetResourceDataRequestID){lock.lock();requestID=id;let shouldCancel=cancelled;lock.unlock();if shouldCancel{PHAssetResourceManager.default().cancelDataRequest(id)}}
+    func cancel(){lock.lock();cancelled=true;let id=requestID;lock.unlock();if let id{PHAssetResourceManager.default().cancelDataRequest(id)}}
+}
+
 @MainActor
 final class BackupEngine: ObservableObject {
     @Published private(set) var isRunning=false
@@ -61,10 +69,7 @@ final class BackupEngine: ObservableObject {
         stopRequested=true;isStopping=true;isPaused=false
         let waiters=pauseWaiters;pauseWaiters.removeAll();waiters.forEach{$0.resume()}
         backupTask?.cancel()
-        isRunning=false
-        activeTransfers=0
-        currentQueueFilename=nil
-        message="Backup stopped • \(queueCompleted) protected"
+        message="Stopping active transfer…"
     }
     private func waitIfPaused()async{guard isPaused,!stopRequested,!Task.isCancelled else{return};await withCheckedContinuation{continuation in pauseWaiters.append(continuation)}}
 
@@ -80,17 +85,14 @@ final class BackupEngine: ObservableObject {
         var seen=Set<String>();let unique=localIdentifiers.filter{seen.insert($0).inserted};let result=PHAsset.fetchAssets(withLocalIdentifiers:unique,options:nil);var map:[String:PHAsset]=[:];result.enumerateObjects{asset,_,_ in map[asset.localIdentifier]=asset};let assets=unique.compactMap{map[$0]};guard !assets.isEmpty else{message="No selected media found";return}
         var thumbnailJobs:[ThumbnailJob]=[]
         newlyProtectedLocalIdentifiers=[];stopRequested=false;isStopping=false;isPaused=false;isRunning=true;queueTotal=assets.count;queueCompleted=0;queueFailed=0;lastFailureReason=nil;failureSummary=[:];repeatedFailureReason=nil;repeatedFailureCount=0;maxConcurrentTransfers=recommendedConcurrency();activeTransfers=0;message="Preparing \(queueTotal) items…"
-        defer{isRunning=false;isPaused=false;isStopping=false;activeTransfers=0;currentQueueFilename=nil;let waiters=pauseWaiters;pauseWaiters.removeAll();waiters.forEach{$0.resume()};if !newlyProtectedLocalIdentifiers.isEmpty{protectionBatchID=UUID();NotificationCenter.default.post(name:.liberonsCloudDidChange,object:nil)};if !thumbnailJobs.isEmpty{startDeferredThumbnails(thumbnailJobs)}}
+        defer{let wasStopped=stopRequested || Task.isCancelled;isRunning=false;isPaused=false;isStopping=false;activeTransfers=0;currentQueueFilename=nil;let waiters=pauseWaiters;pauseWaiters.removeAll();waiters.forEach{$0.resume()};if !newlyProtectedLocalIdentifiers.isEmpty{protectionBatchID=UUID();NotificationCenter.default.post(name:.liberonsCloudDidChange,object:nil)};if !wasStopped && !thumbnailJobs.isEmpty{startDeferredThumbnails(thumbnailJobs)}}
         var iterator=assets.makeIterator()
         await withTaskGroup(of:Result<ProtectedResult,BackupFailure>.self){group in
             let initial=min(maxConcurrentTransfers,assets.count)
             for _ in 0..<initial{guard !stopRequested,!Task.isCancelled,let asset=iterator.next() else{break};activeTransfers+=1;group.addTask{await self.protectResultWithRetry(asset:asset)}}
             while let outcome=await group.next(){
                 activeTransfers=max(0,activeTransfers-1)
-                if Task.isCancelled || stopRequested{
-                    group.cancelAll()
-                    continue
-                }
+                if Task.isCancelled || stopRequested{group.cancelAll();continue}
                 switch outcome{
                 case .success(let protected):
                     newlyProtectedLocalIdentifiers.append(protected.localIdentifier);thumbnailJobs.append(ThumbnailJob(localIdentifier:protected.localIdentifier,cloudAssetID:protected.cloudAssetID));queueCompleted+=1;lastProtectedLocalIdentifier=protected.localIdentifier;lastProtectedFilename=protected.filename;lastProtectedBytes=protected.bytes;lastProtectedIsVideo=protected.isVideo;repeatedFailureReason=nil;repeatedFailureCount=0
@@ -119,11 +121,7 @@ final class BackupEngine: ObservableObject {
         for attempt in 1...3{
             if Task.isCancelled || stopRequested{return .failure(BackupFailure(reason:"Transfer cancelled",diagnostic:"Task cancelled by user"))}
             do{return .success(try await protect(asset:asset,resource:resource))}
-            catch{
-                finalError=error
-                if Task.isCancelled || stopRequested{return .failure(BackupFailure(reason:"Transfer cancelled",diagnostic:"Task cancelled by user"))}
-                if attempt<3{try? await Task.sleep(for:.milliseconds(500*attempt))}
-            }
+            catch{finalError=error;if Task.isCancelled || stopRequested{return .failure(BackupFailure(reason:"Transfer cancelled",diagnostic:"Task cancelled by user"))};if attempt<3{try? await Task.sleep(for:.milliseconds(500*attempt))}}
         }
         let error=finalError ?? NSError(domain:"LiberonsBackup",code:-1,userInfo:[NSLocalizedDescriptionKey:"Unknown error"])
         return .failure(classify(error:error))
@@ -148,6 +146,17 @@ final class BackupEngine: ObservableObject {
 
     private func startDeferredThumbnails(_ jobs:[ThumbnailJob]){Task(priority:.utility){for job in jobs{if ProcessInfo.processInfo.thermalState == .critical{break};let result=PHAsset.fetchAssets(withLocalIdentifiers:[job.localIdentifier],options:nil);guard let asset=result.firstObject,let thumbnail=await self.thumbnailJPEG(for:asset) else{continue};let thumbBody:[String:Any]=["asset_id":job.cloudAssetID,"jpeg_base64":thumbnail.base64EncodedString()];_ = try? await SupabaseService.callFunction("upload-media-thumbnail",json:try JSONSerialization.data(withJSONObject:thumbBody));await Task.yield()};NotificationCenter.default.post(name:.liberonsCloudDidChange,object:nil)}}
     private func thumbnailJPEG(for asset:PHAsset)async->Data?{await withCheckedContinuation{continuation in let options=PHImageRequestOptions();options.deliveryMode = .fastFormat;options.resizeMode = .fast;options.isNetworkAccessAllowed=false;PHImageManager.default().requestImage(for:asset,targetSize:CGSize(width:360,height:360),contentMode:.aspectFill,options:options){image,info in if (info?[PHImageCancelledKey] as? Bool)==true{continuation.resume(returning:nil);return};continuation.resume(returning:image?.jpegData(compressionQuality:0.62))}}}
-    private func export(resource:PHAssetResource,to url:URL)async throws{try Task.checkCancellation();try await withTaskCancellationHandler(operation:{try await withCheckedThrowingContinuation{(continuation:CheckedContinuation<Void,Error>) in let options=PHAssetResourceRequestOptions();options.isNetworkAccessAllowed=true;PHAssetResourceManager.default().writeData(for:resource,toFile:url,options:options){error in if let error{continuation.resume(throwing:error)}else{continuation.resume(returning:())}}}},onCancel:{})}
+    private func export(resource:PHAssetResource,to url:URL)async throws{
+        try Task.checkCancellation()
+        let requestBox=PhotoExportRequestBox()
+        try await withTaskCancellationHandler(operation:{
+            try await withCheckedThrowingContinuation{(continuation:CheckedContinuation<Void,Error>) in
+                let options=PHAssetResourceRequestOptions();options.isNetworkAccessAllowed=true
+                let requestID=PHAssetResourceManager.default().writeData(for:resource,toFile:url,options:options){error in if let error{continuation.resume(throwing:error)}else{continuation.resume(returning:())}}
+                requestBox.set(requestID)
+            }
+        },onCancel:{requestBox.cancel()})
+        try Task.checkCancellation()
+    }
     nonisolated private static func sha256Detached(fileURL:URL)throws->String{let handle=try FileHandle(forReadingFrom:fileURL);defer{try? handle.close()};var hasher=SHA256();while autoreleasepool(invoking:{let data=handle.readData(ofLength:1024*1024);if data.isEmpty{return false};hasher.update(data:data);return true}){};return hasher.finalize().map{String(format:"%02x",$0)}.joined()}
 }
