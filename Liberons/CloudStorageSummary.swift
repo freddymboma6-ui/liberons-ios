@@ -12,7 +12,7 @@ final class CloudStorageSummary: ObservableObject {
     @Published private(set) var quotaBytes: Int64 = freeQuotaBytes
     @Published private(set) var billedPlanCode: String = "free"
     @Published private(set) var billedPlanQuotaBytes: Int64 = freeQuotaBytes
-    @Published private(set) var billedPlanPriceCents: Int = 0
+    @Published private(set) var billedPlanPriceCents: Int? = 0
     @Published private(set) var billedPlanCurrency: String = "USD"
     @Published private(set) var protectedCount: Int = 0
     @Published private(set) var lastProtectedAt: Date?
