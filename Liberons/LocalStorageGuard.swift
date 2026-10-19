@@ -18,6 +18,7 @@ enum LocalStorageGuard {
     static func purgeTransientStorage() {
         URLCache.shared.removeAllCachedResponses()
         purgeTemporaryFiles(removeAll: true)
+        purgeCachesDirectory()
     }
 
     static func purgeTemporaryFiles(removeAll: Bool = false) {
@@ -29,6 +30,16 @@ enum LocalStorageGuard {
             guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey]), values.isRegularFile == true else { continue }
             if removeAll || (values.contentModificationDate ?? .distantPast) < cutoff { try? manager.removeItem(at: url) }
         }
+    }
+
+    /// Removes only the app's disposable Caches contents. This includes downloaded
+    /// protected-video playback files (Caches/LiberonsPlayback) and URL/session cache
+    /// files. Documents, user data and protected cloud originals are never touched.
+    static func purgeCachesDirectory() {
+        let manager = FileManager.default
+        guard let directory = manager.urls(for: .cachesDirectory, in: .userDomainMask).first,
+              let urls = try? manager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else { return }
+        for url in urls { try? manager.removeItem(at: url) }
     }
 
     /// User-generated cloud originals are intentionally excluded: this measures only
