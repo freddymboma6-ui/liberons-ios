@@ -155,9 +155,14 @@ extension Notification.Name {
 
 final class LiberonsAppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil) -> Bool {
+        BackgroundBackupScheduler.shared.register()
         LiberonsBackgroundUploader.shared.reconnect()
         Task { @MainActor in PushNotificationManager.shared.configure() }
         return true
+    }
+
+    func applicationDidEnterBackground(_ application: UIApplication) {
+        BackgroundBackupScheduler.shared.schedule()
     }
 
     func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String, completionHandler: @escaping () -> Void) {
