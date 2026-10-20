@@ -45,23 +45,96 @@ final class CloudStorageSummary: ObservableObject {
         guard !isLoading else{return};isLoading=true;defer{isLoading=false}
         let decoder=JSONDecoder();decoder.dateDecodingStrategy = .iso8601
         guard let session=try? await SupabaseService.client.auth.session else{planLoadFailed=true;return}
-        let userID=session.user.id.uuidString;var receivedPlan=false
-        do{let plan:ServerPlan=try await SupabaseService.client.functions.invoke("account-storage-plan",options:FunctionInvokeOptions(headers:["Authorization":"Bearer \(session.accessToken)"]),decode:{data,_ in try decoder.decode(ServerPlan.self,from:data)});guard plan.user_id.lowercased()==userID.lowercased(),plan.source=="server" else{throw NSError(domain:"LiberonsPlan",code:1)};quotaBytes=max(0,plan.quota_bytes);accountRole=plan.role.lowercased();subscriptionStatus=plan.subscription?.status?.lowercased() ?? "free";gracePeriodEnd=plan.subscription?.grace_period_end;lastPaymentFailedAt=plan.subscription?.last_payment_failed_at;receivedPlan=true}catch{}
-        do{let rows:[StorageQuota]=try await SupabaseService.client.from("storage_usage").select("quota_bytes").eq("user_id",value:userID).limit(1).execute().value;if let fresh=rows.first{quotaBytes=max(0,fresh.quota_bytes);receivedPlan=true}}catch{}
+        let userID=session.user.id.uuidString
 
-        // The subscription is deliberately loaded independently from quotaBytes.
-        // Owner-granted capacity must never masquerade as a more expensive paid plan.
-        billedPlanCode="free";billedPlanQuotaBytes=Self.freeQuotaBytes;billedPlanPriceCents=0;billedPlanCurrency="USD"
+        // Build a complete snapshot off to the side. Nothing visible is changed until
+        // all available plan/quota/media data has been collected, preventing the UI
+        // from briefly rendering the default/free plan or hiding an owner-granted bonus.
+        var nextQuotaBytes=quotaBytes
+        var nextAccountRole=accountRole
+        var nextSubscriptionStatus=subscriptionStatus
+        var nextGracePeriodEnd=gracePeriodEnd
+        var nextLastPaymentFailedAt=lastPaymentFailedAt
+        var nextBilledPlanCode="free"
+        var nextBilledPlanQuotaBytes=Self.freeQuotaBytes
+        var nextBilledPlanPriceCents=0
+        var nextBilledPlanCurrency="USD"
+        var nextProtectedCount=protectedCount
+        var nextLastProtectedAt=lastProtectedAt
+        var nextProtectedBytes=protectedBytes
+        var nextPendingBytes=pendingBytes
+        var receivedPlan=false
+
+        do {
+            let plan:ServerPlan=try await SupabaseService.client.functions.invoke("account-storage-plan",options:FunctionInvokeOptions(headers:["Authorization":"Bearer \(session.accessToken)"]),decode:{data,_ in try decoder.decode(ServerPlan.self,from:data)})
+            guard plan.user_id.lowercased()==userID.lowercased(),plan.source=="server" else{throw NSError(domain:"LiberonsPlan",code:1)}
+            nextQuotaBytes=max(0,plan.quota_bytes)
+            nextAccountRole=plan.role.lowercased()
+            nextSubscriptionStatus=plan.subscription?.status?.lowercased() ?? "free"
+            nextGracePeriodEnd=plan.subscription?.grace_period_end
+            nextLastPaymentFailedAt=plan.subscription?.last_payment_failed_at
+            nextPendingBytes=max(0,plan.pending_bytes)
+            receivedPlan=true
+        } catch {}
+
+        do {
+            let rows:[StorageQuota]=try await SupabaseService.client.from("storage_usage").select("quota_bytes").eq("user_id",value:userID).limit(1).execute().value
+            if let fresh=rows.first{nextQuotaBytes=max(0,fresh.quota_bytes);receivedPlan=true}
+        } catch {}
+
+        // The billed subscription remains independent from total capacity. Extra space
+        // granted by Libérons is a bonus and must never appear as a more expensive plan.
         do {
             let subscriptions:[UserSubscription]=try await SupabaseService.client.from("user_subscriptions").select("plan_code,status").eq("user_id",value:userID).limit(1).execute().value
             if let sub=subscriptions.first,let code=sub.plan_code,!code.isEmpty {
-                billedPlanCode=code; if let status=sub.status{subscriptionStatus=status.lowercased()}
+                nextBilledPlanCode=code
+                if let status=sub.status{nextSubscriptionStatus=status.lowercased()}
                 let planRows:[PublicPlan]=try await SupabaseService.client.from("public_subscription_plans").select("code,quota_bytes,monthly_price_cents,currency").eq("code",value:code).limit(1).execute().value
-                if let paid=planRows.first{billedPlanQuotaBytes=max(0,paid.quota_bytes);billedPlanPriceCents=max(0,paid.monthly_price_cents);billedPlanCurrency=paid.currency}
+                if let paid=planRows.first {
+                    nextBilledPlanQuotaBytes=max(0,paid.quota_bytes)
+                    nextBilledPlanPriceCents=max(0,paid.monthly_price_cents)
+                    nextBilledPlanCurrency=paid.currency
+                }
             }
-        } catch {}
-        planLoadFailed = !receivedPlan
+        } catch {
+            // Preserve the last known billed-plan presentation if subscription lookup
+            // temporarily fails, rather than flashing the free plan on screen.
+            nextBilledPlanCode=billedPlanCode
+            nextBilledPlanQuotaBytes=billedPlanQuotaBytes
+            nextBilledPlanPriceCents=billedPlanPriceCents
+            nextBilledPlanCurrency=billedPlanCurrency
+        }
 
-        do{let pageSize=1000;var offset=0;var allAssets:[Asset]=[];while true{let response=try await SupabaseService.client.from("media_assets").select("protected_at,size_bytes").eq("user_id",value:userID).eq("status",value:"protected").order("protected_at",ascending:false).range(from:offset,to:offset+pageSize-1).execute();let page=try decoder.decode([Asset].self,from:response.data);allAssets.append(contentsOf:page);if page.count<pageSize{break};offset+=pageSize};protectedCount=allAssets.count;lastProtectedAt=allAssets.first?.protected_at;protectedBytes=allAssets.reduce(Int64(0)){$0+max(0,$1.size_bytes ?? 0)};pendingBytes=0}catch{}
+        do {
+            let pageSize=1000;var offset=0;var allAssets:[Asset]=[]
+            while true {
+                let response=try await SupabaseService.client.from("media_assets").select("protected_at,size_bytes").eq("user_id",value:userID).eq("status",value:"protected").order("protected_at",ascending:false).range(from:offset,to:offset+pageSize-1).execute()
+                let page=try decoder.decode([Asset].self,from:response.data)
+                allAssets.append(contentsOf:page)
+                if page.count<pageSize{break}
+                offset+=pageSize
+            }
+            nextProtectedCount=allAssets.count
+            nextLastProtectedAt=allAssets.first?.protected_at
+            nextProtectedBytes=allAssets.reduce(Int64(0)){$0+max(0,$1.size_bytes ?? 0)}
+            nextPendingBytes=0
+        } catch {}
+
+        // One publication point: views never observe a half-refreshed plan snapshot.
+        objectWillChange.send()
+        quotaBytes=nextQuotaBytes
+        accountRole=nextAccountRole
+        subscriptionStatus=nextSubscriptionStatus
+        gracePeriodEnd=nextGracePeriodEnd
+        lastPaymentFailedAt=nextLastPaymentFailedAt
+        billedPlanCode=nextBilledPlanCode
+        billedPlanQuotaBytes=nextBilledPlanQuotaBytes
+        billedPlanPriceCents=nextBilledPlanPriceCents
+        billedPlanCurrency=nextBilledPlanCurrency
+        protectedCount=nextProtectedCount
+        lastProtectedAt=nextLastProtectedAt
+        protectedBytes=nextProtectedBytes
+        pendingBytes=nextPendingBytes
+        planLoadFailed = !receivedPlan
     }
 }
