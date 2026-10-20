@@ -110,7 +110,11 @@ final class AuthStore: ObservableObject {
 
         restrictionRealtimeTask = Task { [weak self] in
             guard let self else { return }
-            let channel = SupabaseService.client.channel("liberons-account-access")
+
+            // A fresh topic prevents Supabase from returning an already-subscribed
+            // channel when auth restoration/sign-in starts this observer again.
+            // postgresChange must always be registered before subscribe().
+            let channel = SupabaseService.client.channel("liberons-account-access-\(UUID().uuidString)")
             let changes = channel.postgresChange(
                 UpdateAction.self,
                 schema: "public",
