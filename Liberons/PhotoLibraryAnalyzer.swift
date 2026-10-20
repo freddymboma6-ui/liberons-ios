@@ -17,10 +17,23 @@ final class PhotoLibraryAnalyzer: NSObject, ObservableObject, PHPhotoLibraryChan
 
     private let defaults = UserDefaults.standard
     private let cacheVersion = 1
+    private var pullToRefreshObserver: NSObjectProtocol?
     private enum Key { static let version="liberons.photoScan.version"; static let photos="liberons.photoScan.photos"; static let videos="liberons.photoScan.videos"; static let bytes="liberons.photoScan.bytes"; static let total="liberons.photoScan.total"; static let date="liberons.photoScan.date" }
 
-    override init() { super.init(); restoreCachedScan(); PHPhotoLibrary.shared().register(self) }
-    deinit { PHPhotoLibrary.shared().unregisterChangeObserver(self) }
+    override init() {
+        super.init()
+        restoreCachedScan()
+        PHPhotoLibrary.shared().register(self)
+        pullToRefreshObserver = NotificationCenter.default.addObserver(forName: .liberonsPullToRefresh, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                await self?.refreshDashboardFast()
+            }
+        }
+    }
+    deinit {
+        PHPhotoLibrary.shared().unregisterChangeObserver(self)
+        if let pullToRefreshObserver { NotificationCenter.default.removeObserver(pullToRefreshObserver) }
+    }
     var canReadLibrary: Bool { authorizationStatus == .authorized || authorizationStatus == .limited }
     var hasCompletedScan: Bool { lastScanDate != nil && totalItems > 0 }
 
