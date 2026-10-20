@@ -1,0 +1,61 @@
+name: Align storage usage display
+on:
+  push:
+    paths:
+      - '.github/workflows/align-storage-usage-display.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: library-protected-media
+      - name: Use canonical protected cloud bytes in customer-facing storage UI
+        shell: python
+        run: |
+          from pathlib import Path
+
+          summary = Path('Liberons/CloudStorageSummary.swift')
+          s = summary.read_text()
+          anchor = '    var grantedBonusBytes: Int64 { max(0, quotaBytes - billedPlanQuotaBytes) }\n'
+          addition = '''    // Customer-facing "used storage" means bytes whose cloud protection is confirmed.\n    // pendingBytes remains available for reservation/quota enforcement, but must not make\n    // Home, Account and Plan show different storage totals while uploads are pending.\n    var usedBytes: Int64 { max(0, protectedBytes) }\n'''
+          if 'var usedBytes: Int64' not in s:
+              if anchor not in s: raise SystemExit('CloudStorageSummary anchor not found; refusing partial patch')
+              s = s.replace(anchor, addition + anchor, 1)
+          summary.write_text(s)
+
+          content = Path('Liberons/ContentView.swift')
+          c = content.read_text()
+          before = c
+          patterns = [
+              'cloud.protectedBytes+cloud.pendingBytes',
+              'cloud.protectedBytes + cloud.pendingBytes',
+          ]
+          replacements = 0
+          for pattern in patterns:
+              replacements += c.count(pattern)
+              c = c.replace(pattern, 'cloud.usedBytes')
+          if replacements < 2:
+              raise SystemExit(f'Expected at least Dashboard + Account/Plan usage anchors, found {replacements}; refusing partial patch')
+          if 'cloud.protectedBytes+cloud.pendingBytes' in c or 'cloud.protectedBytes + cloud.pendingBytes' in c:
+              raise SystemExit('Inconsistent customer-facing usage expression remains')
+          content.write_text(c)
+          print(f'Replaced {replacements} customer-facing usage expressions')
+      - name: Validate and commit
+        run: |
+          git diff --check
+          changed="$(git diff --name-only | sort)"
+          expected="$(printf '%s\n' Liberons/CloudStorageSummary.swift Liberons/ContentView.swift | sort)"
+          test "$changed" = "$expected"
+          grep -q 'var usedBytes: Int64 { max(0, protectedBytes) }' Liberons/CloudStorageSummary.swift
+          ! grep -q 'cloud.protectedBytes+cloud.pendingBytes' Liberons/ContentView.swift
+          ! grep -q 'cloud.protectedBytes + cloud.pendingBytes' Liberons/ContentView.swift
+          grep -q 'pendingBytes' Liberons/CloudStorageSummary.swift
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add Liberons/CloudStorageSummary.swift Liberons/ContentView.swift
+          git commit -m "Keep storage usage consistent across Libérons"
+          git push origin HEAD:library-protected-media
