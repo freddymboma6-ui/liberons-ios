@@ -112,12 +112,13 @@ enum SupabaseService {
     static func cloudStreamURL(assetID:UUID) async throws -> URL { try await cloudMediaURL(assetID:assetID,variant:"original",purpose:"stream") }
 
     static func protectedStreamRequest(assetID:UUID) async throws -> URLRequest {
-        let session=try await client.auth.session
-        var components=URLComponents(url:projectURL.appendingPathComponent("functions").appendingPathComponent("v1").appendingPathComponent("stream-media"),resolvingAgainstBaseURL:false)!
-        components.queryItems=[URLQueryItem(name:"asset_id",value:assetID.uuidString)]
-        guard let url=components.url else{throw NSError(domain:"LiberonsCloud",code:-3,userInfo:[NSLocalizedDescriptionKey:"Invalid protected stream URL"])}
-        var request=URLRequest(url:url)
-        request.setValue("Bearer \(session.accessToken)",forHTTPHeaderField:"Authorization")
+        // get-media-url authenticates the user, checks asset ownership/status and returns
+        // a one-hour signed B2 URL. AVPlayer can then issue its byte-range requests
+        // directly to B2 instead of proxying every video byte through Supabase Edge.
+        // This keeps protected access while avoiding duplicate B2 -> Supabase -> iPhone egress.
+        let url = try await cloudStreamURL(assetID: assetID)
+        var request = URLRequest(url: url)
+        request.cachePolicy = .useProtocolCachePolicy
         return request
     }
 
