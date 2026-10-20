@@ -1,14 +1,18 @@
 import Foundation
 import Supabase
 
-private final class LiberonsBackgroundUploader:NSObject,URLSessionDataDelegate,URLSessionTaskDelegate,@unchecked Sendable{
+final class LiberonsBackgroundUploader:NSObject,URLSessionDataDelegate,URLSessionTaskDelegate,@unchecked Sendable{
     static let shared=LiberonsBackgroundUploader()
+    static let sessionIdentifier="com.liberons.cloud.background-upload"
     private let lock=NSLock()
     private var continuations:[Int:CheckedContinuation<(Data,URLResponse),Error>]=[:]
     private var responseData:[Int:Data]=[:]
+    private var backgroundCompletionHandler:(()->Void)?
 
-    private lazy var session:URLSession={
-        let config=URLSessionConfiguration.background(withIdentifier:"com.liberons.cloud.background-upload")
+    private lazy var session:URLSession=makeSession()
+
+    private func makeSession()->URLSession{
+        let config=URLSessionConfiguration.background(withIdentifier:Self.sessionIdentifier)
         config.sessionSendsLaunchEvents=true
         config.isDiscretionary=false
         config.waitsForConnectivity=true
@@ -16,7 +20,18 @@ private final class LiberonsBackgroundUploader:NSObject,URLSessionDataDelegate,U
         config.httpMaximumConnectionsPerHost=4
         config.timeoutIntervalForResource=60*60*6
         return URLSession(configuration:config,delegate:self,delegateQueue:nil)
-    }()
+    }
+
+    func reconnect(){_ = session;session.getAllTasks{tasks in
+        let active=tasks.filter{$0.state == .running || $0.state == .suspended}.count
+        print("[BackgroundUpload] Reconnected to \(active) active transfer(s)")
+    }}
+
+    func handleEvents(identifier:String,completionHandler:@escaping()->Void){
+        guard identifier == Self.sessionIdentifier else{completionHandler();return}
+        lock.lock();backgroundCompletionHandler=completionHandler;lock.unlock()
+        reconnect()
+    }
 
     func upload(fileURL:URL,request:URLRequest)async throws->(Data,URLResponse){
         try await withCheckedThrowingContinuation{continuation in
@@ -25,13 +40,35 @@ private final class LiberonsBackgroundUploader:NSObject,URLSessionDataDelegate,U
         }
     }
 
+    func urlSession(_ session:URLSession,task:URLSessionTask,didSendBodyData bytesSent:Int64,totalBytesSent:Int64,totalBytesExpectedToSend:Int64){
+        guard totalBytesExpectedToSend>0 else{return}
+        NotificationCenter.default.post(name:.liberonsBackgroundUploadProgress,object:nil,userInfo:["task_id":task.taskIdentifier,"sent":totalBytesSent,"expected":totalBytesExpectedToSend,"progress":Double(totalBytesSent)/Double(totalBytesExpectedToSend)])
+    }
+
     func urlSession(_ session:URLSession,dataTask:URLSessionDataTask,didReceive data:Data){lock.lock();responseData[dataTask.taskIdentifier,default:Data()].append(data);lock.unlock()}
+
     func urlSession(_ session:URLSession,task:URLSessionTask,didCompleteWithError error:Error?){
         lock.lock();let continuation=continuations.removeValue(forKey:task.taskIdentifier);let data=responseData.removeValue(forKey:task.taskIdentifier) ?? Data();lock.unlock()
-        guard let continuation else{return};if let error{continuation.resume(throwing:error);return}
+        NotificationCenter.default.post(name:.liberonsBackgroundUploadCompleted,object:nil,userInfo:["task_id":task.taskIdentifier,"success":error == nil])
+        guard let continuation else{
+            if let error{print("[BackgroundUpload] Relaunched task \(task.taskIdentifier) failed: \(error.localizedDescription)")}else{print("[BackgroundUpload] Relaunched task \(task.taskIdentifier) completed")}
+            return
+        }
+        if let error{continuation.resume(throwing:error);return}
         guard let response=task.response else{continuation.resume(throwing:NSError(domain:"LiberonsCloud",code:-1,userInfo:[NSLocalizedDescriptionKey:"B2 returned an invalid response"]));return}
         continuation.resume(returning:(data,response))
     }
+
+    func urlSessionDidFinishEvents(forBackgroundURLSession session:URLSession){
+        lock.lock();let handler=backgroundCompletionHandler;backgroundCompletionHandler=nil;lock.unlock()
+        guard let handler else{return}
+        DispatchQueue.main.async{handler()}
+    }
+}
+
+extension Notification.Name{
+    static let liberonsBackgroundUploadProgress=Notification.Name("liberons.background-upload.progress")
+    static let liberonsBackgroundUploadCompleted=Notification.Name("liberons.background-upload.completed")
 }
 
 enum SupabaseService {
