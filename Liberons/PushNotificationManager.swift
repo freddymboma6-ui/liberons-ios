@@ -6,29 +6,60 @@ import Supabase
 @MainActor
 final class PushNotificationManager: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     static let shared = PushNotificationManager()
+    private let cachedTokenKey = "liberons.apns-device-token"
+    private var languageObserver: NSObjectProtocol?
+
     private override init() { super.init() }
 
     func configure() {
         UNUserNotificationCenter.current().delegate = self
-        NotificationCenter.default.addObserver(forName: .liberonsLanguageChanged, object: nil, queue: .main) { _ in
-            Task { @MainActor in UIApplication.shared.registerForRemoteNotifications() }
+        if languageObserver == nil {
+            languageObserver = NotificationCenter.default.addObserver(forName: .liberonsLanguageChanged, object: nil, queue: .main) { _ in
+                Task { @MainActor in
+                    await PushNotificationManager.shared.syncCachedTokenIfPossible()
+                    UIApplication.shared.registerForRemoteNotifications()
+                }
+            }
         }
     }
 
     func requestAuthorizationAndRegister() async {
         do {
-            let granted = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound])
-            guard granted else { return }
+            let settings = await UNUserNotificationCenter.current().notificationSettings()
+            var authorized = settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional || settings.authorizationStatus == .ephemeral
+
+            if settings.authorizationStatus == .notDetermined {
+                authorized = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound])
+            }
+
+            guard authorized else {
+                print("[Push] Notifications are not authorized (status: \(settings.authorizationStatus.rawValue))")
+                return
+            }
+
+            // If Apple already issued a token on an earlier launch, sync it immediately.
+            await syncCachedTokenIfPossible()
             UIApplication.shared.registerForRemoteNotifications()
-        } catch { print("Push authorization failed") }
+        } catch {
+            print("[Push] Authorization/registration request failed: \(error.localizedDescription)")
+        }
     }
 
     func didRegister(deviceToken: Data) {
         let token = deviceToken.map { String(format: "%02x", $0) }.joined()
+        UserDefaults.standard.set(token, forKey: cachedTokenKey)
+        print("[Push] APNs registration succeeded; syncing device token")
         Task { await save(token: token) }
     }
 
-    func didFailToRegister(error: Error) { print("APNs registration failed") }
+    func didFailToRegister(error: Error) {
+        print("[Push] APNs registration failed: \(error.localizedDescription)")
+    }
+
+    func syncCachedTokenIfPossible() async {
+        guard let token = UserDefaults.standard.string(forKey: cachedTokenKey), !token.isEmpty else { return }
+        await save(token: token)
+    }
 
     private func selectedLanguage() -> String {
         if let value = UserDefaults.standard.string(forKey: "liberons.language"), ["fr", "en"].contains(value) { return value }
@@ -43,6 +74,7 @@ final class PushNotificationManager: NSObject, UIApplicationDelegate, UNUserNoti
             #else
             let environment = "production"
             #endif
+
             struct DeviceToken: Encodable {
                 let user_id: UUID
                 let installation_id: UUID
@@ -54,9 +86,27 @@ final class PushNotificationManager: NSObject, UIApplicationDelegate, UNUserNoti
                 let enabled: Bool
                 let last_seen_at: String
             }
-            let row = DeviceToken(user_id: session.user.id, installation_id: installationIdentifier(), token: token, platform: "ios", environment: environment, app_version: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String, locale: selectedLanguage(), enabled: true, last_seen_at: ISO8601DateFormatter().string(from: Date()))
-            _ = try await SupabaseService.client.from("push_tokens").upsert(row, onConflict: "user_id,installation_id").execute()
-        } catch { print("Push token save failed") }
+
+            let row = DeviceToken(
+                user_id: session.user.id,
+                installation_id: installationIdentifier(),
+                token: token,
+                platform: "ios",
+                environment: environment,
+                app_version: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+                locale: selectedLanguage(),
+                enabled: true,
+                last_seen_at: ISO8601DateFormatter().string(from: Date())
+            )
+
+            try await SupabaseService.client
+                .from("push_tokens")
+                .upsert(row, onConflict: "user_id,installation_id")
+                .execute()
+            print("[Push] Device token saved to Supabase")
+        } catch {
+            print("[Push] Device token save failed: \(String(describing: error))")
+        }
     }
 
     private func installationIdentifier() -> UUID {
@@ -67,24 +117,32 @@ final class PushNotificationManager: NSObject, UIApplicationDelegate, UNUserNoti
         return id
     }
 
-    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions { [.banner, .list, .sound, .badge] }
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
+        [.banner, .list, .sound, .badge]
+    }
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         let info = response.notification.request.content.userInfo
-        await MainActor.run { NotificationCenter.default.post(name: .liberonsPushOpened, object: nil, userInfo: info) }
+        await MainActor.run {
+            NotificationCenter.default.post(name: .liberonsPushOpened, object: nil, userInfo: info)
+        }
     }
 }
 
-extension Notification.Name { static let liberonsPushOpened = Notification.Name("liberons.push.opened") }
+extension Notification.Name {
+    static let liberonsPushOpened = Notification.Name("liberons.push.opened")
+}
 
 final class LiberonsAppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil) -> Bool {
         Task { @MainActor in PushNotificationManager.shared.configure() }
         return true
     }
+
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
         Task { @MainActor in PushNotificationManager.shared.didRegister(deviceToken: deviceToken) }
     }
+
     func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
         Task { @MainActor in PushNotificationManager.shared.didFailToRegister(error: error) }
     }
