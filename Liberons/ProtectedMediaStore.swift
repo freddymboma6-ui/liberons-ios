@@ -12,16 +12,16 @@ final class ProtectedMediaStore: ObservableObject {
     private var activeRefresh: Task<Void, Never>?
 
     func refresh() async {
-        // Every caller awaits the same real refresh. This is important for SwiftUI's
-        // native pull-to-refresh: the spinner remains active until the network reload
-        // has actually completed instead of ending when another refresh is in flight.
+        // Every caller awaits the same real refresh. Explicitly returning Void keeps
+        // this task typed as Task<Void, Never> even though self is captured weakly.
         if let activeRefresh {
             await activeRefresh.value
             return
         }
 
-        let task = Task { @MainActor [weak self] in
-            await self?.performRefresh()
+        let task = Task<Void, Never> { @MainActor [weak self] in
+            guard let self else { return }
+            await self.performRefresh()
         }
         activeRefresh = task
         await task.value
