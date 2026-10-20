@@ -36,10 +36,19 @@ final class ProtectedSpaceCleaner: ObservableObject {
     }
 
     private func protectedRows() async throws -> [ProtectedRow] {
-        let response = try await SupabaseService.client.from("media_assets").select("id,ios_local_identifier,original_filename,captured_at,size_bytes").eq("status", value: "protected").order("captured_at", ascending: true).execute()
-        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
-        return try decoder.decode([ProtectedRow].self, from: response.data)
+    let pageSize = 500
+    var offset = 0
+    var allRows: [ProtectedRow] = []
+    let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+    while true {
+        let response = try await SupabaseService.client.from("media_assets").select("id,ios_local_identifier,original_filename,captured_at,size_bytes").eq("status", value: "protected").order("captured_at", ascending: true).range(from: offset, to: offset + pageSize - 1).execute()
+        let page = try decoder.decode([ProtectedRow].self, from: response.data)
+        allRows.append(contentsOf: page)
+        if page.count < pageSize { break }
+        offset += pageSize
     }
+    return allRows
+}
 
     func prepare(removalPercent: Int) async {
         guard !isLoading && !isDeleting else { return }; isLoading = true; message = ""; defer { isLoading = false }
