@@ -1,9 +1,10 @@
 import BackgroundTasks
 import Foundation
 
-/// Gives iOS a supported way to wake Libérons after suspension so queued backup
-/// work can be continued. Background URLSession remains responsible for uploads
-/// that are already in flight.
+/// Gives iOS a supported execution window after Libérons is suspended.
+/// Background URLSession remains responsible for uploads already in flight;
+/// BGProcessing lets the surrounding PhotoKit/hash/verify pipeline make progress
+/// whenever iOS grants background processing time.
 final class BackgroundBackupScheduler {
     static let shared = BackgroundBackupScheduler()
     static let processingIdentifier = "com.liberons.Liberons.backup-processing"
@@ -30,11 +31,14 @@ final class BackgroundBackupScheduler {
     }
 
     func schedule() {
+        BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: Self.processingIdentifier)
         let request = BGProcessingTaskRequest(identifier: Self.processingIdentifier)
         request.requiresNetworkConnectivity = true
         request.requiresExternalPower = false
+        request.earliestBeginDate = Date(timeIntervalSinceNow: 1)
         do {
             try BGTaskScheduler.shared.submit(request)
+            print("[BackgroundBackup] Processing requested")
         } catch {
             print("[BackgroundBackup] Unable to schedule processing: \(error.localizedDescription)")
         }
@@ -45,18 +49,26 @@ final class BackgroundBackupScheduler {
     }
 
     private func run(_ task: BGProcessingTask) {
+        print("[BackgroundBackup] iOS granted a processing window")
         schedule()
         let work = Task {
             lock.lock()
             let handler = self.handler
             lock.unlock()
-            guard let handler else {
-                task.setTaskCompleted(success: false)
-                return
+
+            if let handler {
+                await handler()
+            } else {
+                // Keeping the BGProcessing task alive gives the already-running
+                // BackupEngine task time to continue its PhotoKit/export/hash/
+                // verify pipeline after the app was suspended.
+                try? await Task.sleep(for: .seconds(25))
             }
-            await handler()
             task.setTaskCompleted(success: !Task.isCancelled)
         }
-        task.expirationHandler = { work.cancel() }
+        task.expirationHandler = {
+            print("[BackgroundBackup] Processing window expired")
+            work.cancel()
+        }
     }
 }
