@@ -30,7 +30,8 @@ final class CloudStorageSummary: ObservableObject {
     var isPaymentRestricted: Bool { if subscriptionStatus=="restricted"{return true};let statuses=["past_due","grace","unpaid"];guard statuses.contains(subscriptionStatus),let end=gracePeriodEnd else{return false};return Date()>=end }
     var graceDaysRemaining: Int { guard let end=gracePeriodEnd,end>Date() else{return 0};return max(1,Calendar.current.dateComponents([.day],from:Date(),to:end).day ?? 1) }
 
-    private var observer:NSObjectProtocol?; private var refreshTimer:Timer?
+    private var observer:NSObjectProtocol?
+    private var changeRefreshTask: Task<Void, Never>?
     private struct Subscription: Decodable { let status:String?;let grace_period_end:Date?;let last_payment_failed_at:Date? }
     private struct ServerPlan: Decodable { let user_id:String;let quota_bytes:Int64;let protected_bytes:Int64;let pending_bytes:Int64;let role:String;let source:String;let subscription:Subscription? }
     private struct StorageQuota: Decodable { let quota_bytes:Int64 }
@@ -38,8 +39,25 @@ final class CloudStorageSummary: ObservableObject {
     private struct PublicPlan: Decodable { let code:String;let quota_bytes:Int64;let monthly_price_cents:Int;let currency:String }
     private struct Asset: Decodable { let protected_at:Date?;let size_bytes:Int64? }
 
-    init(){observer=NotificationCenter.default.addObserver(forName:.liberonsCloudDidChange,object:nil,queue:.main){[weak self] _ in Task{@MainActor in await self?.refresh()}};refreshTimer=Timer.scheduledTimer(withTimeInterval:20,repeats:true){[weak self] _ in Task{@MainActor in await self?.refresh()}}}
-    deinit{if let observer{NotificationCenter.default.removeObserver(observer)};refreshTimer?.invalidate()}
+    init(){
+        // Do not poll Supabase. A 20-second timer used to reload every protected asset,
+        // subscription and quota continuously, producing thousands of unnecessary reads.
+        // Cloud mutations already emit liberonsCloudDidChange; coalesce bursts (for example
+        // a large backup) into one refresh after activity settles.
+        observer=NotificationCenter.default.addObserver(forName:.liberonsCloudDidChange,object:nil,queue:.main){[weak self] _ in
+            Task { @MainActor [weak self] in self?.scheduleChangeRefresh() }
+        }
+    }
+    deinit{if let observer{NotificationCenter.default.removeObserver(observer)};changeRefreshTask?.cancel()}
+
+    private func scheduleChangeRefresh() {
+        changeRefreshTask?.cancel()
+        changeRefreshTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard !Task.isCancelled else { return }
+            await self?.refresh()
+        }
+    }
 
     func refresh() async {
         guard !isLoading else{return};isLoading=true;defer{isLoading=false}
@@ -47,9 +65,6 @@ final class CloudStorageSummary: ObservableObject {
         guard let session=try? await SupabaseService.client.auth.session else{planLoadFailed=true;return}
         let userID=session.user.id.uuidString
 
-        // Build a complete snapshot off to the side. Nothing visible is changed until
-        // all available plan/quota/media data has been collected, preventing the UI
-        // from briefly rendering the default/free plan or hiding an owner-granted bonus.
         var nextQuotaBytes=quotaBytes
         var nextAccountRole=accountRole
         var nextSubscriptionStatus=subscriptionStatus
@@ -73,13 +88,9 @@ final class CloudStorageSummary: ObservableObject {
             nextSubscriptionStatus=plan.subscription?.status?.lowercased() ?? "free"
             nextGracePeriodEnd=plan.subscription?.grace_period_end
             nextLastPaymentFailedAt=plan.subscription?.last_payment_failed_at
+            nextProtectedBytes=max(0,plan.protected_bytes)
             nextPendingBytes=max(0,plan.pending_bytes)
             receivedPlan=true
-        } catch {}
-
-        do {
-            let rows:[StorageQuota]=try await SupabaseService.client.from("storage_usage").select("quota_bytes").eq("user_id",value:userID).limit(1).execute().value
-            if let fresh=rows.first{nextQuotaBytes=max(0,fresh.quota_bytes);receivedPlan=true}
         } catch {}
 
         // The billed subscription remains independent from total capacity. Extra space
@@ -97,14 +108,14 @@ final class CloudStorageSummary: ObservableObject {
                 }
             }
         } catch {
-            // Preserve the last known billed-plan presentation if subscription lookup
-            // temporarily fails, rather than flashing the free plan on screen.
             nextBilledPlanCode=billedPlanCode
             nextBilledPlanQuotaBytes=billedPlanQuotaBytes
             nextBilledPlanPriceCents=billedPlanPriceCents
             nextBilledPlanCurrency=billedPlanCurrency
         }
 
+        // Asset rows are needed for the exact protected item count and most recent date.
+        // This is intentionally event/manual-refresh driven now, never timer-polled.
         do {
             let pageSize=1000;var offset=0;var allAssets:[Asset]=[]
             while true {
@@ -116,11 +127,11 @@ final class CloudStorageSummary: ObservableObject {
             }
             nextProtectedCount=allAssets.count
             nextLastProtectedAt=allAssets.first?.protected_at
-            nextProtectedBytes=allAssets.reduce(Int64(0)){$0+max(0,$1.size_bytes ?? 0)}
-            nextPendingBytes=0
+            // Keep account-storage-plan as the authoritative byte total when available.
+            // Fall back to the paginated asset sum only if the server snapshot failed.
+            if !receivedPlan { nextProtectedBytes=allAssets.reduce(Int64(0)){$0+max(0,$1.size_bytes ?? 0)} }
         } catch {}
 
-        // One publication point: views never observe a half-refreshed plan snapshot.
         objectWillChange.send()
         quotaBytes=nextQuotaBytes
         accountRole=nextAccountRole
