@@ -37,7 +37,6 @@ final class PushNotificationManager: NSObject, UIApplicationDelegate, UNUserNoti
                 return
             }
 
-            // If Apple already issued a token on an earlier launch, sync it immediately.
             await syncCachedTokenIfPossible()
             UIApplication.shared.registerForRemoteNotifications()
         } catch {
@@ -59,6 +58,27 @@ final class PushNotificationManager: NSObject, UIApplicationDelegate, UNUserNoti
     func syncCachedTokenIfPossible() async {
         guard let token = UserDefaults.standard.string(forKey: cachedTokenKey), !token.isEmpty else { return }
         await save(token: token)
+    }
+
+    func sendBackupResult(completed: Int, failed: Int, total: Int) async {
+        guard total > 0 else { return }
+        let category = failed > 0 ? "backup_failed" : "backup_completed"
+        let payload: [String: Any] = [
+            "category": category,
+            "data": [
+                "completed": completed,
+                "failed": failed,
+                "total": total,
+                "source": "ios_backup_batch"
+            ]
+        ]
+        do {
+            let body = try JSONSerialization.data(withJSONObject: payload)
+            _ = try await SupabaseService.callFunction("send-push", json: body)
+            print("[Push] Backup result notification requested: \(category) (\(completed)/\(total), failed: \(failed))")
+        } catch {
+            print("[Push] Backup result notification failed: \(String(describing: error))")
+        }
     }
 
     private func selectedLanguage() -> String {
