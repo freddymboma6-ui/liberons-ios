@@ -29,6 +29,14 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.liberons.Liberons.backup-processing</string>
+	</array>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>processing</string>
+	</array>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Libérons needs access to your photo and video library to analyze your storage, securely back up your memories, and help you free space on your iPhone.</string>
 	<key>UILaunchScreen</key>
