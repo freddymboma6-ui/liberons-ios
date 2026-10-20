@@ -3,6 +3,10 @@ import UIKit
 import Supabase
 import Auth
 
+extension Notification.Name {
+    static let liberonsPullToRefresh = Notification.Name("liberons.pullToRefresh")
+}
+
 @main
 struct LiberonsApp: App {
     @UIApplicationDelegateAdaptor(LiberonsAppDelegate.self) private var appDelegate
@@ -18,6 +22,16 @@ struct LiberonsApp: App {
             PublicAccessRootView()
                 .liberonsCanvas()
                 .liberonsPasswordRecovery()
+                .refreshable {
+                    // Native iOS pull-to-refresh inherited by the app's scroll views.
+                    // Individual screens that already provide a more specific refresh
+                    // action (such as the protected Library) keep their own behavior.
+                    NotificationCenter.default.post(name: .liberonsPullToRefresh, object: nil)
+                    NotificationCenter.default.post(name: .liberonsCloudDidChange, object: nil)
+                    // Keep the native spinner visible long enough to communicate the
+                    // refresh without blocking interaction or starting heavy work here.
+                    try? await Task.sleep(for: .milliseconds(350))
+                }
                 .task {
                     if (try? await SupabaseService.client.auth.session) != nil {
                         await PushNotificationManager.shared.requestAuthorizationAndRegister()
