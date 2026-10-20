@@ -42,7 +42,10 @@ struct LiberonsApp: App {
         .onChange(of: scenePhase) { _, phase in
             if phase == .background {
                 LocalStorageGuard.applicationDidEnterBackground()
+                ImmediateBackgroundExecution.shared.begin()
+                BackgroundBackupScheduler.shared.schedule()
             } else if phase == .active {
+                ImmediateBackgroundExecution.shared.end()
                 Task {
                     if (try? await SupabaseService.client.auth.session) != nil {
                         await PushNotificationManager.shared.requestAuthorizationAndRegister()
