@@ -17,7 +17,7 @@ final class LiberonsBackgroundUploader:NSObject,URLSessionDataDelegate,URLSessio
         config.isDiscretionary=false
         config.waitsForConnectivity=true
         config.allowsCellularAccess=true
-        config.httpMaximumConnectionsPerHost=4
+        config.httpMaximumConnectionsPerHost=8
         config.timeoutIntervalForResource=60*60*6
         return URLSession(configuration:config,delegate:self,delegateQueue:nil)
     }
