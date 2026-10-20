@@ -51,6 +51,7 @@ final class BackgroundBackupScheduler {
     private func run(_ task: BGProcessingTask) {
         print("[BackgroundBackup] iOS granted a processing window")
         schedule()
+
         let work = Task {
             lock.lock()
             let handler = self.handler
@@ -59,13 +60,16 @@ final class BackgroundBackupScheduler {
             if let handler {
                 await handler()
             } else {
-                // Keeping the BGProcessing task alive gives the already-running
-                // BackupEngine task time to continue its PhotoKit/export/hash/
-                // verify pipeline after the app was suspended.
-                try? await Task.sleep(for: .seconds(25))
+                // Do not voluntarily give the processing window back after only
+                // a few seconds. The existing BackupEngine task resumes when the
+                // process is running and keeps feeding URLSession.background.
+                // iOS remains in control and will call expirationHandler when it
+                // needs the execution window back.
+                try? await Task.sleep(for: .minutes(15))
             }
             task.setTaskCompleted(success: !Task.isCancelled)
         }
+
         task.expirationHandler = {
             print("[BackgroundBackup] Processing window expired")
             work.cancel()
