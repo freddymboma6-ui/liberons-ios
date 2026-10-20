@@ -63,7 +63,14 @@ final class AuthStore: ObservableObject {
     func signUp(email: String, password: String) async -> Bool {
         errorMessage = nil; infoMessage = nil
         do {
-            let response = try await SupabaseService.client.auth.signUp(email: email, password: password, redirectTo: URL(string: "https://liberons.com/auth/callback"))
+            // Keep the origin explicit: accounts created in the iOS app must
+            // return to the app after Supabase confirms the e-mail. Web signup
+            // has its own https://liberons.com/auth/callback?source=web route.
+            let response = try await SupabaseService.client.auth.signUp(
+                email: email,
+                password: password,
+                redirectTo: URL(string: "liberons://auth/confirm")
+            )
             if let newSession = response.session {
                 session = newSession
                 await refreshRestrictionState()
@@ -132,7 +139,10 @@ final class AuthStore: ObservableObject {
             session = try await SupabaseService.client.auth.session(from: url)
             await refreshRestrictionState()
             startRestrictionRealtime()
-            return !isRestricted
+            if isRestricted { errorMessage = "account_restricted"; return false }
+            await validateDeviceAndFreeTier()
+            infoMessage = "email_confirmed"
+            return true
         } catch { errorMessage = friendlyAuthError(error); return false }
     }
 
