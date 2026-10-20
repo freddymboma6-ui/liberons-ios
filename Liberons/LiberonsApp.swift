@@ -35,6 +35,7 @@ struct LiberonsApp: App {
                 .task {
                     if (try? await SupabaseService.client.auth.session) != nil {
                         await PushNotificationManager.shared.requestAuthorizationAndRegister()
+                        PresenceService.shared.start()
                     }
                 }
                 .onOpenURL { url in
@@ -55,6 +56,7 @@ struct LiberonsApp: App {
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background {
+                PresenceService.shared.stop()
                 LocalStorageGuard.applicationDidEnterBackground()
                 ImmediateBackgroundExecution.shared.begin()
                 BackgroundBackupScheduler.shared.schedule()
@@ -63,6 +65,9 @@ struct LiberonsApp: App {
                 Task {
                     if (try? await SupabaseService.client.auth.session) != nil {
                         await PushNotificationManager.shared.requestAuthorizationAndRegister()
+                        PresenceService.shared.start()
+                    } else {
+                        PresenceService.shared.stop()
                     }
                 }
             }
