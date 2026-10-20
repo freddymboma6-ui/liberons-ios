@@ -21,60 +21,67 @@ struct LiberonsLiveActivityLiveActivity: Widget {
 
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: LiberonsLiveActivityAttributes.self) { context in
-            VStack(spacing: 9) {
-                HStack(spacing: 7) {
+            VStack(spacing: 8) {
+                HStack(spacing: 6) {
                     Image(systemName: "icloud.and.arrow.up.fill")
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(.blue)
 
                     Text("Libérons")
                         .font(.system(size: 16, weight: .semibold))
 
-                    Text("· Sauvegarde")
-                        .font(.system(size: 15, weight: .regular))
+                    Text("Sauvegarde")
+                        .font(.system(size: 14, weight: .regular))
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
 
-                    Spacer(minLength: 8)
+                    Spacer(minLength: 6)
 
                     Text("\(context.state.percent)%")
                         .font(.system(size: 17, weight: .semibold, design: .rounded).monospacedDigit())
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                 }
 
                 ProgressView(value: Double(context.state.percent), total: 100)
                     .progressViewStyle(.linear)
                     .tint(.blue)
 
-                HStack(spacing: 8) {
-                    if context.state.failed > 0 {
-                        Text("\(context.state.completed) protégés · \(context.state.failed) échecs")
-                    } else {
-                        Text("\(context.state.completed) protégés")
-                    }
+                HStack(spacing: 12) {
+                    Text(context.state.failed > 0
+                         ? "\(context.state.completed) protégés · \(context.state.failed) échecs"
+                         : "\(context.state.completed) protégés")
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.82)
 
-                    Spacer()
+                    Spacer(minLength: 8)
 
                     Text("\(remaining(context.state)) restants")
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.82)
+                        .fixedSize(horizontal: true, vertical: false)
                 }
-                .font(.system(size: 13, weight: .medium).monospacedDigit())
+                .font(.system(size: 12, weight: .medium).monospacedDigit())
                 .foregroundStyle(.secondary)
             }
-            .padding(.vertical, 3)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
             .activityBackgroundTint(Color(uiColor: .secondarySystemBackground))
             .activitySystemActionForegroundColor(.primary)
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    HStack(spacing: 6) {
+                    HStack(spacing: 5) {
                         Image(systemName: "icloud.and.arrow.up.fill")
                             .foregroundStyle(.blue)
                         Text("Libérons")
-                            .font(.system(size: 15, weight: .semibold))
+                            .font(.system(size: 14, weight: .semibold))
                     }
                 }
 
                 DynamicIslandExpandedRegion(.trailing) {
                     Text("\(context.state.percent)%")
-                        .font(.system(size: 16, weight: .semibold, design: .rounded).monospacedDigit())
+                        .font(.system(size: 15, weight: .semibold, design: .rounded).monospacedDigit())
                 }
 
                 DynamicIslandExpandedRegion(.bottom) {
@@ -83,14 +90,18 @@ struct LiberonsLiveActivityLiveActivity: Widget {
                             .progressViewStyle(.linear)
                             .tint(.blue)
 
-                        HStack {
+                        HStack(spacing: 10) {
                             Text("\(context.state.completed) protégés")
-                            Spacer()
+                                .lineLimit(1)
+                            Spacer(minLength: 6)
                             Text("\(remaining(context.state)) restants")
+                                .lineLimit(1)
+                                .fixedSize(horizontal: true, vertical: false)
                         }
-                        .font(.system(size: 12, weight: .medium).monospacedDigit())
+                        .font(.system(size: 11, weight: .medium).monospacedDigit())
                         .foregroundStyle(.secondary)
                     }
+                    .padding(.horizontal, 2)
                 }
             } compactLeading: {
                 Image(systemName: "icloud.and.arrow.up.fill")
@@ -110,5 +121,5 @@ struct LiberonsLiveActivityLiveActivity: Widget {
 #Preview("Sauvegarde", as: .content, using: LiberonsLiveActivityAttributes(startedAt: .now)) {
     LiberonsLiveActivityLiveActivity()
 } contentStates: {
-    LiberonsLiveActivityAttributes.ContentState(completed: 27, failed: 0, total: 1034, percent: 3, status: "Sauvegarde en cours")
+    LiberonsLiveActivityAttributes.ContentState(completed: 14, failed: 0, total: 1034, percent: 1, status: "Sauvegarde en cours")
 }
