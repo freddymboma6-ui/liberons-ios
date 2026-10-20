@@ -11,7 +11,10 @@ final class LanguageStore: ObservableObject {
     }
 
     @Published var language: Language {
-        didSet { UserDefaults.standard.set(language.rawValue, forKey: "liberons.language") }
+        didSet {
+            UserDefaults.standard.set(language.rawValue, forKey: "liberons.language")
+            NotificationCenter.default.post(name: .liberonsLanguageChanged, object: language.rawValue)
+        }
     }
 
     init() {
@@ -23,4 +26,8 @@ final class LanguageStore: ObservableObject {
     }
 
     func text(_ en: String, _ fr: String) -> String { language == .french ? fr : en }
+}
+
+extension Notification.Name {
+    static let liberonsLanguageChanged = Notification.Name("liberons.language.changed")
 }
