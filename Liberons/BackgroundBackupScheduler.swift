@@ -60,12 +60,9 @@ final class BackgroundBackupScheduler {
             if let handler {
                 await handler()
             } else {
-                // Do not voluntarily give the processing window back after only
-                // a few seconds. The existing BackupEngine task resumes when the
-                // process is running and keeps feeding URLSession.background.
-                // iOS remains in control and will call expirationHandler when it
-                // needs the execution window back.
-                try? await Task.sleep(for: .minutes(15))
+                // Keep the granted processing window alive until the system
+                // expires it, while avoiding unsupported Duration conveniences.
+                try? await Task.sleep(nanoseconds: 900_000_000_000)
             }
             task.setTaskCompleted(success: !Task.isCancelled)
         }
