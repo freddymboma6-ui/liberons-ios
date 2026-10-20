@@ -23,6 +23,10 @@ final class CloudStorageSummary: ObservableObject {
     @Published private(set) var isLoading = false
     @Published private(set) var planLoadFailed = false
 
+    // Customer-facing "used storage" means bytes whose cloud protection is confirmed.
+    // pendingBytes remains available for reservation/quota enforcement, but must not make
+    // Home, Account and Plan show different storage totals while uploads are pending.
+    var usedBytes: Int64 { max(0, protectedBytes) }
     var grantedBonusBytes: Int64 { max(0, quotaBytes - billedPlanQuotaBytes) }
     var hasGrantedBonus: Bool { grantedBonusBytes > 50_000_000 }
     var isOwner: Bool { accountRole.lowercased() == "owner" }
