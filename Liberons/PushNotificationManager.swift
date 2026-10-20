@@ -155,8 +155,13 @@ extension Notification.Name {
 
 final class LiberonsAppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil) -> Bool {
+        LiberonsBackgroundUploader.shared.reconnect()
         Task { @MainActor in PushNotificationManager.shared.configure() }
         return true
+    }
+
+    func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String, completionHandler: @escaping () -> Void) {
+        LiberonsBackgroundUploader.shared.handleEvents(identifier: identifier, completionHandler: completionHandler)
     }
 
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
