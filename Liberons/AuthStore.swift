@@ -5,6 +5,10 @@ import Supabase
 import Auth
 import Realtime
 
+extension Notification.Name {
+    static let liberonsAuthSessionConfirmed = Notification.Name("liberons.authSessionConfirmed")
+}
+
 @MainActor
 final class AuthStore: ObservableObject {
     @Published private(set) var session: Session?
@@ -17,6 +21,7 @@ final class AuthStore: ObservableObject {
 
     private var restrictionRealtimeTask: Task<Void, Never>?
     private var foregroundObserver: NSObjectProtocol?
+    private var confirmationObserver: NSObjectProtocol?
 
     var isAuthenticated: Bool { session != nil && !isRestricted }
 
@@ -31,12 +36,23 @@ final class AuthStore: ObservableObject {
                 await self.refreshRestrictionState()
             }
         }
+        confirmationObserver = NotificationCenter.default.addObserver(
+            forName: .liberonsAuthSessionConfirmed,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                await self.restoreConfirmedSession()
+            }
+        }
         Task { await restoreSession() }
     }
 
     deinit {
         restrictionRealtimeTask?.cancel()
         if let foregroundObserver { NotificationCenter.default.removeObserver(foregroundObserver) }
+        if let confirmationObserver { NotificationCenter.default.removeObserver(confirmationObserver) }
     }
 
     func restoreSession() async {
@@ -47,6 +63,21 @@ final class AuthStore: ObservableObject {
             startRestrictionRealtime()
             if !isRestricted { await validateDeviceAndFreeTier() }
         }
+    }
+
+    private func restoreConfirmedSession() async {
+        errorMessage = nil
+        guard let confirmedSession = try? await SupabaseService.client.auth.session else { return }
+        session = confirmedSession
+        isLoading = false
+        await refreshRestrictionState()
+        startRestrictionRealtime()
+        if isRestricted {
+            errorMessage = "account_restricted"
+            return
+        }
+        await validateDeviceAndFreeTier()
+        infoMessage = "email_confirmed"
     }
 
     func signIn(email: String, password: String) async {
@@ -63,9 +94,6 @@ final class AuthStore: ObservableObject {
     func signUp(email: String, password: String) async -> Bool {
         errorMessage = nil; infoMessage = nil
         do {
-            // Keep the origin explicit: accounts created in the iOS app must
-            // return to the app after Supabase confirms the e-mail. Web signup
-            // has its own https://liberons.com/auth/callback?source=web route.
             let response = try await SupabaseService.client.auth.signUp(
                 email: email,
                 password: password,
@@ -98,35 +126,21 @@ final class AuthStore: ObservableObject {
             if restricted != isRestricted { isRestricted = restricted }
             if restricted { errorMessage = "account_restricted" }
             else if errorMessage == "account_restricted" { errorMessage = nil }
-        } catch {
-            // Keep the last trusted state. A transient network failure must not
-            // unlock a restricted account or throw an active user out.
-        }
+        } catch { }
     }
 
     private func startRestrictionRealtime() {
         restrictionRealtimeTask?.cancel()
         guard session != nil else { return }
-
         restrictionRealtimeTask = Task { [weak self] in
             guard let self else { return }
-
-            // A fresh topic prevents Supabase from returning an already-subscribed
-            // channel when auth restoration/sign-in starts this observer again.
-            // postgresChange must always be registered before subscribe().
             let channel = SupabaseService.client.channel("liberons-account-access-\(UUID().uuidString)")
-            let changes = channel.postgresChange(
-                UpdateAction.self,
-                schema: "public",
-                table: "user_subscriptions"
-            )
+            let changes = channel.postgresChange(UpdateAction.self, schema: "public", table: "user_subscriptions")
             await channel.subscribe()
-
             for await _ in changes {
                 if Task.isCancelled { break }
                 await self.refreshRestrictionState()
             }
-
             await SupabaseService.client.removeChannel(channel)
         }
     }
