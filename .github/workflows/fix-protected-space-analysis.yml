@@ -1,0 +1,75 @@
+name: Fix protected-space analysis
+
+on:
+  push:
+    paths:
+      - '.github/workflows/fix-protected-space-analysis.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: library-protected-media
+      - name: Patch ProtectedSpaceCleaner analysis only
+        shell: python
+        run: |
+          from pathlib import Path
+          p=Path('Liberons/ProtectedSpaceCleaner.swift')
+          s=p.read_text()
+          old='''    private func protectedRows() async throws -> [ProtectedRow] {
+        let response = try await SupabaseService.client.from("media_assets").select("id,ios_local_identifier,original_filename,captured_at,size_bytes").eq("status", value: "protected").order("captured_at", ascending: true).execute()
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode([ProtectedRow].self, from: response.data)
+    }
+'''
+          new='''    private func protectedRows() async throws -> [ProtectedRow] {
+        // Supabase/PostgREST responses are capped, so load every protected media row.
+        // Without pagination the cleaner can inspect only the first slice of a large
+        // Libérons library and incorrectly conclude that nothing remains on the iPhone.
+        let pageSize = 500
+        var offset = 0
+        var rows: [ProtectedRow] = []
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        while true {
+            let response = try await SupabaseService.client
+                .from("media_assets")
+                .select("id,ios_local_identifier,original_filename,captured_at,size_bytes")
+                .eq("status", value: "protected")
+                .order("captured_at", ascending: true)
+                .range(from: offset, to: offset + pageSize - 1)
+                .execute()
+            let page = try decoder.decode([ProtectedRow].self, from: response.data)
+            rows.append(contentsOf: page)
+            if page.count < pageSize { break }
+            offset += pageSize
+        }
+        return rows
+    }
+'''
+          if old not in s:
+              raise SystemExit('Expected protectedRows anchor not found; refusing to alter anything')
+          if 'let pageSize = 500' in s:
+              raise SystemExit('Pagination already present; refusing duplicate')
+          p.write_text(s.replace(old,new,1))
+      - name: Validate scope
+        run: |
+          git diff --check
+          test "$(git diff --name-only | wc -l | tr -d ' ')" = "1"
+          test "$(git diff --name-only)" = "Liberons/ProtectedSpaceCleaner.swift"
+          grep -q 'let pageSize = 500' Liberons/ProtectedSpaceCleaner.swift
+          grep -q 'range(from: offset, to: offset + pageSize - 1)' Liberons/ProtectedSpaceCleaner.swift
+          grep -q 'deletePreparedFromIPhone' Liberons/ProtectedSpaceCleaner.swift
+      - name: Commit
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add Liberons/ProtectedSpaceCleaner.swift
+          git commit -m "Paginate protected media for iPhone space analysis"
+          git push origin HEAD:library-protected-media
