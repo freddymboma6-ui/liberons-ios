@@ -11,7 +11,16 @@ final class ProtectedMediaStore: ObservableObject {
     private let pageSize = 1000
 
     func refresh() async {
-        guard !isLoading else { return }
+        // A pull-to-refresh can arrive while the initial/library refresh is still running.
+        // Wait for that real reload instead of returning immediately, otherwise SwiftUI
+        // dismisses the native refresh indicator as soon as the gesture is released.
+        if isLoading {
+            while isLoading && !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            return
+        }
+
         isLoading = true
         errorMessage = nil
         defer { isLoading = false }
