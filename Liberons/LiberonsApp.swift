@@ -5,6 +5,7 @@ import Auth
 
 @main
 struct LiberonsApp: App {
+    @UIApplicationDelegateAdaptor(LiberonsAppDelegate.self) private var appDelegate
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
@@ -17,6 +18,11 @@ struct LiberonsApp: App {
             PublicAccessRootView()
                 .liberonsCanvas()
                 .liberonsPasswordRecovery()
+                .task {
+                    if (try? await SupabaseService.client.auth.session) != nil {
+                        await PushNotificationManager.shared.requestAuthorizationAndRegister()
+                    }
+                }
                 .onOpenURL { url in
                     let isRecovery = url.host == "auth" && url.path.contains("reset-password")
                     SupabaseService.client.auth.handle(url)
@@ -34,7 +40,15 @@ struct LiberonsApp: App {
                 }
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .background { LocalStorageGuard.applicationDidEnterBackground() }
+            if phase == .background {
+                LocalStorageGuard.applicationDidEnterBackground()
+            } else if phase == .active {
+                Task {
+                    if (try? await SupabaseService.client.auth.session) != nil {
+                        await PushNotificationManager.shared.requestAuthorizationAndRegister()
+                    }
+                }
+            }
         }
     }
 }
