@@ -21,40 +21,48 @@ final class ProtectedSpaceCleaner: ObservableObject {
         enum CodingKeys: String, CodingKey { case id; case iosLocalIdentifier = "ios_local_identifier"; case originalFilename = "original_filename"; case capturedAt = "captured_at"; case sizeBytes = "size_bytes" }
     }
 
-    private func localAsset(for row: ProtectedRow) -> PHAsset? {
-        if let identifier = row.iosLocalIdentifier, let asset = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).firstObject { return asset }
-        let options = PHFetchOptions()
-        if let capturedAt = row.capturedAt { options.predicate = NSPredicate(format: "creationDate >= %@ AND creationDate <= %@", capturedAt.addingTimeInterval(-2) as NSDate, capturedAt.addingTimeInterval(2) as NSDate) }
-        let result = PHAsset.fetchAssets(with: options)
-        guard result.count > 0 else { return nil }
-        if let filename = row.originalFilename {
-            var match: PHAsset?
-            result.enumerateObjects { asset, _, stop in if PHAssetResource.assetResources(for: asset).contains(where: { $0.originalFilename.caseInsensitiveCompare(filename) == .orderedSame }) { match = asset; stop.pointee = true } }
-            if let match { return match }
+    private func resolveLocalAssets(for rows: [ProtectedRow]) async -> [(row: ProtectedRow, asset: PHAsset)] {
+        let identifiers = Array(Set(rows.compactMap { $0.iosLocalIdentifier }.filter { !$0.isEmpty }))
+        var assetsByIdentifier: [String: PHAsset] = [:]
+        if !identifiers.isEmpty {
+            let result = PHAsset.fetchAssets(withLocalIdentifiers: identifiers, options: nil)
+            result.enumerateObjects { asset, _, _ in
+                assetsByIdentifier[asset.localIdentifier] = asset
+            }
         }
-        return result.firstObject
+
+        var resolved: [(row: ProtectedRow, asset: PHAsset)] = []
+        resolved.reserveCapacity(min(rows.count, assetsByIdentifier.count))
+        for (index, row) in rows.enumerated() {
+            if let identifier = row.iosLocalIdentifier, let asset = assetsByIdentifier[identifier] {
+                resolved.append((row, asset))
+            }
+            if index % 250 == 0 { await Task.yield() }
+        }
+        return resolved
     }
 
     private func protectedRows() async throws -> [ProtectedRow] {
-    let pageSize = 500
-    var offset = 0
-    var allRows: [ProtectedRow] = []
-    let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
-    while true {
-        let response = try await SupabaseService.client.from("media_assets").select("id,ios_local_identifier,original_filename,captured_at,size_bytes").eq("status", value: "protected").order("captured_at", ascending: true).range(from: offset, to: offset + pageSize - 1).execute()
-        let page = try decoder.decode([ProtectedRow].self, from: response.data)
-        allRows.append(contentsOf: page)
-        if page.count < pageSize { break }
-        offset += pageSize
+        let pageSize = 500
+        var offset = 0
+        var allRows: [ProtectedRow] = []
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        while true {
+            let response = try await SupabaseService.client.from("media_assets").select("id,ios_local_identifier,original_filename,captured_at,size_bytes").eq("status", value: "protected").order("captured_at", ascending: true).range(from: offset, to: offset + pageSize - 1).execute()
+            let page = try decoder.decode([ProtectedRow].self, from: response.data)
+            allRows.append(contentsOf: page)
+            if page.count < pageSize { break }
+            offset += pageSize
+            await Task.yield()
+        }
+        return allRows
     }
-    return allRows
-}
 
     func prepare(removalPercent: Int) async {
         guard !isLoading && !isDeleting else { return }; isLoading = true; message = ""; defer { isLoading = false }
         do {
-            let rows = try await protectedRows(); var resolved: [(row: ProtectedRow, asset: PHAsset)] = []
-            for row in rows { guard let asset = localAsset(for: row) else { continue }; resolved.append((row, asset)); if row.iosLocalIdentifier != asset.localIdentifier { try? await SupabaseService.updateLocalIdentifier(assetID: row.id, localIdentifier: asset.localIdentifier) } }
+            let rows = try await protectedRows()
+            let resolved = await resolveLocalAssets(for: rows)
             protectedLocalIdentifiers = resolved.map { $0.asset.localIdentifier }
             let requested = resolved.isEmpty ? 0 : max(1, Int((Double(resolved.count) * Double(removalPercent) / 100.0).rounded()))
             let selected = Array(resolved.prefix(min(requested, resolved.count)))
@@ -71,12 +79,9 @@ final class ProtectedSpaceCleaner: ObservableObject {
         let wanted = Set(localIdentifiers)
         guard !wanted.isEmpty else { selectedLocalIdentifiers = []; selectedBytes = 0; return }
         do {
-            let rows = try await protectedRows(); var selected: [(row: ProtectedRow, asset: PHAsset)] = []
-            for row in rows {
-                guard let asset = localAsset(for: row), wanted.contains(asset.localIdentifier) else { continue }
-                selected.append((row, asset))
-                if row.iosLocalIdentifier != asset.localIdentifier { try? await SupabaseService.updateLocalIdentifier(assetID: row.id, localIdentifier: asset.localIdentifier) }
-            }
+            let rows = try await protectedRows()
+            let resolved = await resolveLocalAssets(for: rows)
+            let selected = resolved.filter { wanted.contains($0.asset.localIdentifier) }
             selectedLocalIdentifiers = selected.map { $0.asset.localIdentifier }
             protectedLocalIdentifiers = selectedLocalIdentifiers
             selectedBytes = selected.reduce(Int64(0)) { $0 + max(0, $1.row.sizeBytes ?? 0) }
