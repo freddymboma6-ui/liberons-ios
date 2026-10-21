@@ -304,6 +304,16 @@ private struct ProtectedGalleryViewer: View {
         )
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbarColorScheme(.dark, for: .navigationBar)
+        .simultaneousGesture(
+            TapGesture()
+                .onEnded {
+                    guard showInfo else { return }
+                    withAnimation(.easeOut(duration: 0.20)) {
+                        showInfo = false
+                    }
+                },
+            including: showInfo ? .all : .none
+        )
         .sheet(isPresented: $showInfo) {
   if let current { ProtectedMediaDetail(item: current, language: language, billing: billing, closeViewer: { showInfo = false; dismiss() }).presentationDetents([.fraction(0.32), .fraction(0.64), .large]).presentationDragIndicator(.visible).presentationCornerRadius(34).presentationBackground(.regularMaterial).presentationContentInteraction(.resizes).presentationBackgroundInteraction(.enabled(upThrough: .fraction(0.32))) }
         }
