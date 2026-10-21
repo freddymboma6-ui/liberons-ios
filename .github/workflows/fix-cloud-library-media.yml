@@ -1,4 +1,4 @@
-name: Add direct iPhone deletion
+name: Polish protected viewer swipe
 on:
   push:
     paths:
@@ -13,60 +13,49 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: library-protected-media
-      - name: Add direct Photos deletion
+      - name: Polish swipe dismissal
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          p=Path('Liberons/StorageAnalysisView.swift')
+          p=Path('Liberons/ProtectedLibraryView.swift')
           s=p.read_text()
-          state='    @State private var preview: AssetPreviewSelection?\n'
-          if '@State private var isDeletingSelection' not in s:
-              s=s.replace(state,state+'    @State private var isDeletingSelection = false\n    @State private var deletionErrorMessage: String?\n',1)
-          old='}.buttonStyle(.borderedProminent).disabled(backup.isRunning);Text(language.text("Your originals stay on this iPhone while Libérons protects them.","Vos originaux restent sur cet iPhone pendant que Libérons les protège.")).font(.caption).foregroundStyle(.secondary)'
-          new='''}.buttonStyle(.borderedProminent).disabled(backup.isRunning || isDeletingSelection);Button(role:.destructive){let ids=Array(selectedIDs);Task{await deleteSelectedFromIPhone(ids)}}label:{HStack{if isDeletingSelection{ProgressView().tint(.red)};Label(isDeletingSelection ? language.text("Deleting…","Suppression…") : language.text("Delete from iPhone","Supprimer de l’iPhone"),systemImage:"trash").fontWeight(.semibold)}.frame(maxWidth:.infinity).frame(height:44)}.buttonStyle(.bordered).tint(.red).disabled(isDeletingSelection || backup.isRunning);Text(language.text("Delete removes these originals from Apple Photos without uploading them to Libérons.","Supprimer retire ces originaux d’Apple Photos sans les envoyer vers Libérons.")).font(.caption).foregroundStyle(.secondary);Text(language.text("Your originals stay on this iPhone while Libérons protects them.","Vos originaux restent sur cet iPhone pendant que Libérons les protège.")).font(.caption).foregroundStyle(.secondary)'''
-          if old not in s:
-              raise SystemExit('selection action block not found')
+          old='@Environment(\\.dismiss) private var dismiss; @State private var selection:UUID; @State private var showInfo=false; @State private var verticalOffset:CGFloat=0'
+          new='@Environment(\\.dismiss) private var dismiss; @State private var selection:UUID; @State private var showInfo=false; @State private var verticalOffset:CGFloat=0; @State private var isDismissing=false'
+          if old not in s: raise SystemExit('viewer state anchor not found')
           s=s.replace(old,new,1)
-          needle='    private var freeSpaceOffer:some View{'
-          helper='''    @MainActor private func deleteSelectedFromIPhone(_ ids:[String]) async {
-        guard !ids.isEmpty else{return}
-        isDeletingSelection=true
-        deletionErrorMessage=nil
-        defer{isDeletingSelection=false}
-        let result=PHAsset.fetchAssets(withLocalIdentifiers:ids,options:nil)
-        var assets:[PHAsset]=[]
-        result.enumerateObjects{asset,_,_ in assets.append(asset)}
-        guard !assets.isEmpty else{deletionErrorMessage=language.text("The selected items are no longer available in Apple Photos.","Les éléments sélectionnés ne sont plus disponibles dans Apple Photos.");return}
-        do{
-            try await PHPhotoLibrary.shared().performChanges{PHAssetChangeRequest.deleteAssets(assets as NSArray)}
-            selectedIDs.subtract(Set(ids))
-            intelligence.refreshDeviceStorage()
-            await intelligence.scan()
-        }catch{
-            deletionErrorMessage=language.text("The selected items could not be deleted from Apple Photos. Check Photos access and try again.","Impossible de supprimer la sélection d’Apple Photos. Vérifiez l’accès aux Photos puis réessayez.")
-        }
-    }
-
-'''
-          if 'private func deleteSelectedFromIPhone' not in s:
-              if needle not in s: raise SystemExit('freeSpaceOffer anchor not found')
-              s=s.replace(needle,helper+needle,1)
-          alert='.alert(language.text("Couldn’t delete","Suppression impossible"),isPresented:Binding(get:{deletionErrorMessage != nil},set:{if !$0{deletionErrorMessage=nil}})){Button("OK",role:.cancel){deletionErrorMessage=nil}}message:{Text(deletionErrorMessage ?? "")}\n'
-          anchor='        .sheet(isPresented:$showFreeOffer){freeSpaceOffer}\n'
-          if 'Suppression impossible' not in s:
-              s=s.replace(anchor,anchor+'        '+alert,1)
+          old='.simultaneousGesture(DragGesture(minimumDistance:10).onChanged{v in guard v.translation.height>0,abs(v.translation.height)>abs(v.translation.width) else{return};verticalOffset=v.translation.height}.onEnded{v in guard v.translation.height>0,abs(v.translation.height)>abs(v.translation.width) else{withAnimation(.snappy){verticalOffset=0};return};if verticalOffset>110 || v.predictedEndTranslation.height>220{dismiss()}else{withAnimation(.snappy){verticalOffset=0}}})'
+          new='''.simultaneousGesture(DragGesture(minimumDistance:14,coordinateSpace:.global).onChanged{v in
+            guard !isDismissing else{return}
+            let y=v.translation.height
+            guard y>0,abs(y)>abs(v.translation.width)*1.15 else{return}
+            verticalOffset=y
+          }.onEnded{v in
+            guard !isDismissing else{return}
+            let y=max(verticalOffset,v.translation.height)
+            let predicted=max(y,v.predictedEndTranslation.height)
+            guard y>0,abs(v.translation.height)>abs(v.translation.width)*1.05 else{withAnimation(.spring(response:0.30,dampingFraction:0.88)){verticalOffset=0};return}
+            if y>92 || predicted>185{
+              isDismissing=true
+              withAnimation(.easeOut(duration:0.18)){verticalOffset=max(y,UIScreen.main.bounds.height*0.22)}
+              Task{@MainActor in try? await Task.sleep(for:.milliseconds(120));dismiss()}
+            }else{
+              withAnimation(.spring(response:0.30,dampingFraction:0.88)){verticalOffset=0}
+            }
+          })'''
+          if old not in s: raise SystemExit('viewer gesture anchor not found')
+          s=s.replace(old,new,1)
           p.write_text(s)
           PY
       - name: Validate
         run: |
-          grep -q 'deleteSelectedFromIPhone' Liberons/StorageAnalysisView.swift
-          grep -q 'Supprimer de l’iPhone' Liberons/StorageAnalysisView.swift
+          grep -q 'isDismissing=false' Liberons/ProtectedLibraryView.swift
+          grep -q 'predicted>185' Liberons/ProtectedLibraryView.swift
           git diff --check
       - name: Commit
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add Liberons/StorageAnalysisView.swift
+          git add Liberons/ProtectedLibraryView.swift
           git diff --cached --check
-          git commit -m 'Add direct iPhone deletion to storage selections'
+          git commit -m 'Polish protected viewer swipe dismissal'
           git push origin HEAD:library-protected-media
