@@ -246,6 +246,12 @@ private struct ProtectedGalleryViewer: View {
       }
       .tabViewStyle(.page(indexDisplayMode: .never))
       .ignoresSafeArea()
+      .onChange(of: selection) { _, newID in
+          prefetchNeighbors(around: newID)
+      }
+      .task {
+          prefetchNeighbors(around: selection)
+      }
   }
 
   if verticalDismissLocked, let current {
@@ -300,6 +306,25 @@ private struct ProtectedGalleryViewer: View {
         .toolbarColorScheme(.dark, for: .navigationBar)
         .sheet(isPresented: $showInfo) {
   if let current { ProtectedMediaDetail(item: current, language: language, billing: billing, closeViewer: { showInfo = false; dismiss() }).presentationDetents([.fraction(0.32), .fraction(0.64), .large]).presentationDragIndicator(.visible).presentationCornerRadius(34).presentationBackground(.regularMaterial).presentationContentInteraction(.resizes).presentationBackgroundInteraction(.enabled(upThrough: .fraction(0.32))) }
+        }
+    }
+
+    private func prefetchNeighbors(around id: UUID) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+
+        let neighborIndexes = [index - 1, index + 1]
+            .filter { items.indices.contains($0) }
+
+        for neighborIndex in neighborIndexes {
+            let neighbor = items[neighborIndex]
+
+            // Les vidéos gardent leur chargement à la demande :
+            // on ne veut pas télécharger de gros fichiers en arrière-plan.
+            guard !neighbor.mediaType.lowercased().contains("video") else { continue }
+
+            Task(priority: .utility) {
+                await ProtectedMediaPrefetcher.prefetch(neighbor)
+            }
         }
     }
 }
@@ -457,6 +482,51 @@ private struct ProtectedZoomablePhoto: View {
                 }
         }
         .clipped()
+    }
+}
+
+
+private enum ProtectedMediaPrefetcher {
+    @MainActor
+    static func prefetch(_ item: ProtectedCloudMedia) async {
+        if ProtectedMediaCache.shared.image(for: item.id) != nil {
+            return
+        }
+
+        if let localIdentifier = item.iosLocalIdentifier,
+           let asset = PHAsset.fetchAssets(
+               withLocalIdentifiers: [localIdentifier],
+               options: nil
+           ).firstObject {
+
+            let options = PHImageRequestOptions()
+            options.isNetworkAccessAllowed = true
+            options.deliveryMode = .opportunistic
+            options.resizeMode = .fast
+
+            PHImageManager.default().requestImage(
+                for: asset,
+                targetSize: CGSize(width: 1600, height: 1600),
+                contentMode: .aspectFit,
+                options: options
+            ) { image, _ in
+                guard let image else { return }
+                ProtectedMediaCache.shared.store(image, for: item.id)
+            }
+            return
+        }
+
+        guard let preview = try? await SupabaseService.cloudPreviewURL(assetID: item.id) else {
+            return
+        }
+
+        guard let (data, response) = try? await URLSession.shared.data(from: preview),
+              ((response as? HTTPURLResponse)?.statusCode ?? 500) < 300,
+              let image = UIImage(data: data) else {
+            return
+        }
+
+        ProtectedMediaCache.shared.store(image, for: item.id)
     }
 }
 
