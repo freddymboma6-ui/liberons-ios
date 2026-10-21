@@ -239,7 +239,7 @@ private struct ProtectedGalleryViewer: View {
     withAnimation(.spring(response:0.30,dampingFraction:0.88)){verticalOffset=0}
   }
 })
-        .toolbarBackground(.hidden,for:.navigationBar).toolbarColorScheme(.dark,for:.navigationBar).sheet(isPresented:$showInfo){if let current{ProtectedMediaDetail(item:current,language:language,billing:billing,closeViewer:{showInfo=false;dismiss()}).presentationDetents([.fraction(0.72),.large]).presentationDragIndicator(.visible).presentationCornerRadius(34).presentationBackground(.regularMaterial).presentationContentInteraction(.scrolls).presentationBackgroundInteraction(.enabled(upThrough:.fraction(0.72)))}}
+        .toolbarBackground(.hidden,for:.navigationBar).toolbarColorScheme(.dark,for:.navigationBar).sheet(isPresented:$showInfo){if let current{ProtectedMediaDetail(item:current,language:language,billing:billing,closeViewer:{showInfo=false;dismiss()}).presentationDetents([.fraction(0.46),.fraction(0.72),.large]).presentationDragIndicator(.visible).presentationCornerRadius(34).presentationBackground(.regularMaterial).presentationContentInteraction(.resizes).presentationBackgroundInteraction(.enabled(upThrough:.fraction(0.46)))}}
     }
 }
 
