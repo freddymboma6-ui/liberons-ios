@@ -49,7 +49,11 @@ struct ProtectedLibraryView: View {
                 else if store.items.isEmpty { ContentUnavailableView(language.text("Your cloud library", "Votre bibliothèque cloud"), systemImage: "photo.stack", description: Text(language.text("Protected memories will appear here.", "Vos souvenirs protégés apparaîtront ici."))) }
                 else {
                     ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 5, pinnedViews: []) {
+                        LazyVStack(
+                            alignment: .leading,
+                            spacing: 5,
+                            pinnedViews: [.sectionHeaders]
+                        ) {
                             if billing.isPaymentGrace { BillingLibraryNotice(language: language, restricted: false, days: billing.graceDaysRemaining) }
                             else if billing.isPaymentRestricted { BillingLibraryNotice(language: language, restricted: true, days: 0) }
 
@@ -87,29 +91,40 @@ struct ProtectedLibraryView: View {
                             .padding(.horizontal, 16)
                             .padding(.top, 0)
 
-                            HStack(spacing: 4) {
-                                ForEach(ProtectedLibraryFilter.allCases) { filter in
-                                    Button { selectFilter(filter) } label: {
-                                        HStack(spacing: 6) {
-                                            Image(systemName: filter.icon).font(.caption.weight(.semibold))
-                                            Text(filter.title(language)).font(.subheadline.weight(.semibold))
-                                        }
-                                        .foregroundStyle(mediaFilter == filter ? Color.primary : Color.secondary)
-                                        .frame(maxWidth: .infinity)
-                                        .padding(.vertical, 4)
-                                        .background {
-                                            if mediaFilter == filter {
-                                                Capsule().fill(Color(uiColor: .systemBackground)).shadow(color: .black.opacity(0.08), radius: 5, y: 2).matchedGeometryEffect(id: "activeFilter", in: filterTransition)
+                            Section {
+                                Color.clear
+                                    .frame(height: 0)
+                            } header: {
+                                HStack(spacing: 4) {
+                                    ForEach(ProtectedLibraryFilter.allCases) { filter in
+                                        Button { selectFilter(filter) } label: {
+                                            HStack(spacing: 6) {
+                                                Image(systemName: filter.icon)
+                                                    .font(.caption.weight(.semibold))
+                                                Text(filter.title(language))
+                                                    .font(.subheadline.weight(.semibold))
+                                            }
+                                            .foregroundStyle(mediaFilter == filter ? Color.primary : Color.secondary)
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.vertical, 4)
+                                            .background {
+                                                if mediaFilter == filter {
+                                                    Capsule()
+                                                        .fill(Color(uiColor: .systemBackground))
+                                                        .shadow(color: .black.opacity(0.08), radius: 5, y: 2)
+                                                        .matchedGeometryEffect(id: "activeFilter", in: filterTransition)
+                                                }
                                             }
                                         }
+                                        .buttonStyle(.plain)
                                     }
-                                    .buttonStyle(.plain)
                                 }
+                                .padding(2)
+                                .background(.ultraThinMaterial, in: Capsule())
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 3)
+                                .background(.ultraThinMaterial)
                             }
-                            .padding(2)
-                            .background(Color.secondary.opacity(0.065), in: Capsule())
-                            .padding(.horizontal, 16)
-                            .padding(.bottom, -1)
 
                             if isSelecting {
                                 Text("\(selectedIDs.count) \(language.text("selected", "sélectionné(s)"))")
