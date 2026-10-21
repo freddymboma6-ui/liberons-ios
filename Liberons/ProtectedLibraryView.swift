@@ -4,14 +4,13 @@ import AVKit
 import AVFoundation
 
 private enum ProtectedLibraryFilter: String, CaseIterable, Identifiable {
-    case all, photos, videos, screenshots
+    case all, photos, videos
     var id: String { rawValue }
     var icon: String {
         switch self {
         case .all: return "square.grid.2x2.fill"
         case .photos: return "photo.fill"
         case .videos: return "play.rectangle.fill"
-        case .screenshots: return "iphone.gen3"
         }
     }
     func title(_ language: LanguageStore) -> String {
@@ -19,7 +18,6 @@ private enum ProtectedLibraryFilter: String, CaseIterable, Identifiable {
         case .all: return language.text("All", "Tout")
         case .photos: return "Photos"
         case .videos: return language.text("Videos", "Vidéos")
-        case .screenshots: return language.text("Screenshots", "Captures d’écran")
         }
     }
 }
@@ -35,14 +33,12 @@ struct ProtectedLibraryView: View {
     @State private var deletingSelection = false
     @State private var mediaFilter: ProtectedLibraryFilter = .all
     @State private var sortNewestFirst = true
-    @State private var screenshotIDs: Set<UUID> = []
     @State private var displayItems: [ProtectedCloudMedia] = []
     @State private var filterCounts: [ProtectedLibraryFilter: Int] = [:]
     @Namespace private var photoTransition
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 1.5), count: 3)
 
     private func isVideo(_ item: ProtectedCloudMedia) -> Bool { item.mediaType.lowercased().contains("video") }
-    private func isScreenshot(_ item: ProtectedCloudMedia) -> Bool { screenshotIDs.contains(item.id) }
 
     var body: some View {
         NavigationStack {
@@ -137,20 +133,18 @@ struct ProtectedLibraryView: View {
     }
 
     @MainActor private func rebuildDisplayItems() {
-        var all = 0, photos = 0, videos = 0, screenshots = 0
+        var all = 0, photos = 0, videos = 0
         var visible: [ProtectedCloudMedia] = []
         visible.reserveCapacity(store.items.count)
         for item in store.items {
             all += 1
             let video = isVideo(item)
-            let screenshot = isScreenshot(item)
-            if video { videos += 1 } else if screenshot { screenshots += 1 } else { photos += 1 }
+            if video { videos += 1 } else { photos += 1 }
             let include: Bool
             switch mediaFilter {
             case .all: include = true
-            case .photos: include = !video && !screenshot
+            case .photos: include = !video
             case .videos: include = video
-            case .screenshots: include = screenshot
             }
             if include { visible.append(item) }
         }
@@ -159,7 +153,7 @@ struct ProtectedLibraryView: View {
             let rhs = $1.capturedAt ?? $1.createdAt
             return sortNewestFirst ? lhs > rhs : lhs < rhs
         }
-        filterCounts = [.all: all, .photos: photos, .videos: videos, .screenshots: screenshots]
+        filterCounts = [.all: all, .photos: photos, .videos: videos]
         displayItems = visible
     }
 
@@ -167,30 +161,10 @@ struct ProtectedLibraryView: View {
         async let a: Void = store.refresh()
         async let b: Void = billing.refresh()
         _ = await (a, b)
-        await refreshScreenshotIDs()
         rebuildDisplayItems()
     }
 
     @MainActor private func deleteSelected() async { deletingSelection = true; for id in selectedIDs { try? await SupabaseService.deleteCloudMedia(assetID: id) }; selectedIDs.removeAll(); isSelecting = false; deletingSelection = false; await refreshLibrary() }
-
-    @MainActor private func refreshScreenshotIDs() async {
-        let pairs = store.items.compactMap { item -> (UUID, String)? in guard !isVideo(item), let id = item.iosLocalIdentifier, !id.isEmpty else { return nil }; return (item.id, id) }
-        guard !pairs.isEmpty else { screenshotIDs = []; return }
-        var mapping: [String: [UUID]] = [:]
-        for (uuid, localIdentifier) in pairs { mapping[localIdentifier, default: []].append(uuid) }
-        let identifiers = Array(mapping.keys)
-        var found = Set<UUID>()
-        let chunkSize = 500
-        for start in stride(from: 0, to: identifiers.count, by: chunkSize) {
-            let end = min(start + chunkSize, identifiers.count)
-            let result = PHAsset.fetchAssets(withLocalIdentifiers: Array(identifiers[start..<end]), options: nil)
-            result.enumerateObjects { asset, _, _ in
-                if asset.mediaSubtypes.contains(.photoScreenshot) { for id in mapping[asset.localIdentifier] ?? [] { found.insert(id) } }
-            }
-            await Task.yield()
-        }
-        screenshotIDs = found
-    }
 }
 
 private struct BillingLibraryNotice: View {
@@ -203,7 +177,7 @@ private struct ProtectedGalleryViewer: View {
     @Environment(\.dismiss) private var dismiss; @State private var selection:UUID; @State private var showInfo=false; @State private var verticalOffset:CGFloat=0
     init(items:[ProtectedCloudMedia],initialID:UUID,language:LanguageStore,billing:CloudStorageSummary){self.items=items;self.initialID=initialID;self.language=language;self.billing=billing;_selection=State(initialValue:initialID)}
     private var current:ProtectedCloudMedia?{items.first{$0.id==selection}}
-    var body:some View { ZStack{Color.black.ignoresSafeArea();TabView(selection:$selection){ForEach(items){CloudPhotoPage(item:$0,language:language,billing:billing).tag($0.id)}}.tabViewStyle(.page(indexDisplayMode:.never)).ignoresSafeArea().offset(y:verticalOffset);VStack{HStack{Button{dismiss()}label:{Image(systemName:"chevron.left").font(.title2.bold()).foregroundStyle(.white).frame(width:48,height:48).background(.black.opacity(0.45),in:Circle())}.buttonStyle(.plain);if let i=items.firstIndex(where:{$0.id==selection}){Text("\(i+1) / \(items.count)").font(.subheadline.bold()).foregroundStyle(.white).padding(8).background(.black.opacity(0.45),in:Capsule())};Spacer();Button{showInfo=true}label:{ZStack{Color.clear;Image(systemName:"ellipsis.circle.fill").font(.title2).foregroundStyle(.white)}.frame(width:56,height:56).contentShape(Rectangle())}.buttonStyle(.plain)}.padding(.horizontal,8).padding(.top,4);Spacer()}}
+    var body: some View { ZStack{Color.black.ignoresSafeArea();TabView(selection:$selection){ForEach(items){CloudPhotoPage(item:$0,language:language,billing:billing).tag($0.id)}}.tabViewStyle(.page(indexDisplayMode:.never)).ignoresSafeArea().offset(y:verticalOffset);VStack{HStack{Button{dismiss()}label:{Image(systemName:"chevron.left").font(.title2.bold()).foregroundStyle(.white).frame(width:48,height:48).background(.black.opacity(0.45),in:Circle())}.buttonStyle(.plain);if let i=items.firstIndex(where:{$0.id==selection}){Text("\(i+1) / \(items.count)").font(.subheadline.bold()).foregroundStyle(.white).padding(8).background(.black.opacity(0.45),in:Capsule())};Spacer();Button{showInfo=true}label:{ZStack{Color.clear;Image(systemName:"ellipsis.circle.fill").font(.title2).foregroundStyle(.white)}.frame(width:56,height:56).contentShape(Rectangle())}.buttonStyle(.plain)}.padding(.horizontal,8).padding(.top,4);Spacer()}}
         .simultaneousGesture(DragGesture(minimumDistance:10).onChanged{v in guard v.translation.height>0,abs(v.translation.height)>abs(v.translation.width) else{return};verticalOffset=v.translation.height}.onEnded{v in guard v.translation.height>0,abs(v.translation.height)>abs(v.translation.width) else{withAnimation(.snappy){verticalOffset=0};return};if verticalOffset>110 || v.predictedEndTranslation.height>220{dismiss()}else{withAnimation(.snappy){verticalOffset=0}}})
         .toolbarBackground(.hidden,for:.navigationBar).toolbarColorScheme(.dark,for:.navigationBar).sheet(isPresented:$showInfo){if let current{ProtectedMediaDetail(item:current,language:language,billing:billing,closeViewer:{showInfo=false;dismiss()})}}
     }
