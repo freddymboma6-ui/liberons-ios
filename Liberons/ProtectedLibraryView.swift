@@ -214,32 +214,129 @@ private struct BillingLibraryNotice: View {
 }
 
 private struct ProtectedGalleryViewer: View {
-    let items:[ProtectedCloudMedia]; let initialID:UUID; @ObservedObject var language:LanguageStore; @ObservedObject var billing:CloudStorageSummary
-    @Environment(\.dismiss) private var dismiss; @State private var selection:UUID; @State private var showInfo=false; @State private var verticalOffset:CGFloat=0; @State private var isDismissing=false
-    private let indexByID:[UUID:Int]
-    init(items:[ProtectedCloudMedia],initialID:UUID,language:LanguageStore,billing:CloudStorageSummary){self.items=items;self.initialID=initialID;self.language=language;self.billing=billing;self.indexByID=Dictionary(uniqueKeysWithValues:items.enumerated().map{($0.element.id,$0.offset)});_selection=State(initialValue:initialID)}
-    private var currentIndex:Int?{indexByID[selection]}
-    private var current:ProtectedCloudMedia?{guard let i=currentIndex,items.indices.contains(i) else{return nil};return items[i]}
-    var body: some View { ZStack{Color.black.opacity(Double(1 - min(max(verticalOffset, CGFloat.zero) / CGFloat(520), CGFloat(0.72)))).ignoresSafeArea();TabView(selection:$selection){ForEach(items){CloudPhotoPage(item:$0,language:language,billing:billing).tag($0.id)}}.tabViewStyle(.page(indexDisplayMode:.never)).ignoresSafeArea().offset(y:verticalOffset).scaleEffect(1 - min(max(verticalOffset, CGFloat.zero) / CGFloat(1800), CGFloat(0.055)));VStack{HStack{Button{dismiss()}label:{Image(systemName:"chevron.left").font(.title2.bold()).foregroundStyle(.white).frame(width:48,height:48).background(.black.opacity(0.45),in:Circle())}.buttonStyle(.plain);if let i=currentIndex{Text("\(i+1) / \(items.count)").font(.subheadline.bold()).foregroundStyle(.white).padding(8).background(.black.opacity(0.45),in:Capsule())};Spacer();Button{showInfo=true}label:{ZStack{Color.clear;Image(systemName:"ellipsis.circle.fill").font(.title2).foregroundStyle(.white)}.frame(width:56,height:56).contentShape(Rectangle())}.buttonStyle(.plain)}.padding(.horizontal,8).padding(.top,4);Spacer()}}
-        .simultaneousGesture(DragGesture(minimumDistance:14,coordinateSpace:.global).onChanged{v in
-  guard !isDismissing else{return}
-  let y=v.translation.height
-  guard y>0,abs(y)>abs(v.translation.width)*1.15 else{return}
-  verticalOffset=y
-}.onEnded{v in
-  guard !isDismissing else{return}
-  let y=max(verticalOffset,v.translation.height)
-  let predicted=max(y,v.predictedEndTranslation.height)
-  guard y>0,abs(v.translation.height)>abs(v.translation.width)*1.05 else{withAnimation(.spring(response:0.30,dampingFraction:0.88)){verticalOffset=0};return}
-  if y>92 || predicted>185{
-    isDismissing=true
-    withAnimation(.easeOut(duration:0.18)){verticalOffset=max(y,UIScreen.main.bounds.height*0.22)}
-    Task{@MainActor in try? await Task.sleep(for:.milliseconds(120));dismiss()}
-  }else{
-    withAnimation(.spring(response:0.30,dampingFraction:0.88)){verticalOffset=0}
+    let items: [ProtectedCloudMedia]
+    let initialID: UUID
+    @ObservedObject var language: LanguageStore
+    @ObservedObject var billing: CloudStorageSummary
+    @Environment(\.dismiss) private var dismiss
+    @State private var selection: UUID
+    @State private var showInfo = false
+    @State private var dismissTranslation: CGSize = .zero
+    @State private var verticalDismissLocked = false
+    @State private var isDismissing = false
+    private let indexByID: [UUID: Int]
+
+    init(items: [ProtectedCloudMedia], initialID: UUID, language: LanguageStore, billing: CloudStorageSummary) {
+        self.items = items; self.initialID = initialID; self.language = language; self.billing = billing
+        self.indexByID = Dictionary(uniqueKeysWithValues: items.enumerated().map { ($0.element.id, $0.offset) })
+        _selection = State(initialValue: initialID)
+    }
+
+    private var currentIndex: Int? { indexByID[selection] }
+    private var current: ProtectedCloudMedia? { guard let i = currentIndex, items.indices.contains(i) else { return nil }; return items[i] }
+    private var dismissProgress: CGFloat { min(max(dismissTranslation.height / 360, 0), 1) }
+
+    var body: some View {
+        ZStack {
+  Color.black.opacity(Double(1 - dismissProgress * 0.96)).ignoresSafeArea()
+
+  if !verticalDismissLocked {
+      TabView(selection: $selection) {
+          ForEach(items) { CloudPhotoPage(item: $0, language: language, billing: billing).tag($0.id) }
+      }
+      .tabViewStyle(.page(indexDisplayMode: .never))
+      .ignoresSafeArea()
   }
-})
-        .toolbarBackground(.hidden,for:.navigationBar).toolbarColorScheme(.dark,for:.navigationBar).sheet(isPresented:$showInfo){if let current{ProtectedMediaDetail(item:current,language:language,billing:billing,closeViewer:{showInfo=false;dismiss()}).presentationDetents([.fraction(0.46),.fraction(0.72),.large]).presentationDragIndicator(.visible).presentationCornerRadius(34).presentationBackground(.regularMaterial).presentationContentInteraction(.resizes).presentationBackgroundInteraction(.enabled(upThrough:.fraction(0.46)))}}
+
+  if verticalDismissLocked, let current {
+      ProtectedDismissMedia(item: current)
+          .scaleEffect(1 - dismissProgress * 0.085)
+          .offset(x: dismissTranslation.width * 0.12, y: dismissTranslation.height)
+          .shadow(color: .black.opacity(Double(dismissProgress * 0.18)), radius: 18 * dismissProgress, y: 8 * dismissProgress)
+          .allowsHitTesting(false)
+  }
+
+  VStack {
+      HStack {
+          Button { dismiss() } label: { Image(systemName: "chevron.left").font(.title2.bold()).foregroundStyle(.white).frame(width: 48, height: 48).background(.black.opacity(0.45), in: Circle()) }.buttonStyle(.plain)
+          if let i = currentIndex { Text("\(i + 1) / \(items.count)").font(.subheadline.bold()).foregroundStyle(.white).padding(8).background(.black.opacity(0.45), in: Capsule()) }
+          Spacer()
+          Button { showInfo = true } label: { Image(systemName: "ellipsis.circle.fill").font(.title2).foregroundStyle(.white).frame(width: 56, height: 56) }.buttonStyle(.plain)
+      }.padding(.horizontal, 8).padding(.top, 4)
+      Spacer()
+  }
+  .opacity(verticalDismissLocked ? Double(max(0, 1 - dismissProgress * 4)) : 1)
+  .allowsHitTesting(!verticalDismissLocked)
+        }
+        .contentShape(Rectangle())
+        .highPriorityGesture(
+  DragGesture(minimumDistance: 6, coordinateSpace: .global)
+      .onChanged { value in
+          guard !isDismissing else { return }
+          let x = value.translation.width, y = value.translation.height
+          if !verticalDismissLocked {
+              guard y > 7, abs(y) > abs(x) * 1.30 else { return }
+              verticalDismissLocked = true
+          }
+          dismissTranslation = CGSize(width: x, height: max(0, y))
+      }
+      .onEnded { value in
+          guard verticalDismissLocked, !isDismissing else { return }
+          let y = max(dismissTranslation.height, value.translation.height)
+          let projected = max(y, value.predictedEndTranslation.height)
+          if y > 105 || projected > 210 {
+              isDismissing = true
+              withAnimation(.easeOut(duration: 0.20)) {
+                  dismissTranslation = CGSize(width: dismissTranslation.width * 0.15, height: UIScreen.main.bounds.height * 0.72)
+              }
+              Task { @MainActor in try? await Task.sleep(for: .milliseconds(150)); dismiss() }
+          } else {
+              withAnimation(.interactiveSpring(response: 0.34, dampingFraction: 0.86, blendDuration: 0.1)) { dismissTranslation = .zero }
+              Task { @MainActor in try? await Task.sleep(for: .milliseconds(280)); verticalDismissLocked = false }
+          }
+      }
+        )
+        .toolbarBackground(.hidden, for: .navigationBar)
+        .toolbarColorScheme(.dark, for: .navigationBar)
+        .sheet(isPresented: $showInfo) {
+  if let current { ProtectedMediaDetail(item: current, language: language, billing: billing, closeViewer: { showInfo = false; dismiss() }).presentationDetents([.fraction(0.46), .fraction(0.72), .large]).presentationDragIndicator(.visible).presentationCornerRadius(34).presentationBackground(.regularMaterial).presentationContentInteraction(.resizes).presentationBackgroundInteraction(.enabled(upThrough: .fraction(0.46))) }
+        }
+    }
+}
+
+private struct ProtectedDismissMedia: View {
+    let item: ProtectedCloudMedia
+    @State private var image: UIImage?
+    private var isVideo: Bool { item.mediaType.lowercased().contains("video") }
+
+    var body: some View {
+        GeometryReader { proxy in
+  ZStack {
+      Color.clear
+      if let image {
+          Image(uiImage: image).resizable().scaledToFit()
+      } else {
+          Image(systemName: isVideo ? "play.rectangle.fill" : "photo.fill").font(.system(size: 30)).foregroundStyle(.white.opacity(0.7))
+      }
+  }
+  .frame(width: proxy.size.width, height: proxy.size.height)
+        }
+        .ignoresSafeArea()
+        .task(id: item.id) { await load() }
+    }
+
+    @MainActor private func load() async {
+        if let cached = ProtectedMediaCache.shared.image(for: item.id) { image = cached; return }
+        if let id = item.iosLocalIdentifier, let asset = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).firstObject {
+  let options = PHImageRequestOptions(); options.isNetworkAccessAllowed = true; options.deliveryMode = .highQualityFormat; options.resizeMode = .fast
+  PHImageManager.default().requestImage(for: asset, targetSize: CGSize(width: 1600, height: 1600), contentMode: .aspectFit, options: options) { value, _ in
+      if let value { ProtectedMediaCache.shared.store(value, for: item.id); Task { @MainActor in image = value } }
+  }
+  return
+        }
+        if let preview = try? await SupabaseService.cloudPreviewURL(assetID: item.id), let (data, response) = try? await URLSession.shared.data(from: preview), ((response as? HTTPURLResponse)?.statusCode ?? 500) < 300, let decoded = UIImage(data: data) {
+  ProtectedMediaCache.shared.store(decoded, for: item.id); image = decoded
+        }
     }
 }
 
