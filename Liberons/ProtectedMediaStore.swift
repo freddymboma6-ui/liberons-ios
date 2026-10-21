@@ -55,7 +55,30 @@ final class ProtectedMediaStore: ObservableObject {
                 offset += pageSize
             }
 
-            items = allItems
+            // A local Photos identifier can legitimately be present on more than one
+            // historical cloud row. Keep every protected cloud item, but expose the
+            // PhotoKit identifier only once so consumers can safely build identifier
+            // lookups without Dictionary(uniqueKeysWithValues:) trapping at runtime.
+            var seenLocalIdentifiers = Set<String>()
+            items = allItems.map { item in
+                guard let localIdentifier = item.iosLocalIdentifier,
+                      !localIdentifier.isEmpty else { return item }
+
+                guard seenLocalIdentifiers.insert(localIdentifier).inserted else {
+                    return ProtectedCloudMedia(
+                        id: item.id,
+                        iosLocalIdentifier: nil,
+                        originalFilename: item.originalFilename,
+                        mediaType: item.mediaType,
+                        sizeBytes: item.sizeBytes,
+                        capturedAt: item.capturedAt,
+                        protectedAt: item.protectedAt,
+                        createdAt: item.createdAt,
+                        localRemovedAt: item.localRemovedAt
+                    )
+                }
+                return item
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
