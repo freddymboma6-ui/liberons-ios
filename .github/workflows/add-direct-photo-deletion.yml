@@ -1,15 +1,11 @@
-name: Add direct iPhone deletion
-
+name: Premium viewer dismissal patch
 on:
   push:
     branches: [library-protected-media]
     paths:
       - '.github/workflows/add-direct-photo-deletion.yml'
-  workflow_dispatch:
-
 permissions:
   contents: write
-
 jobs:
   patch:
     if: github.actor != 'github-actions[bot]'
@@ -18,73 +14,50 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: library-protected-media
-      - name: Patch StorageAnalysisView
-        run: |
+      - run: |
           python3 - <<'PY'
           from pathlib import Path
-          p = Path('Liberons/StorageAnalysisView.swift')
-          s = p.read_text()
-
-          old = '''    @State private var showFreeOffer = false
-    @State private var preview: AssetPreviewSelection?
-'''
-          new = '''    @State private var showFreeOffer = false
-    @State private var preview: AssetPreviewSelection?
-    @State private var isDeletingSelection = false
-    @State private var deletionErrorMessage: String?
-'''
-          if old not in s:
-              raise SystemExit('State insertion point not found')
-          s = s.replace(old, new, 1)
-
-          old = '''}.buttonStyle(.borderedProminent).disabled(backup.isRunning);Text(language.text("Your originals stay on this iPhone while Libérons protects them.","Vos originaux restent sur cet iPhone pendant que Libérons les protège.")).font(.caption).foregroundStyle(.secondary)}.padding(16).background(.bar)}}.navigationTitle(title)'''
-          new = '''}.buttonStyle(.borderedProminent).disabled(backup.isRunning || isDeletingSelection);Button(role:.destructive){let ids=Array(selectedIDs);Task{await deleteSelectedFromIPhone(ids)}}label:{HStack{if isDeletingSelection{ProgressView().tint(.red)};Label(isDeletingSelection ? language.text("Deleting…","Suppression…") : language.text("Delete from iPhone","Supprimer de l’iPhone"),systemImage:"trash").fontWeight(.semibold)}.frame(maxWidth:.infinity).frame(height:44)}.buttonStyle(.bordered).tint(.red).disabled(isDeletingSelection || backup.isRunning);Text(language.text("Protect uploads a safe copy to Libérons. Delete from iPhone removes the selected originals from Apple Photos without uploading them to Libérons.","Protéger envoie une copie sécurisée vers Libérons. Supprimer de l’iPhone retire les originaux sélectionnés d’Apple Photos sans les envoyer vers Libérons.")).font(.caption).foregroundStyle(.secondary)}.padding(16).background(.bar)}}.navigationTitle(title)'''
-          if old not in s:
-              raise SystemExit('Selection footer insertion point not found')
-          s = s.replace(old, new, 1)
-
-          old = '''        .presentationDragIndicator(.visible)
-        .sheet(item:$preview){selection in AssetPreviewPager(selection:selection,language:language).presentationDetents([.large]).presentationDragIndicator(.visible).presentationBackground(.black)}
-    }
-
-    private var freeSpaceOffer'''
-          new = '''        .presentationDragIndicator(.visible)
-        .sheet(item:$preview){selection in AssetPreviewPager(selection:selection,language:language).presentationDetents([.large]).presentationDragIndicator(.visible).presentationBackground(.black)}
-        .alert(language.text("Couldn’t delete","Suppression impossible"),isPresented:Binding(get:{deletionErrorMessage != nil},set:{if !$0{deletionErrorMessage=nil}})){Button("OK",role:.cancel){deletionErrorMessage=nil}}message:{Text(deletionErrorMessage ?? "")}
-    }
-
-    @MainActor private func deleteSelectedFromIPhone(_ ids:[String]) async{
-        guard !ids.isEmpty,!isDeletingSelection else{return}
-        isDeletingSelection=true;deletionErrorMessage=nil
-        defer{isDeletingSelection=false}
-        let result=PHAsset.fetchAssets(withLocalIdentifiers:ids,options:nil)
-        var assets:[PHAsset]=[]
-        result.enumerateObjects{asset,_,_ in assets.append(asset)}
-        guard !assets.isEmpty else{deletionErrorMessage=language.text("The selected items are no longer available in Apple Photos.","Les éléments sélectionnés ne sont plus disponibles dans Apple Photos.");return}
-        do{
-            try await withCheckedThrowingContinuation{(continuation:CheckedContinuation<Void,Error>) in
-                PHPhotoLibrary.shared().performChanges({PHAssetChangeRequest.deleteAssets(assets as NSArray)}){success,error in
-                    if let error{continuation.resume(throwing:error)}else if success{continuation.resume(returning:())}else{continuation.resume(throwing:NSError(domain:"LiberonsPhotoDeletion",code:1))}
-                }
-            }
-            selectedIDs.subtract(Set(assets.map(\\.localIdentifier)))
-            intelligence.refreshDeviceStorage()
-            await intelligence.scan()
-        }catch{
-            deletionErrorMessage=language.text("The selected items could not be deleted from Apple Photos. Check Photos access and try again.","Impossible de supprimer la sélection d’Apple Photos. Vérifiez l’accès aux Photos puis réessayez.")
+          p=Path('Liberons/ProtectedLibraryView.swift');s=p.read_text()
+          old='@Environment(\\.dismiss) private var dismiss; @State private var selection:UUID; @State private var showInfo=false; @State private var verticalOffset:CGFloat=0'
+          new=old+'; @State private var dismissDragActive=false'
+          if old not in s: raise SystemExit('state anchor missing')
+          s=s.replace(old,new,1)
+          a=s.index('    var body: some View { ZStack{Color.black.opacity(',s.index('private struct ProtectedGalleryViewer'))
+          b=s.index('        .toolbarBackground(.hidden,for:.navigationBar)',a)
+          n='''    private var dismissProgress:CGFloat { min(max(verticalOffset / 360, 0), 1) }
+    var body: some View {
+        ZStack {
+            Color.black.opacity(Double(1 - dismissProgress * 0.92)).ignoresSafeArea()
+            TabView(selection:$selection) { ForEach(items) { CloudPhotoPage(item:$0,language:language,billing:billing).tag($0.id) } }
+                .tabViewStyle(.page(indexDisplayMode:.never)).ignoresSafeArea()
+                .allowsHitTesting(!dismissDragActive)
+                .offset(y:verticalOffset)
+                .scaleEffect(1 - dismissProgress * 0.08)
+                .clipShape(RoundedRectangle(cornerRadius:dismissProgress * 24,style:.continuous))
+            VStack { HStack { Button{dismiss()}label:{Image(systemName:"chevron.left").font(.title2.bold()).foregroundStyle(.white).frame(width:48,height:48).background(.black.opacity(0.45),in:Circle())}.buttonStyle(.plain); if let i=currentIndex { Text("\\(i+1) / \\(items.count)").font(.subheadline.bold()).foregroundStyle(.white).padding(8).background(.black.opacity(0.45),in:Capsule()) }; Spacer(); Button{showInfo=true}label:{Image(systemName:"ellipsis.circle.fill").font(.title2).foregroundStyle(.white).frame(width:56,height:56)}.buttonStyle(.plain) }.padding(.horizontal,8).padding(.top,4); Spacer() }
+                .opacity(Double(1 - min(dismissProgress * 1.8, 1)))
+                .allowsHitTesting(!dismissDragActive)
         }
-    }
-
-    private var freeSpaceOffer'''
-          if old not in s:
-              raise SystemExit('Helper insertion point not found')
-          s = s.replace(old, new, 1)
-          p.write_text(s)
+        .contentShape(Rectangle())
+        .simultaneousGesture(DragGesture(minimumDistance:12).onChanged { v in
+            let dy=v.translation.height; let dx=abs(v.translation.width)
+            guard dy > 0, dy > dx * 1.18 else { return }
+            dismissDragActive=true; verticalOffset=dy
+        }.onEnded { v in
+            guard dismissDragActive else { return }
+            if verticalOffset > 125 || v.predictedEndTranslation.height > 260 {
+                withAnimation(.easeOut(duration:0.16)) { verticalOffset=max(verticalOffset,420) }
+                DispatchQueue.main.asyncAfter(deadline:.now()+0.10) { dismiss() }
+            } else {
+                withAnimation(.spring(response:0.34,dampingFraction:0.86)) { verticalOffset=0 }
+                DispatchQueue.main.asyncAfter(deadline:.now()+0.34) { dismissDragActive=false }
+            }
+        })
+'''
+          s=s[:a]+n+s[b:];p.write_text(s)
           PY
-      - name: Commit change
-        run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Liberons/StorageAnalysisView.swift
-          git commit -m "Add direct iPhone deletion to storage selections"
+          git add Liberons/ProtectedLibraryView.swift
+          git commit -m "Polish protected viewer vertical dismissal"
           git push origin HEAD:library-protected-media
