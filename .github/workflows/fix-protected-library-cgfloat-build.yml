@@ -1,0 +1,33 @@
+name: Fix ProtectedLibraryView CGFloat build
+on:
+  push:
+    paths:
+      - '.github/workflows/fix-protected-library-cgfloat-build.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: library-protected-media
+      - name: Fix ambiguous CGFloat operators
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('Liberons/ProtectedLibraryView.swift')
+          s=p.read_text()
+          s=s.replace('Color.black.opacity(1-min(max(verticalOffset,0)/520,0.72))','Color.black.opacity(Double(1 - min(max(verticalOffset, CGFloat.zero) / CGFloat(520), CGFloat(0.72))))')
+          s=s.replace('.scaleEffect(1-min(max(verticalOffset,0)/1800,0.055))','.scaleEffect(1 - min(max(verticalOffset, CGFloat.zero) / CGFloat(1800), CGFloat(0.055)))')
+          p.write_text(s)
+          PY
+      - name: Commit fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Liberons/ProtectedLibraryView.swift
+          git diff --cached --quiet && exit 0
+          git commit -m "Fix ambiguous CGFloat operators in protected viewer"
+          git push origin HEAD:library-protected-media
