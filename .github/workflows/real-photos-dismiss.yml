@@ -1,0 +1,83 @@
+name: Real Photos-style interactive dismissal
+on:
+  push:
+    paths: ['.github/workflows/real-photos-dismiss.yml']
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: library-protected-media
+      - run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('Liberons/ProtectedLibraryView.swift'); s=p.read_text()
+          a=s.index('private struct ProtectedGalleryViewer: View {')
+          b=s.index('\nprivate struct CloudPhotoPage: View {',a)
+          old=s[a:b]
+          new='''private struct ProtectedGalleryViewer: View {
+    let items:[ProtectedCloudMedia]; let initialID:UUID; @ObservedObject var language:LanguageStore; @ObservedObject var billing:CloudStorageSummary
+    @Environment(\\.dismiss) private var dismiss
+    @State private var selection:UUID
+    @State private var showInfo=false
+    @State private var drag:CGSize = .zero
+    @State private var dismissAxisLocked=false
+    @State private var isDismissing=false
+    private let indexByID:[UUID:Int]
+    init(items:[ProtectedCloudMedia],initialID:UUID,language:LanguageStore,billing:CloudStorageSummary){self.items=items;self.initialID=initialID;self.language=language;self.billing=billing;self.indexByID=Dictionary(uniqueKeysWithValues:items.enumerated().map{($0.element.id,$0.offset)});_selection=State(initialValue:initialID)}
+    private var currentIndex:Int?{indexByID[selection]}
+    private var current:ProtectedCloudMedia?{guard let i=currentIndex,items.indices.contains(i) else{return nil};return items[i]}
+    private var progress:CGFloat{min(max(drag.height/300,0),1)}
+    var body: some View {
+        ZStack {
+            Color.black.opacity(Double(1-progress*0.94)).ignoresSafeArea()
+            TabView(selection:$selection){ForEach(items){CloudPhotoPage(item:$0,language:language,billing:billing).tag($0.id)}}
+                .tabViewStyle(.page(indexDisplayMode:.never)).ignoresSafeArea()
+                .offset(x:dismissAxisLocked ? drag.width*0.10 : 0,y:drag.height)
+                .scaleEffect(1-progress*0.10)
+                .clipShape(RoundedRectangle(cornerRadius:progress*30,style:.continuous))
+                .shadow(color:.black.opacity(Double(progress*0.25)),radius:20,y:10)
+                .allowsHitTesting(!dismissAxisLocked)
+            VStack{HStack{Button{dismiss()}label:{Image(systemName:"chevron.left").font(.title2.bold()).foregroundStyle(.white).frame(width:48,height:48).background(.black.opacity(0.45),in:Circle())}.buttonStyle(.plain);if let i=currentIndex{Text("\\(i+1) / \\(items.count)").font(.subheadline.bold()).foregroundStyle(.white).padding(8).background(.black.opacity(0.45),in:Capsule())};Spacer();Button{showInfo=true}label:{ZStack{Color.clear;Image(systemName:"ellipsis.circle.fill").font(.title2).foregroundStyle(.white)}.frame(width:56,height:56).contentShape(Rectangle())}.buttonStyle(.plain)}.padding(.horizontal,8).padding(.top,4);Spacer()}
+                .opacity(Double(1-min(progress*2.2,1)))
+                .allowsHitTesting(!dismissAxisLocked)
+        }
+        .contentShape(Rectangle())
+        .highPriorityGesture(DragGesture(minimumDistance:6,coordinateSpace:.global)
+            .onChanged{v in
+                guard !isDismissing else{return}
+                if !dismissAxisLocked {
+                    guard v.translation.height > 5, abs(v.translation.height) > abs(v.translation.width)*1.05 else{return}
+                    dismissAxisLocked=true
+                }
+                let y=max(v.translation.height,0)
+                drag=CGSize(width:v.translation.width,height:y)
+            }
+            .onEnded{v in
+                guard dismissAxisLocked,!isDismissing else{return}
+                let projected=max(drag.height,v.predictedEndTranslation.height)
+                if drag.height>105 || projected>210 {
+                    isDismissing=true
+                    withAnimation(.interactiveSpring(response:0.28,dampingFraction:0.92)){drag=CGSize(width:v.predictedEndTranslation.width*0.12,height:UIScreen.main.bounds.height*0.78)}
+                    Task{@MainActor in try? await Task.sleep(for:.milliseconds(155));dismiss()}
+                } else {
+                    withAnimation(.interactiveSpring(response:0.34,dampingFraction:0.86)){drag=.zero}
+                    Task{@MainActor in try? await Task.sleep(for:.milliseconds(340));dismissAxisLocked=false}
+                }
+            })
+        .toolbarBackground(.hidden,for:.navigationBar).toolbarColorScheme(.dark,for:.navigationBar)
+        .sheet(isPresented:$showInfo){if let current{ProtectedMediaDetail(item:current,language:language,billing:billing,closeViewer:{showInfo=false;dismiss()}).presentationDetents([.fraction(0.46),.fraction(0.72),.large]).presentationDragIndicator(.visible).presentationCornerRadius(34).presentationBackground(.regularMaterial).presentationContentInteraction(.resizes).presentationBackgroundInteraction(.enabled(upThrough:.fraction(0.46)))}}
+    }
+}
+'''
+          s=s[:a]+new+s[b:]
+          p.write_text(s)
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Liberons/ProtectedLibraryView.swift
+          git commit -m 'Replace viewer dismissal with interactive Photos gesture'
+          git push origin HEAD:library-protected-media
