@@ -120,10 +120,17 @@ struct ProtectedLibraryView: View {
                                     }
                                 }
                                 .padding(2)
-                                .background(.ultraThinMaterial, in: Capsule())
+                                .background(
+                                    Color(uiColor: .secondarySystemBackground)
+                                        .opacity(0.62),
+                                    in: Capsule()
+                                )
                                 .padding(.horizontal, 16)
                                 .padding(.vertical, 3)
-                                .background(.ultraThinMaterial)
+                                .background(
+                                    Color(uiColor: .systemBackground)
+                                        .opacity(0.82)
+                                )
                             }
 
                             if isSelecting {
