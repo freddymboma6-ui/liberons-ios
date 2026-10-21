@@ -53,36 +53,39 @@ struct ProtectedLibraryView: View {
                             if billing.isPaymentGrace { BillingLibraryNotice(language: language, restricted: false, days: billing.graceDaysRemaining) }
                             else if billing.isPaymentRestricted { BillingLibraryNotice(language: language, restricted: true, days: 0) }
 
-                            HStack(spacing: 8) {
+                            HStack(spacing: 9) {
                                 Image(systemName: "checkmark.shield.fill")
                                     .font(.system(size: 13, weight: .semibold))
                                     .foregroundStyle(.green)
-                                    .frame(width: 27, height: 27)
+                                    .frame(width: 26, height: 26)
                                     .background(Color.green.opacity(0.09), in: Circle())
-                                VStack(alignment: .leading, spacing: 0) {
-                                    Text(language.text("Protected memories", "Souvenirs protégés"))
-                                        .font(.subheadline.weight(.semibold))
-                                    Text("\(filterCounts[.all, default: store.items.count].formatted()) \(language.text("items secured in Libérons", "éléments sécurisés dans Libérons"))")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                Spacer(minLength: 6)
+
+                                Text("\(filterCounts[.all, default: store.items.count].formatted()) \(language.text("protected memories", "souvenirs protégés"))")
+                                    .font(.subheadline.weight(.semibold))
+                                    .lineLimit(1)
+
+                                Spacer(minLength: 8)
+
                                 Menu {
-                                    Button { setSort(newestFirst: true) } label: { Label(language.text("Newest first", "Plus récents"), systemImage: sortNewestFirst ? "checkmark" : "arrow.down") }
-                                    Button { setSort(newestFirst: false) } label: { Label(language.text("Oldest first", "Plus anciens"), systemImage: !sortNewestFirst ? "checkmark" : "arrow.up") }
+                                    Button { setSort(newestFirst: true) } label: {
+                                        Label(language.text("Newest first", "Plus récents"), systemImage: sortNewestFirst ? "checkmark" : "arrow.down")
+                                    }
+                                    Button { setSort(newestFirst: false) } label: {
+                                        Label(language.text("Oldest first", "Plus anciens"), systemImage: !sortNewestFirst ? "checkmark" : "arrow.up")
+                                    }
                                 } label: {
-                                    HStack(spacing: 5) {
+                                    HStack(spacing: 4) {
                                         Text(sortNewestFirst ? language.text("Recent", "Récents") : language.text("Oldest", "Anciens"))
                                             .font(.caption.weight(.semibold))
-                                        Image(systemName: "chevron.up.chevron.down").font(.system(size: 9, weight: .bold))
+                                        Image(systemName: "chevron.down")
+                                            .font(.system(size: 9, weight: .bold))
                                     }
-                                    .foregroundStyle(.primary)
-                                    .padding(.horizontal, 10).padding(.vertical, 7)
-                                    .background(.secondary.opacity(0.08), in: Capsule())
+                                    .foregroundStyle(.secondary)
+                                    .contentShape(Rectangle())
                                 }
                             }
                             .padding(.horizontal, 16)
-                            .padding(.top, 1)
+                            .padding(.top, 0)
 
                             HStack(spacing: 4) {
                                 ForEach(ProtectedLibraryFilter.allCases) { filter in
@@ -93,7 +96,7 @@ struct ProtectedLibraryView: View {
                                         }
                                         .foregroundStyle(mediaFilter == filter ? Color.primary : Color.secondary)
                                         .frame(maxWidth: .infinity)
-                                        .padding(.vertical, 7)
+                                        .padding(.vertical, 5)
                                         .background {
                                             if mediaFilter == filter {
                                                 Capsule().fill(Color(uiColor: .systemBackground)).shadow(color: .black.opacity(0.08), radius: 5, y: 2).matchedGeometryEffect(id: "activeFilter", in: filterTransition)
@@ -103,8 +106,8 @@ struct ProtectedLibraryView: View {
                                     .buttonStyle(.plain)
                                 }
                             }
-                            .padding(2.5)
-                            .background(Color.secondary.opacity(0.09), in: Capsule())
+                            .padding(2)
+                            .background(Color.secondary.opacity(0.075), in: Capsule())
                             .padding(.horizontal, 16)
 
                             if isSelecting {
@@ -134,7 +137,18 @@ struct ProtectedLibraryView: View {
             }
             .navigationTitle(isSelecting ? language.text("Select", "Sélection") : language.text("Library", "Bibliothèque"))
             .navigationBarTitleDisplayMode(.large)
-            .toolbar { ToolbarItem(placement: .topBarTrailing) { if !store.items.isEmpty { Button(isSelecting ? language.text("Done", "OK") : language.text("Select", "Sélectionner")) { isSelecting.toggle(); if !isSelecting { selectedIDs.removeAll() } } } } }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    if !store.items.isEmpty {
+                        Button(isSelecting ? language.text("Done", "OK") : language.text("Select", "Sélectionner")) {
+                            isSelecting.toggle()
+                            if !isSelecting { selectedIDs.removeAll() }
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if isSelecting {
                     HStack(spacing: 12) {
