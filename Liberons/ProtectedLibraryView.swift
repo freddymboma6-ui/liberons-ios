@@ -215,13 +215,30 @@ private struct BillingLibraryNotice: View {
 
 private struct ProtectedGalleryViewer: View {
     let items:[ProtectedCloudMedia]; let initialID:UUID; @ObservedObject var language:LanguageStore; @ObservedObject var billing:CloudStorageSummary
-    @Environment(\.dismiss) private var dismiss; @State private var selection:UUID; @State private var showInfo=false; @State private var verticalOffset:CGFloat=0
+    @Environment(\.dismiss) private var dismiss; @State private var selection:UUID; @State private var showInfo=false; @State private var verticalOffset:CGFloat=0; @State private var isDismissing=false
     private let indexByID:[UUID:Int]
     init(items:[ProtectedCloudMedia],initialID:UUID,language:LanguageStore,billing:CloudStorageSummary){self.items=items;self.initialID=initialID;self.language=language;self.billing=billing;self.indexByID=Dictionary(uniqueKeysWithValues:items.enumerated().map{($0.element.id,$0.offset)});_selection=State(initialValue:initialID)}
     private var currentIndex:Int?{indexByID[selection]}
     private var current:ProtectedCloudMedia?{guard let i=currentIndex,items.indices.contains(i) else{return nil};return items[i]}
     var body: some View { ZStack{Color.black.opacity(Double(1 - min(max(verticalOffset, CGFloat.zero) / CGFloat(520), CGFloat(0.72)))).ignoresSafeArea();TabView(selection:$selection){ForEach(items){CloudPhotoPage(item:$0,language:language,billing:billing).tag($0.id)}}.tabViewStyle(.page(indexDisplayMode:.never)).ignoresSafeArea().offset(y:verticalOffset).scaleEffect(1 - min(max(verticalOffset, CGFloat.zero) / CGFloat(1800), CGFloat(0.055)));VStack{HStack{Button{dismiss()}label:{Image(systemName:"chevron.left").font(.title2.bold()).foregroundStyle(.white).frame(width:48,height:48).background(.black.opacity(0.45),in:Circle())}.buttonStyle(.plain);if let i=currentIndex{Text("\(i+1) / \(items.count)").font(.subheadline.bold()).foregroundStyle(.white).padding(8).background(.black.opacity(0.45),in:Capsule())};Spacer();Button{showInfo=true}label:{ZStack{Color.clear;Image(systemName:"ellipsis.circle.fill").font(.title2).foregroundStyle(.white)}.frame(width:56,height:56).contentShape(Rectangle())}.buttonStyle(.plain)}.padding(.horizontal,8).padding(.top,4);Spacer()}}
-        .simultaneousGesture(DragGesture(minimumDistance:10).onChanged{v in guard v.translation.height>0,abs(v.translation.height)>abs(v.translation.width) else{return};verticalOffset=v.translation.height}.onEnded{v in guard v.translation.height>0,abs(v.translation.height)>abs(v.translation.width) else{withAnimation(.snappy){verticalOffset=0};return};if verticalOffset>110 || v.predictedEndTranslation.height>220{dismiss()}else{withAnimation(.snappy){verticalOffset=0}}})
+        .simultaneousGesture(DragGesture(minimumDistance:14,coordinateSpace:.global).onChanged{v in
+  guard !isDismissing else{return}
+  let y=v.translation.height
+  guard y>0,abs(y)>abs(v.translation.width)*1.15 else{return}
+  verticalOffset=y
+}.onEnded{v in
+  guard !isDismissing else{return}
+  let y=max(verticalOffset,v.translation.height)
+  let predicted=max(y,v.predictedEndTranslation.height)
+  guard y>0,abs(v.translation.height)>abs(v.translation.width)*1.05 else{withAnimation(.spring(response:0.30,dampingFraction:0.88)){verticalOffset=0};return}
+  if y>92 || predicted>185{
+    isDismissing=true
+    withAnimation(.easeOut(duration:0.18)){verticalOffset=max(y,UIScreen.main.bounds.height*0.22)}
+    Task{@MainActor in try? await Task.sleep(for:.milliseconds(120));dismiss()}
+  }else{
+    withAnimation(.spring(response:0.30,dampingFraction:0.88)){verticalOffset=0}
+  }
+})
         .toolbarBackground(.hidden,for:.navigationBar).toolbarColorScheme(.dark,for:.navigationBar).sheet(isPresented:$showInfo){if let current{ProtectedMediaDetail(item:current,language:language,billing:billing,closeViewer:{showInfo=false;dismiss()}).presentationDetents([.fraction(0.72),.large]).presentationDragIndicator(.visible).presentationCornerRadius(34).presentationBackground(.regularMaterial).presentationContentInteraction(.scrolls).presentationBackgroundInteraction(.enabled(upThrough:.fraction(0.72)))}}
     }
 }
