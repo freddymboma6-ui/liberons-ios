@@ -375,18 +375,41 @@ private struct CloudPhotoPage: View {
     @State private var loadFailed = false
     @State private var playbackFile: URL?
     @State private var videoProgress: Double = 0
+    @State private var isVideoPlaying = false
+    @State private var videoCurrentTime: Double = 0
+    @State private var videoDuration: Double = 0
+    @State private var videoObserver: Any?
     private var isVideo: Bool { item.mediaType.lowercased().contains("video") }
     var body: some View {
         ZStack {
             Color.black
-            if isVideo, let player { VideoPlayer(player: player).onAppear { player.play() } }
+            if isVideo, let player {
+                VideoPlayer(player: player)
+                    .onAppear {
+                        player.play()
+                        isVideoPlaying = true
+                        installVideoProgressObserver(on: player)
+                    }
+                    .onDisappear {
+                        player.pause()
+                        isVideoPlaying = false
+                        removeVideoProgressObserver()
+                    }
+            }
             else if let image {
                 ProtectedZoomablePhoto(image: image)
             }
             else if loading { VStack(spacing:14){ProgressView().tint(.white);if isVideo{Text(language.text("Preparing protected video…","Préparation de la vidéo protégée…")).font(.footnote).foregroundStyle(.white.opacity(0.75));if videoProgress>0{ProgressView(value:videoProgress).progressViewStyle(.linear).frame(width:180).tint(.white)}}} }
             else if loadFailed { VStack(spacing:10){Image(systemName:"exclamationmark.icloud").font(.title).foregroundStyle(.white);Text(language.text("Unable to load this video.","Impossible de charger cette vidéo.")).font(.footnote).foregroundStyle(.white.opacity(0.8))} }
             else { Image(systemName:"exclamationmark.icloud").foregroundStyle(.white) }
-        }.task(id:item.id){await load()}.onDisappear{player?.pause();player=nil}
+        }
+        .task(id:item.id){await load()}
+        .onDisappear {
+            player?.pause()
+            isVideoPlaying = false
+            removeVideoProgressObserver()
+            player = nil
+        }
     }
     @MainActor private func load() async {
         loading=true;loadFailed=false;defer{loading=false}
@@ -397,6 +420,39 @@ private struct CloudPhotoPage: View {
         guard !billing.isPaymentRestricted else{return}
         if let original=try? await SupabaseService.cloudOriginalURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:original),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300,let decoded=UIImage(data:data){ProtectedMediaCache.shared.store(decoded,for:item.id);image=decoded}
     }
+    @MainActor
+    private func installVideoProgressObserver(on player: AVPlayer) {
+        removeVideoProgressObserver()
+
+        let interval = CMTime(seconds: 0.25, preferredTimescale: 600)
+
+        videoObserver = player.addPeriodicTimeObserver(
+            forInterval: interval,
+            queue: .main
+        ) { time in
+            let seconds = time.seconds
+
+            if seconds.isFinite {
+                videoCurrentTime = max(0, seconds)
+            }
+
+            if let duration = player.currentItem?.duration.seconds,
+               duration.isFinite,
+               duration > 0 {
+                videoDuration = duration
+            }
+
+            isVideoPlaying = player.rate > 0
+        }
+    }
+
+    @MainActor
+    private func removeVideoProgressObserver() {
+        guard let videoObserver else { return }
+        player?.removeTimeObserver(videoObserver)
+        self.videoObserver = nil
+    }
+
     @MainActor private func loadProtectedVideo() async throws {
         let fm=FileManager.default;let dir=fm.urls(for:.cachesDirectory,in:.userDomainMask)[0].appendingPathComponent("LiberonsPlayback",isDirectory:true);try fm.createDirectory(at:dir,withIntermediateDirectories:true)
         let filename=item.originalFilename ?? "protected-video.mov";var ext=URL(fileURLWithPath:filename).pathExtension.lowercased();if ext.isEmpty{ext="mov"};let local=dir.appendingPathComponent(item.id.uuidString).appendingPathExtension(ext)
