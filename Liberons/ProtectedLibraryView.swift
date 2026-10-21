@@ -19,7 +19,7 @@ private enum ProtectedLibraryFilter: String, CaseIterable, Identifiable {
         case .all: return language.text("All", "Tout")
         case .photos: return "Photos"
         case .videos: return language.text("Videos", "Vidéos")
-        case .screenshots: return language.text("Screenshots", "Captures")
+        case .screenshots: return language.text("Screenshots", "Captures d’écran")
         }
     }
 }
@@ -37,13 +37,13 @@ struct ProtectedLibraryView: View {
     @State private var sortNewestFirst = true
     @State private var screenshotIDs: Set<UUID> = []
     @Namespace private var photoTransition
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 2), count: 3)
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 1.5), count: 3)
 
     private func isVideo(_ item: ProtectedCloudMedia) -> Bool { item.mediaType.lowercased().contains("video") }
     private func isScreenshot(_ item: ProtectedCloudMedia) -> Bool { screenshotIDs.contains(item.id) }
-    private var filteredItems: [ProtectedCloudMedia] {
+    private func items(for filter: ProtectedLibraryFilter) -> [ProtectedCloudMedia] {
         store.items.filter { item in
-            switch mediaFilter {
+            switch filter {
             case .all: return true
             case .photos: return !isVideo(item) && !isScreenshot(item)
             case .videos: return isVideo(item)
@@ -55,14 +55,8 @@ struct ProtectedLibraryView: View {
             return sortNewestFirst ? lhs > rhs : lhs < rhs
         }
     }
-    private func count(for filter: ProtectedLibraryFilter) -> Int {
-        switch filter {
-        case .all: return store.items.count
-        case .photos: return store.items.filter { !isVideo($0) && !isScreenshot($0) }.count
-        case .videos: return store.items.filter(isVideo).count
-        case .screenshots: return screenshotIDs.count
-        }
-    }
+    private var filteredItems: [ProtectedCloudMedia] { items(for: mediaFilter) }
+    private func count(for filter: ProtectedLibraryFilter) -> Int { items(for: filter).count }
 
     var body: some View {
         NavigationStack {
@@ -79,8 +73,9 @@ struct ProtectedLibraryView: View {
                                 HStack(spacing: 8) {
                                     ForEach(ProtectedLibraryFilter.allCases) { filter in
                                         Button {
+                                            let visibleIDs = Set(items(for: filter).map(\.id))
                                             withAnimation(.snappy(duration: 0.22)) { mediaFilter = filter }
-                                            if isSelecting { selectedIDs = selectedIDs.intersection(Set(filteredItems.map(\.id))) }
+                                            if isSelecting { selectedIDs.formIntersection(visibleIDs) }
                                         } label: {
                                             HStack(spacing: 7) {
                                                 Image(systemName: filter.icon).font(.caption.weight(.semibold))
@@ -106,7 +101,7 @@ struct ProtectedLibraryView: View {
                             if filteredItems.isEmpty {
                                 ContentUnavailableView(language.text("Nothing here yet", "Rien ici pour le moment"), systemImage: mediaFilter.icon, description: Text(language.text("Protected media in this category will appear here.", "Les médias protégés de cette catégorie apparaîtront ici."))).frame(maxWidth: .infinity).padding(.vertical, 42)
                             } else {
-                                LazyVGrid(columns: columns, spacing: 2) {
+                                LazyVGrid(columns: columns, spacing: 1.5) {
                                     ForEach(filteredItems) { item in
                                         ProtectedLibraryTile(item: item).matchedTransitionSource(id: item.id, in: photoTransition)
                                             .overlay(alignment: .topTrailing) { if isSelecting { Image(systemName: selectedIDs.contains(item.id) ? "checkmark.circle.fill" : "circle").font(.title2).foregroundStyle(.white).shadow(radius: 3).padding(7) } }
@@ -150,9 +145,15 @@ struct ProtectedLibraryView: View {
         let mapping = Dictionary(uniqueKeysWithValues: pairs.map { ($0.1, $0.0) })
         let identifiers = Array(mapping.keys)
         let found: Set<UUID> = await Task.detached(priority: .utility) {
-            let result = PHAsset.fetchAssets(withLocalIdentifiers: identifiers, options: nil)
             var ids = Set<UUID>()
-            result.enumerateObjects { asset, _, _ in if asset.mediaSubtypes.contains(.photoScreenshot), let id = mapping[asset.localIdentifier] { ids.insert(id) } }
+            let chunkSize = 500
+            for start in stride(from: 0, to: identifiers.count, by: chunkSize) {
+                let end = min(start + chunkSize, identifiers.count)
+                let result = PHAsset.fetchAssets(withLocalIdentifiers: Array(identifiers[start..<end]), options: nil)
+                result.enumerateObjects { asset, _, _ in
+                    if asset.mediaSubtypes.contains(.photoScreenshot), let id = mapping[asset.localIdentifier] { ids.insert(id) }
+                }
+            }
             return ids
         }.value
         screenshotIDs = found
