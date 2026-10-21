@@ -1,0 +1,39 @@
+name: Premium memory detail sheet
+on:
+  push:
+    paths:
+      - '.github/workflows/premium-memory-detail-sheet.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: library-protected-media
+      - name: Make memory details a premium compact sheet
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('Liberons/ProtectedLibraryView.swift')
+          s=p.read_text()
+          old='.toolbarBackground(.hidden,for:.navigationBar).toolbarColorScheme(.dark,for:.navigationBar).sheet(isPresented:$showInfo){if let current{ProtectedMediaDetail(item:current,language:language,billing:billing,closeViewer:{showInfo=false;dismiss()})}}'
+          new='.toolbarBackground(.hidden,for:.navigationBar).toolbarColorScheme(.dark,for:.navigationBar).sheet(isPresented:$showInfo){if let current{ProtectedMediaDetail(item:current,language:language,billing:billing,closeViewer:{showInfo=false;dismiss()}).presentationDetents([.fraction(0.72),.large]).presentationDragIndicator(.visible).presentationCornerRadius(34).presentationBackground(.regularMaterial).presentationContentInteraction(.scrolls).presentationBackgroundInteraction(.enabled(upThrough:.fraction(0.72)))}}'
+          if old not in s: raise SystemExit('info sheet anchor not found')
+          s=s.replace(old,new,1)
+          old='.padding(20)}}.navigationTitle(language.text("Memory details","Détails du souvenir")).navigationBarTitleDisplayMode(.inline).toolbar{ToolbarItem(placement:.topBarTrailing){Button(language.text("Done","Fermer")){dismiss()}}}'
+          new='.padding(.horizontal,20).padding(.top,10).padding(.bottom,28)}}.navigationTitle(language.text("Memory details","Détails du souvenir")).navigationBarTitleDisplayMode(.inline).toolbar{ToolbarItem(placement:.topBarTrailing){Button(language.text("Done","Fermer")){dismiss()}.fontWeight(.semibold)}}'
+          if old not in s: raise SystemExit('detail padding anchor not found')
+          s=s.replace(old,new,1)
+          p.write_text(s)
+          PY
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Liberons/ProtectedLibraryView.swift
+          git diff --cached --quiet && exit 0
+          git commit -m "Present memory details as premium sheet"
+          git push origin HEAD:library-protected-media
