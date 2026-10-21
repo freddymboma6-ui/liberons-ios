@@ -1,0 +1,38 @@
+name: Compact Library header polish
+on:
+  push:
+    paths:
+      - '.github/workflows/compact-library-header.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: library-protected-media
+      - name: Compact header and clear floating tab bar
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('Liberons/ProtectedLibraryView.swift')
+          s=p.read_text()
+          s=s.replace('LazyVStack(alignment: .leading, spacing: 10, pinnedViews: []) {','LazyVStack(alignment: .leading, spacing: 7, pinnedViews: []) {',1)
+          s=s.replace('HStack(spacing: 10) {\n                                Image(systemName: "checkmark.shield.fill")\n                                    .font(.system(size: 16, weight: .semibold))\n                                    .foregroundStyle(.green)\n                                    .frame(width: 34, height: 34)\n                                    .background(Color.green.opacity(0.10), in: Circle())\n                                VStack(alignment: .leading, spacing: 1) {','HStack(spacing: 8) {\n                                Image(systemName: "checkmark.shield.fill")\n                                    .font(.system(size: 13, weight: .semibold))\n                                    .foregroundStyle(.green)\n                                    .frame(width: 27, height: 27)\n                                    .background(Color.green.opacity(0.09), in: Circle())\n                                VStack(alignment: .leading, spacing: 0) {',1)
+          s=s.replace('.font(.headline)\n                                    Text("\\(filterCounts[.all, default: store.items.count].formatted())', '.font(.subheadline.weight(.semibold))\n                                    Text("\\(filterCounts[.all, default: store.items.count].formatted())',1)
+          s=s.replace('.padding(.horizontal, 16)\n\n                            HStack(spacing: 4) {','.padding(.horizontal, 16)\n                            .padding(.top, 1)\n\n                            HStack(spacing: 4) {',1)
+          s=s.replace('.padding(.vertical, 8)','.padding(.vertical, 7)',1)
+          s=s.replace('.padding(3)\n                            .background(Color.secondary.opacity(0.10), in: Capsule())','.padding(2.5)\n                            .background(Color.secondary.opacity(0.09), in: Capsule())',1)
+          s=s.replace('}.padding(.bottom, 100)','}.padding(.bottom, 132)',1)
+          p.write_text(s)
+          PY
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Liberons/ProtectedLibraryView.swift
+          git diff --cached --quiet && exit 0
+          git commit -m "Compact protected Library chrome"
+          git push origin HEAD:library-protected-media
