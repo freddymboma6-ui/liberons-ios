@@ -36,6 +36,7 @@ struct ProtectedLibraryView: View {
     @State private var displayItems: [ProtectedCloudMedia] = []
     @State private var filterCounts: [ProtectedLibraryFilter: Int] = [:]
     @Namespace private var photoTransition
+    @Namespace private var filterTransition
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 1.5), count: 3)
 
     private func isVideo(_ item: ProtectedCloudMedia) -> Bool { item.mediaType.lowercased().contains("video") }
@@ -48,34 +49,73 @@ struct ProtectedLibraryView: View {
                 else if store.items.isEmpty { ContentUnavailableView(language.text("Your cloud library", "Votre bibliothèque cloud"), systemImage: "photo.stack", description: Text(language.text("Protected memories will appear here.", "Vos souvenirs protégés apparaîtront ici."))) }
                 else {
                     ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 12, pinnedViews: []) {
+                        LazyVStack(alignment: .leading, spacing: 14, pinnedViews: []) {
                             if billing.isPaymentGrace { BillingLibraryNotice(language: language, restricted: false, days: billing.graceDaysRemaining) }
                             else if billing.isPaymentRestricted { BillingLibraryNotice(language: language, restricted: true, days: 0) }
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                HStack(spacing: 8) {
-                                    ForEach(ProtectedLibraryFilter.allCases) { filter in
-                                        Button { selectFilter(filter) } label: {
-                                            HStack(spacing: 7) {
-                                                Image(systemName: filter.icon).font(.caption.weight(.semibold))
-                                                Text(filter.title(language)).font(.subheadline.weight(.semibold))
-                                                Text("\(filterCounts[filter, default: 0])").font(.caption2.bold()).foregroundStyle(.secondary)
-                                            }
-                                            .foregroundStyle(mediaFilter == filter ? Color.primary : Color.secondary)
-                                            .padding(.horizontal, 13).padding(.vertical, 9)
-                                            .background(mediaFilter == filter ? Color.primary.opacity(0.10) : Color.secondary.opacity(0.07), in: Capsule())
-                                        }.buttonStyle(.plain)
-                                    }
-                                }.padding(.horizontal, 16)
-                            }
-                            HStack {
-                                Label(language.text("Protected", "Protégés"), systemImage: "checkmark.shield.fill").foregroundStyle(.green)
-                                Spacer()
-                                Text(isSelecting ? "\(selectedIDs.count) \(language.text("selected", "sélectionné(s)"))" : "\(displayItems.count) \(language.text("items", "éléments"))").foregroundStyle(.secondary)
+
+                            HStack(spacing: 12) {
+                                Image(systemName: "checkmark.shield.fill")
+                                    .font(.system(size: 18, weight: .semibold))
+                                    .foregroundStyle(.green)
+                                    .frame(width: 38, height: 38)
+                                    .background(Color.green.opacity(0.10), in: Circle())
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(language.text("Protected memories", "Souvenirs protégés"))
+                                        .font(.headline)
+                                    Text("\(filterCounts[.all, default: store.items.count].formatted()) \(language.text("items secured in Libérons", "éléments sécurisés dans Libérons"))")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer(minLength: 8)
                                 Menu {
                                     Button { setSort(newestFirst: true) } label: { Label(language.text("Newest first", "Plus récents"), systemImage: sortNewestFirst ? "checkmark" : "arrow.down") }
                                     Button { setSort(newestFirst: false) } label: { Label(language.text("Oldest first", "Plus anciens"), systemImage: !sortNewestFirst ? "checkmark" : "arrow.up") }
-                                } label: { Image(systemName: "arrow.up.arrow.down").frame(width: 30, height: 30).background(.secondary.opacity(0.09), in: Circle()) }
-                            }.font(.subheadline.bold()).padding(.horizontal, 16)
+                                } label: {
+                                    HStack(spacing: 5) {
+                                        Text(sortNewestFirst ? language.text("Recent", "Récents") : language.text("Oldest", "Anciens"))
+                                            .font(.caption.weight(.semibold))
+                                        Image(systemName: "chevron.up.chevron.down").font(.system(size: 9, weight: .bold))
+                                    }
+                                    .foregroundStyle(.primary)
+                                    .padding(.horizontal, 11).padding(.vertical, 8)
+                                    .background(.secondary.opacity(0.08), in: Capsule())
+                                }
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.top, 2)
+
+                            HStack(spacing: 4) {
+                                ForEach(ProtectedLibraryFilter.allCases) { filter in
+                                    Button { selectFilter(filter) } label: {
+                                        HStack(spacing: 6) {
+                                            Image(systemName: filter.icon).font(.caption.weight(.semibold))
+                                            Text(filter.title(language)).font(.subheadline.weight(.semibold))
+                                        }
+                                        .foregroundStyle(mediaFilter == filter ? Color.primary : Color.secondary)
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 9)
+                                        .background {
+                                            if mediaFilter == filter {
+                                                Capsule().fill(Color(uiColor: .systemBackground)).shadow(color: .black.opacity(0.08), radius: 5, y: 2).matchedGeometryEffect(id: "activeFilter", in: filterTransition)
+                                            }
+                                        }
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                            .padding(3)
+                            .background(Color.secondary.opacity(0.10), in: Capsule())
+                            .padding(.horizontal, 16)
+
+                            HStack {
+                                Text(isSelecting ? "\(selectedIDs.count) \(language.text("selected", "sélectionné(s)"))" : "\(displayItems.count.formatted()) \(language.text("items", "éléments"))")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.top, 2)
+
                             if displayItems.isEmpty {
                                 ContentUnavailableView(language.text("Nothing here yet", "Rien ici pour le moment"), systemImage: mediaFilter.icon, description: Text(language.text("Protected media in this category will appear here.", "Les médias protégés de cette catégorie apparaîtront ici."))).frame(maxWidth: .infinity).padding(.vertical, 42)
                             } else {
@@ -94,6 +134,7 @@ struct ProtectedLibraryView: View {
                 }
             }
             .navigationTitle(isSelecting ? language.text("Select", "Sélection") : language.text("Library", "Bibliothèque"))
+            .navigationBarTitleDisplayMode(.large)
             .toolbar { ToolbarItem(placement: .topBarTrailing) { if !store.items.isEmpty { Button(isSelecting ? language.text("Done", "OK") : language.text("Select", "Sélectionner")) { isSelecting.toggle(); if !isSelecting { selectedIDs.removeAll() } } } } }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if isSelecting {
@@ -121,7 +162,8 @@ struct ProtectedLibraryView: View {
     private func toggle(_ id: UUID) { if selectedIDs.contains(id) { selectedIDs.remove(id) } else { selectedIDs.insert(id) } }
 
     @MainActor private func selectFilter(_ filter: ProtectedLibraryFilter) {
-        mediaFilter = filter
+        guard mediaFilter != filter else { return }
+        withAnimation(.snappy(duration: 0.24)) { mediaFilter = filter }
         rebuildDisplayItems()
         if isSelecting { selectedIDs.formIntersection(Set(displayItems.map(\.id))) }
     }
@@ -246,4 +288,4 @@ private struct ProtectedMediaDetail:View{
     @MainActor private func deleteFromCloud()async{deleting=true;operationError=nil;do{_=try await SupabaseService.deleteCloudMedia(assetID:item.id);deleting=false;dismiss();closeViewer?()}catch{deleting=false;operationError=error.localizedDescription}}
 }
 private struct MetadataRow:View{let icon:String;let title:String;let value:String;var body:some View{HStack(alignment:.top,spacing:13){Image(systemName:icon).frame(width:24).foregroundStyle(.blue);VStack(alignment:.leading,spacing:3){Text(title).font(.caption).foregroundStyle(.secondary);Text(value).font(.subheadline.bold())};Spacer()}}}
-private struct ProtectedLibraryTile:View{let item:ProtectedCloudMedia;@State private var image:UIImage?;private var isVideo:Bool{item.mediaType.lowercased().contains("video")};var body:some View{ZStack{GeometryReader{proxy in ZStack{Rectangle().fill(Color.secondary.opacity(0.10));if let image{Image(uiImage:image).resizable().scaledToFill().frame(width:proxy.size.width,height:proxy.size.height).clipped()}else{Image(systemName:isVideo ? "video.fill":"photo.fill").foregroundStyle(.secondary)}}}.aspectRatio(1,contentMode:.fit);VStack{HStack{Spacer();Image(systemName:"checkmark.shield.fill").font(.system(size:9,weight:.bold)).foregroundStyle(.white).frame(width:20,height:20).background(.green,in:Circle()).shadow(radius:2).padding(6)};Spacer();if isVideo{HStack{Image(systemName:"play.fill");Text("VIDEO");Spacer()}.font(.system(size:9,weight:.bold)).foregroundStyle(.white).shadow(radius:2).padding(7).background(LinearGradient(colors:[.black.opacity(0.45),.clear],startPoint:.bottom,endPoint:.top))}}}.task(id:item.id){await loadThumbnail()}};@MainActor private func loadThumbnail()async{if let cached=ProtectedMediaCache.shared.image(for:item.id){image=cached;return};if let id=item.iosLocalIdentifier,let asset=PHAsset.fetchAssets(withLocalIdentifiers:[id],options:nil).firstObject{let options=PHImageRequestOptions();options.isNetworkAccessAllowed=true;PHImageManager.default().requestImage(for:asset,targetSize:CGSize(width:500,height:500),contentMode:.aspectFill,options:options){value,_ in if let value{ProtectedMediaCache.shared.store(value,for:self.item.id);Task{@MainActor in image=value}}};return};if let preview=try? await SupabaseService.cloudPreviewURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:preview),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300,let decoded=UIImage(data:data){ProtectedMediaCache.shared.store(decoded,for:item.id);image=decoded;return};if isVideo{if let url=try? await SupabaseService.cloudOriginalURL(assetID:item.id){let asset=AVURLAsset(url:url);let generator=AVAssetImageGenerator(asset:asset);generator.appliesPreferredTrackTransform=true;if let cg=try? await generator.image(at:.zero).image{image=UIImage(cgImage:cg)}};return};if let url=try? await SupabaseService.cloudOriginalURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:url),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300{image=UIImage(data:data)}}}
+private struct ProtectedLibraryTile:View{let item:ProtectedCloudMedia;@State private var image:UIImage?;private var isVideo:Bool{item.mediaType.lowercased().contains("video")};var body:some View{ZStack{GeometryReader{proxy in ZStack{Rectangle().fill(Color.secondary.opacity(0.08));if let image{Image(uiImage:image).resizable().scaledToFill().frame(width:proxy.size.width,height:proxy.size.height).clipped()}else{Image(systemName:isVideo ? "video.fill":"photo.fill").font(.system(size:18,weight:.medium)).foregroundStyle(.tertiary)}}}.aspectRatio(1,contentMode:.fit);if isVideo{VStack{Spacer();HStack{Image(systemName:"play.fill").font(.system(size:10,weight:.bold)).foregroundStyle(.white).frame(width:25,height:25).background(.black.opacity(0.52),in:Circle()).padding(6);Spacer()}}}}.task(id:item.id){await loadThumbnail()}};@MainActor private func loadThumbnail()async{if let cached=ProtectedMediaCache.shared.image(for:item.id){image=cached;return};if let id=item.iosLocalIdentifier,let asset=PHAsset.fetchAssets(withLocalIdentifiers:[id],options:nil).firstObject{let options=PHImageRequestOptions();options.isNetworkAccessAllowed=true;PHImageManager.default().requestImage(for:asset,targetSize:CGSize(width:500,height:500),contentMode:.aspectFill,options:options){value,_ in if let value{ProtectedMediaCache.shared.store(value,for:self.item.id);Task{@MainActor in image=value}}};return};if let preview=try? await SupabaseService.cloudPreviewURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:preview),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300,let decoded=UIImage(data:data){ProtectedMediaCache.shared.store(decoded,for:item.id);image=decoded;return};if isVideo{if let url=try? await SupabaseService.cloudOriginalURL(assetID:item.id){let asset=AVURLAsset(url:url);let generator=AVAssetImageGenerator(asset:asset);generator.appliesPreferredTrackTransform=true;if let cg=try? await generator.image(at:.zero).image{image=UIImage(cgImage:cg)}};return};if let url=try? await SupabaseService.cloudOriginalURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:url),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300{image=UIImage(data:data)}}}
