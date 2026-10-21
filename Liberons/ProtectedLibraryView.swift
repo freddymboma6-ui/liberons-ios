@@ -49,24 +49,24 @@ struct ProtectedLibraryView: View {
                 else if store.items.isEmpty { ContentUnavailableView(language.text("Your cloud library", "Votre bibliothèque cloud"), systemImage: "photo.stack", description: Text(language.text("Protected memories will appear here.", "Vos souvenirs protégés apparaîtront ici."))) }
                 else {
                     ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 14, pinnedViews: []) {
+                        LazyVStack(alignment: .leading, spacing: 10, pinnedViews: []) {
                             if billing.isPaymentGrace { BillingLibraryNotice(language: language, restricted: false, days: billing.graceDaysRemaining) }
                             else if billing.isPaymentRestricted { BillingLibraryNotice(language: language, restricted: true, days: 0) }
 
-                            HStack(spacing: 12) {
+                            HStack(spacing: 10) {
                                 Image(systemName: "checkmark.shield.fill")
-                                    .font(.system(size: 18, weight: .semibold))
+                                    .font(.system(size: 16, weight: .semibold))
                                     .foregroundStyle(.green)
-                                    .frame(width: 38, height: 38)
+                                    .frame(width: 34, height: 34)
                                     .background(Color.green.opacity(0.10), in: Circle())
-                                VStack(alignment: .leading, spacing: 2) {
+                                VStack(alignment: .leading, spacing: 1) {
                                     Text(language.text("Protected memories", "Souvenirs protégés"))
                                         .font(.headline)
                                     Text("\(filterCounts[.all, default: store.items.count].formatted()) \(language.text("items secured in Libérons", "éléments sécurisés dans Libérons"))")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
-                                Spacer(minLength: 8)
+                                Spacer(minLength: 6)
                                 Menu {
                                     Button { setSort(newestFirst: true) } label: { Label(language.text("Newest first", "Plus récents"), systemImage: sortNewestFirst ? "checkmark" : "arrow.down") }
                                     Button { setSort(newestFirst: false) } label: { Label(language.text("Oldest first", "Plus anciens"), systemImage: !sortNewestFirst ? "checkmark" : "arrow.up") }
@@ -77,12 +77,11 @@ struct ProtectedLibraryView: View {
                                         Image(systemName: "chevron.up.chevron.down").font(.system(size: 9, weight: .bold))
                                     }
                                     .foregroundStyle(.primary)
-                                    .padding(.horizontal, 11).padding(.vertical, 8)
+                                    .padding(.horizontal, 10).padding(.vertical, 7)
                                     .background(.secondary.opacity(0.08), in: Capsule())
                                 }
                             }
                             .padding(.horizontal, 16)
-                            .padding(.top, 2)
 
                             HStack(spacing: 4) {
                                 ForEach(ProtectedLibraryFilter.allCases) { filter in
@@ -93,7 +92,7 @@ struct ProtectedLibraryView: View {
                                         }
                                         .foregroundStyle(mediaFilter == filter ? Color.primary : Color.secondary)
                                         .frame(maxWidth: .infinity)
-                                        .padding(.vertical, 9)
+                                        .padding(.vertical, 8)
                                         .background {
                                             if mediaFilter == filter {
                                                 Capsule().fill(Color(uiColor: .systemBackground)).shadow(color: .black.opacity(0.08), radius: 5, y: 2).matchedGeometryEffect(id: "activeFilter", in: filterTransition)
@@ -107,14 +106,13 @@ struct ProtectedLibraryView: View {
                             .background(Color.secondary.opacity(0.10), in: Capsule())
                             .padding(.horizontal, 16)
 
-                            HStack {
-                                Text(isSelecting ? "\(selectedIDs.count) \(language.text("selected", "sélectionné(s)"))" : "\(displayItems.count.formatted()) \(language.text("items", "éléments"))")
+                            if isSelecting {
+                                Text("\(selectedIDs.count) \(language.text("selected", "sélectionné(s)"))")
                                     .font(.caption.weight(.semibold))
                                     .foregroundStyle(.secondary)
-                                Spacer()
+                                    .padding(.horizontal, 16)
+                                    .padding(.top, 1)
                             }
-                            .padding(.horizontal, 16)
-                            .padding(.top, 2)
 
                             if displayItems.isEmpty {
                                 ContentUnavailableView(language.text("Nothing here yet", "Rien ici pour le moment"), systemImage: mediaFilter.icon, description: Text(language.text("Protected media in this category will appear here.", "Les médias protégés de cette catégorie apparaîtront ici."))).frame(maxWidth: .infinity).padding(.vertical, 42)
