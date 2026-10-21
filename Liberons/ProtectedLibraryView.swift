@@ -269,13 +269,13 @@ private struct ProtectedGalleryViewer: View {
   .allowsHitTesting(!verticalDismissLocked)
         }
         .contentShape(Rectangle())
-        .highPriorityGesture(
-  DragGesture(minimumDistance: 6, coordinateSpace: .global)
+        .simultaneousGesture(
+  DragGesture(minimumDistance: 10, coordinateSpace: .global)
       .onChanged { value in
           guard !isDismissing else { return }
           let x = value.translation.width, y = value.translation.height
           if !verticalDismissLocked {
-              guard y > 7, abs(y) > abs(x) * 1.30 else { return }
+              guard y > 12, abs(y) > abs(x) * 1.65 else { return }
               verticalDismissLocked = true
           }
           dismissTranslation = CGSize(width: x, height: max(0, y))
@@ -299,7 +299,7 @@ private struct ProtectedGalleryViewer: View {
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .sheet(isPresented: $showInfo) {
-  if let current { ProtectedMediaDetail(item: current, language: language, billing: billing, closeViewer: { showInfo = false; dismiss() }).presentationDetents([.fraction(0.46), .fraction(0.72), .large]).presentationDragIndicator(.visible).presentationCornerRadius(34).presentationBackground(.regularMaterial).presentationContentInteraction(.resizes).presentationBackgroundInteraction(.enabled(upThrough: .fraction(0.46))) }
+  if let current { ProtectedMediaDetail(item: current, language: language, billing: billing, closeViewer: { showInfo = false; dismiss() }).presentationDetents([.fraction(0.32), .fraction(0.64), .large]).presentationDragIndicator(.visible).presentationCornerRadius(34).presentationBackground(.regularMaterial).presentationContentInteraction(.resizes).presentationBackgroundInteraction(.enabled(upThrough: .fraction(0.32))) }
         }
     }
 }
