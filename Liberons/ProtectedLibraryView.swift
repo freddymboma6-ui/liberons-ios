@@ -355,7 +355,9 @@ private struct CloudPhotoPage: View {
         ZStack {
             Color.black
             if isVideo, let player { VideoPlayer(player: player).onAppear { player.play() } }
-            else if let image { Image(uiImage: image).resizable().scaledToFit() }
+            else if let image {
+                ProtectedZoomablePhoto(image: image)
+            }
             else if loading { VStack(spacing:14){ProgressView().tint(.white);if isVideo{Text(language.text("Preparing protected video…","Préparation de la vidéo protégée…")).font(.footnote).foregroundStyle(.white.opacity(0.75));if videoProgress>0{ProgressView(value:videoProgress).progressViewStyle(.linear).frame(width:180).tint(.white)}}} }
             else if loadFailed { VStack(spacing:10){Image(systemName:"exclamationmark.icloud").font(.title).foregroundStyle(.white);Text(language.text("Unable to load this video.","Impossible de charger cette vidéo.")).font(.footnote).foregroundStyle(.white.opacity(0.8))} }
             else { Image(systemName:"exclamationmark.icloud").foregroundStyle(.white) }
@@ -378,6 +380,84 @@ private struct CloudPhotoPage: View {
         let remote=try await SupabaseService.cloudStreamURL(assetID:item.id);let(downloaded,response)=try await URLSession.shared.download(from:remote);guard let http=response as? HTTPURLResponse,(200..<300).contains(http.statusCode) else{throw URLError(.badServerResponse)};let attrs=try fm.attributesOfItem(atPath:downloaded.path);let downloadedSize=(attrs[.size] as? NSNumber)?.int64Value ?? 0;guard downloadedSize>0 else{throw URLError(.zeroByteResource)};if item.sizeBytes>0 && downloadedSize != item.sizeBytes{throw NSError(domain:"LiberonsProtectedVideo",code:1001,userInfo:[NSLocalizedDescriptionKey:"Protected video download is incomplete."])};try? fm.removeItem(at:local);try fm.moveItem(at:downloaded,to:local);playProtectedVideo(at:local)
     }
     @MainActor private func playProtectedVideo(at url:URL){playbackFile=url;let playerItem=AVPlayerItem(url:url);let avPlayer=AVPlayer(playerItem:playerItem);avPlayer.automaticallyWaitsToMinimizeStalling=true;player=avPlayer;avPlayer.play()}
+}
+
+
+private struct ProtectedZoomablePhoto: View {
+    let image: UIImage
+
+    @State private var scale: CGFloat = 1
+    @State private var lastScale: CGFloat = 1
+    @State private var offset: CGSize = .zero
+    @State private var lastOffset: CGSize = .zero
+
+    private let maximumScale: CGFloat = 5
+
+    var body: some View {
+        GeometryReader { proxy in
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+                .frame(width: proxy.size.width, height: proxy.size.height)
+                .scaleEffect(scale)
+                .offset(offset)
+                .contentShape(Rectangle())
+                .gesture(
+                    MagnificationGesture()
+                        .onChanged { value in
+                            let proposed = lastScale * value
+                            scale = min(max(proposed, 1), maximumScale)
+                            if scale <= 1.01 {
+                                offset = .zero
+                            }
+                        }
+                        .onEnded { _ in
+                            if scale < 1.05 {
+                                withAnimation(.interactiveSpring(response: 0.30, dampingFraction: 0.86)) {
+                                    scale = 1
+                                    offset = .zero
+                                }
+                                lastScale = 1
+                                lastOffset = .zero
+                            } else {
+                                lastScale = scale
+                            }
+                        }
+                )
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 4)
+                        .onChanged { value in
+                            guard scale > 1.01 else { return }
+                            offset = CGSize(
+                                width: lastOffset.width + value.translation.width,
+                                height: lastOffset.height + value.translation.height
+                            )
+                        }
+                        .onEnded { _ in
+                            guard scale > 1.01 else {
+                                offset = .zero
+                                lastOffset = .zero
+                                return
+                            }
+                            lastOffset = offset
+                        }
+                )
+                .onTapGesture(count: 2) {
+                    withAnimation(.interactiveSpring(response: 0.30, dampingFraction: 0.84)) {
+                        if scale > 1.01 {
+                            scale = 1
+                            lastScale = 1
+                            offset = .zero
+                            lastOffset = .zero
+                        } else {
+                            scale = 2.5
+                            lastScale = 2.5
+                        }
+                    }
+                }
+        }
+        .clipped()
+    }
 }
 
 private final class ProtectedMediaCache:@unchecked Sendable{static let shared=ProtectedMediaCache();private let cache=NSCache<NSString,UIImage>();private init(){cache.countLimit=350;cache.totalCostLimit=80*1024*1024};func image(for id:UUID)->UIImage?{cache.object(forKey:id.uuidString as NSString)};func store(_ image:UIImage,for id:UUID){let cost=Int(image.size.width*image.size.height*4);cache.setObject(image,forKey:id.uuidString as NSString,cost:cost)}}
