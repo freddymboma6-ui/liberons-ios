@@ -1,0 +1,57 @@
+name: Viewer dismiss v2
+on:
+  push:
+    paths: ['.github/workflows/viewer-dismiss-v2.yml']
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: library-protected-media
+      - run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('Liberons/ProtectedLibraryView.swift'); s=p.read_text()
+          s=s.replace('@State private var showInfo=false; @State private var verticalOffset:CGFloat=0','@State private var showInfo=false; @State private var verticalOffset:CGFloat=0; @State private var dismissDragActive=false',1)
+          a=s.index('    var body: some View { ZStack{Color.black.opacity(',s.index('private struct ProtectedGalleryViewer'))
+          b=s.index('        .toolbarBackground(.hidden,for:.navigationBar)',a)
+          n='''    private var dismissProgress:CGFloat { min(max(verticalOffset / 360, 0), 1) }
+    var body: some View {
+        ZStack {
+            Color.black.opacity(Double(1 - dismissProgress * 0.92)).ignoresSafeArea()
+            TabView(selection:$selection) { ForEach(items) { CloudPhotoPage(item:$0,language:language,billing:billing).tag($0.id) } }
+                .tabViewStyle(.page(indexDisplayMode:.never)).ignoresSafeArea()
+                .allowsHitTesting(!dismissDragActive)
+                .offset(y:verticalOffset)
+                .scaleEffect(1 - dismissProgress * 0.08)
+                .clipShape(RoundedRectangle(cornerRadius:dismissProgress * 24,style:.continuous))
+            VStack { HStack { Button{dismiss()}label:{Image(systemName:"chevron.left").font(.title2.bold()).foregroundStyle(.white).frame(width:48,height:48).background(.black.opacity(0.45),in:Circle())}.buttonStyle(.plain); if let i=currentIndex { Text("\\(i+1) / \\(items.count)").font(.subheadline.bold()).foregroundStyle(.white).padding(8).background(.black.opacity(0.45),in:Capsule()) }; Spacer(); Button{showInfo=true}label:{Image(systemName:"ellipsis.circle.fill").font(.title2).foregroundStyle(.white).frame(width:56,height:56)}.buttonStyle(.plain) }.padding(.horizontal,8).padding(.top,4); Spacer() }
+                .opacity(Double(1 - min(dismissProgress * 1.8, 1)))
+                .allowsHitTesting(!dismissDragActive)
+        }
+        .contentShape(Rectangle())
+        .simultaneousGesture(DragGesture(minimumDistance:12).onChanged { v in
+            let dy=v.translation.height; let dx=abs(v.translation.width)
+            guard dy > 0, dy > dx * 1.18 else { return }
+            dismissDragActive=true; verticalOffset=dy
+        }.onEnded { v in
+            guard dismissDragActive else { return }
+            if verticalOffset > 125 || v.predictedEndTranslation.height > 260 {
+                withAnimation(.easeOut(duration:0.16)) { verticalOffset=max(verticalOffset,420) }
+                DispatchQueue.main.asyncAfter(deadline:.now()+0.10) { dismiss() }
+            } else {
+                withAnimation(.spring(response:0.34,dampingFraction:0.86)) { verticalOffset=0 }
+                DispatchQueue.main.asyncAfter(deadline:.now()+0.34) { dismissDragActive=false }
+            }
+        })
+'''
+          s=s[:a]+n+s[b:]; p.write_text(s)
+          PY
+          git config user.name github-actions
+          git config user.email actions@github.com
+          git add Liberons/ProtectedLibraryView.swift
+          git commit -m 'Polish protected viewer vertical dismissal'
+          git push origin HEAD:library-protected-media
