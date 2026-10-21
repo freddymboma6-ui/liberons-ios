@@ -49,19 +49,19 @@ struct ProtectedLibraryView: View {
                 else if store.items.isEmpty { ContentUnavailableView(language.text("Your cloud library", "Votre bibliothèque cloud"), systemImage: "photo.stack", description: Text(language.text("Protected memories will appear here.", "Vos souvenirs protégés apparaîtront ici."))) }
                 else {
                     ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 10, pinnedViews: []) {
+                        LazyVStack(alignment: .leading, spacing: 7, pinnedViews: []) {
                             if billing.isPaymentGrace { BillingLibraryNotice(language: language, restricted: false, days: billing.graceDaysRemaining) }
                             else if billing.isPaymentRestricted { BillingLibraryNotice(language: language, restricted: true, days: 0) }
 
-                            HStack(spacing: 10) {
+                            HStack(spacing: 8) {
                                 Image(systemName: "checkmark.shield.fill")
-                                    .font(.system(size: 16, weight: .semibold))
+                                    .font(.system(size: 13, weight: .semibold))
                                     .foregroundStyle(.green)
-                                    .frame(width: 34, height: 34)
-                                    .background(Color.green.opacity(0.10), in: Circle())
-                                VStack(alignment: .leading, spacing: 1) {
+                                    .frame(width: 27, height: 27)
+                                    .background(Color.green.opacity(0.09), in: Circle())
+                                VStack(alignment: .leading, spacing: 0) {
                                     Text(language.text("Protected memories", "Souvenirs protégés"))
-                                        .font(.headline)
+                                        .font(.subheadline.weight(.semibold))
                                     Text("\(filterCounts[.all, default: store.items.count].formatted()) \(language.text("items secured in Libérons", "éléments sécurisés dans Libérons"))")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
@@ -82,6 +82,7 @@ struct ProtectedLibraryView: View {
                                 }
                             }
                             .padding(.horizontal, 16)
+                            .padding(.top, 1)
 
                             HStack(spacing: 4) {
                                 ForEach(ProtectedLibraryFilter.allCases) { filter in
@@ -92,7 +93,7 @@ struct ProtectedLibraryView: View {
                                         }
                                         .foregroundStyle(mediaFilter == filter ? Color.primary : Color.secondary)
                                         .frame(maxWidth: .infinity)
-                                        .padding(.vertical, 8)
+                                        .padding(.vertical, 7)
                                         .background {
                                             if mediaFilter == filter {
                                                 Capsule().fill(Color(uiColor: .systemBackground)).shadow(color: .black.opacity(0.08), radius: 5, y: 2).matchedGeometryEffect(id: "activeFilter", in: filterTransition)
@@ -102,8 +103,8 @@ struct ProtectedLibraryView: View {
                                     .buttonStyle(.plain)
                                 }
                             }
-                            .padding(3)
-                            .background(Color.secondary.opacity(0.10), in: Capsule())
+                            .padding(2.5)
+                            .background(Color.secondary.opacity(0.09), in: Capsule())
                             .padding(.horizontal, 16)
 
                             if isSelecting {
@@ -125,7 +126,7 @@ struct ProtectedLibraryView: View {
                                     }
                                 }
                             }
-                        }.padding(.bottom, 100)
+                        }.padding(.bottom, 132)
                     }
                     .scrollBounceBehavior(.basedOnSize)
                     .refreshable { await refreshLibrary() }
