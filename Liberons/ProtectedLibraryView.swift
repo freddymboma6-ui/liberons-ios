@@ -505,24 +505,7 @@ private struct ProtectedZoomablePhoto: View {
                             }
                         }
                 )
-                .simultaneousGesture(
-                    DragGesture(minimumDistance: 4)
-                        .onChanged { value in
-                            guard scale > 1.01 else { return }
-                            offset = CGSize(
-                                width: lastOffset.width + value.translation.width,
-                                height: lastOffset.height + value.translation.height
-                            )
-                        }
-                        .onEnded { _ in
-                            guard scale > 1.01 else {
-                                offset = .zero
-                                lastOffset = .zero
-                                return
-                            }
-                            lastOffset = offset
-                        }
-                )
+
                 .onTapGesture(count: 2) {
                     withAnimation(.interactiveSpring(response: 0.30, dampingFraction: 0.84)) {
                         if scale > 1.01 {
