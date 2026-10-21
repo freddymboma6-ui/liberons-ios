@@ -49,7 +49,7 @@ struct ProtectedLibraryView: View {
                 else if store.items.isEmpty { ContentUnavailableView(language.text("Your cloud library", "Votre bibliothèque cloud"), systemImage: "photo.stack", description: Text(language.text("Protected memories will appear here.", "Vos souvenirs protégés apparaîtront ici."))) }
                 else {
                     ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 7, pinnedViews: []) {
+                        LazyVStack(alignment: .leading, spacing: 5, pinnedViews: []) {
                             if billing.isPaymentGrace { BillingLibraryNotice(language: language, restricted: false, days: billing.graceDaysRemaining) }
                             else if billing.isPaymentRestricted { BillingLibraryNotice(language: language, restricted: true, days: 0) }
 
@@ -96,7 +96,7 @@ struct ProtectedLibraryView: View {
                                         }
                                         .foregroundStyle(mediaFilter == filter ? Color.primary : Color.secondary)
                                         .frame(maxWidth: .infinity)
-                                        .padding(.vertical, 5)
+                                        .padding(.vertical, 4)
                                         .background {
                                             if mediaFilter == filter {
                                                 Capsule().fill(Color(uiColor: .systemBackground)).shadow(color: .black.opacity(0.08), radius: 5, y: 2).matchedGeometryEffect(id: "activeFilter", in: filterTransition)
@@ -107,8 +107,9 @@ struct ProtectedLibraryView: View {
                                 }
                             }
                             .padding(2)
-                            .background(Color.secondary.opacity(0.075), in: Capsule())
+                            .background(Color.secondary.opacity(0.065), in: Capsule())
                             .padding(.horizontal, 16)
+                            .padding(.bottom, -1)
 
                             if isSelecting {
                                 Text("\(selectedIDs.count) \(language.text("selected", "sélectionné(s)"))")
@@ -145,6 +146,7 @@ struct ProtectedLibraryView: View {
                             if !isSelecting { selectedIDs.removeAll() }
                         }
                         .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
                         .buttonStyle(.plain)
                     }
                 }
