@@ -36,51 +36,33 @@ struct ProtectedLibraryView: View {
     @State private var mediaFilter: ProtectedLibraryFilter = .all
     @State private var sortNewestFirst = true
     @State private var screenshotIDs: Set<UUID> = []
+    @State private var displayItems: [ProtectedCloudMedia] = []
+    @State private var filterCounts: [ProtectedLibraryFilter: Int] = [:]
     @Namespace private var photoTransition
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 1.5), count: 3)
 
     private func isVideo(_ item: ProtectedCloudMedia) -> Bool { item.mediaType.lowercased().contains("video") }
     private func isScreenshot(_ item: ProtectedCloudMedia) -> Bool { screenshotIDs.contains(item.id) }
-    private func items(for filter: ProtectedLibraryFilter) -> [ProtectedCloudMedia] {
-        store.items.filter { item in
-            switch filter {
-            case .all: return true
-            case .photos: return !isVideo(item) && !isScreenshot(item)
-            case .videos: return isVideo(item)
-            case .screenshots: return isScreenshot(item)
-            }
-        }.sorted {
-            let lhs = $0.capturedAt ?? $0.createdAt
-            let rhs = $1.capturedAt ?? $1.createdAt
-            return sortNewestFirst ? lhs > rhs : lhs < rhs
-        }
-    }
-    private var filteredItems: [ProtectedCloudMedia] { items(for: mediaFilter) }
-    private func count(for filter: ProtectedLibraryFilter) -> Int { items(for: filter).count }
 
     var body: some View {
         NavigationStack {
             Group {
                 if store.isLoading && store.items.isEmpty { ProgressView(language.text("Loading your library…", "Chargement de votre bibliothèque…")) }
-                else if let error = store.errorMessage, store.items.isEmpty { ContentUnavailableView { Label(language.text("Library unavailable", "Bibliothèque indisponible"), systemImage: "exclamationmark.icloud") } description: { Text(error) } actions: { Button(language.text("Try again", "Réessayer")) { Task { await store.refresh() } } } }
+                else if let error = store.errorMessage, store.items.isEmpty { ContentUnavailableView { Label(language.text("Library unavailable", "Bibliothèque indisponible"), systemImage: "exclamationmark.icloud") } description: { Text(error) } actions: { Button(language.text("Try again", "Réessayer")) { Task { await refreshLibrary() } } } }
                 else if store.items.isEmpty { ContentUnavailableView(language.text("Your cloud library", "Votre bibliothèque cloud"), systemImage: "photo.stack", description: Text(language.text("Protected memories will appear here.", "Vos souvenirs protégés apparaîtront ici."))) }
                 else {
                     ScrollView {
-                        VStack(alignment: .leading, spacing: 12) {
+                        LazyVStack(alignment: .leading, spacing: 12, pinnedViews: []) {
                             if billing.isPaymentGrace { BillingLibraryNotice(language: language, restricted: false, days: billing.graceDaysRemaining) }
                             else if billing.isPaymentRestricted { BillingLibraryNotice(language: language, restricted: true, days: 0) }
                             ScrollView(.horizontal, showsIndicators: false) {
                                 HStack(spacing: 8) {
                                     ForEach(ProtectedLibraryFilter.allCases) { filter in
-                                        Button {
-                                            let visibleIDs = Set(items(for: filter).map(\.id))
-                                            withAnimation(.snappy(duration: 0.22)) { mediaFilter = filter }
-                                            if isSelecting { selectedIDs.formIntersection(visibleIDs) }
-                                        } label: {
+                                        Button { selectFilter(filter) } label: {
                                             HStack(spacing: 7) {
                                                 Image(systemName: filter.icon).font(.caption.weight(.semibold))
                                                 Text(filter.title(language)).font(.subheadline.weight(.semibold))
-                                                Text("\(count(for: filter))").font(.caption2.bold()).foregroundStyle(.secondary)
+                                                Text("\(filterCounts[filter, default: 0])").font(.caption2.bold()).foregroundStyle(.secondary)
                                             }
                                             .foregroundStyle(mediaFilter == filter ? Color.primary : Color.secondary)
                                             .padding(.horizontal, 13).padding(.vertical, 9)
@@ -92,17 +74,17 @@ struct ProtectedLibraryView: View {
                             HStack {
                                 Label(language.text("Protected", "Protégés"), systemImage: "checkmark.shield.fill").foregroundStyle(.green)
                                 Spacer()
-                                Text(isSelecting ? "\(selectedIDs.count) \(language.text("selected", "sélectionné(s)"))" : "\(filteredItems.count) \(language.text("items", "éléments"))").foregroundStyle(.secondary)
+                                Text(isSelecting ? "\(selectedIDs.count) \(language.text("selected", "sélectionné(s)"))" : "\(displayItems.count) \(language.text("items", "éléments"))").foregroundStyle(.secondary)
                                 Menu {
-                                    Button { sortNewestFirst = true } label: { Label(language.text("Newest first", "Plus récents"), systemImage: sortNewestFirst ? "checkmark" : "arrow.down") }
-                                    Button { sortNewestFirst = false } label: { Label(language.text("Oldest first", "Plus anciens"), systemImage: !sortNewestFirst ? "checkmark" : "arrow.up") }
+                                    Button { setSort(newestFirst: true) } label: { Label(language.text("Newest first", "Plus récents"), systemImage: sortNewestFirst ? "checkmark" : "arrow.down") }
+                                    Button { setSort(newestFirst: false) } label: { Label(language.text("Oldest first", "Plus anciens"), systemImage: !sortNewestFirst ? "checkmark" : "arrow.up") }
                                 } label: { Image(systemName: "arrow.up.arrow.down").frame(width: 30, height: 30).background(.secondary.opacity(0.09), in: Circle()) }
                             }.font(.subheadline.bold()).padding(.horizontal, 16)
-                            if filteredItems.isEmpty {
+                            if displayItems.isEmpty {
                                 ContentUnavailableView(language.text("Nothing here yet", "Rien ici pour le moment"), systemImage: mediaFilter.icon, description: Text(language.text("Protected media in this category will appear here.", "Les médias protégés de cette catégorie apparaîtront ici."))).frame(maxWidth: .infinity).padding(.vertical, 42)
                             } else {
                                 LazyVGrid(columns: columns, spacing: 1.5) {
-                                    ForEach(filteredItems) { item in
+                                    ForEach(displayItems) { item in
                                         ProtectedLibraryTile(item: item).matchedTransitionSource(id: item.id, in: photoTransition)
                                             .overlay(alignment: .topTrailing) { if isSelecting { Image(systemName: selectedIDs.contains(item.id) ? "checkmark.circle.fill" : "circle").font(.title2).foregroundStyle(.white).shadow(radius: 3).padding(7) } }
                                             .contentShape(Rectangle()).onTapGesture { isSelecting ? toggle(item.id) : (viewerItem = item) }.onLongPressGesture(minimumDuration: 0.35) { if !isSelecting { isSelecting = true; selectedIDs = [item.id] } }
@@ -110,7 +92,9 @@ struct ProtectedLibraryView: View {
                                 }
                             }
                         }.padding(.bottom, 100)
-                    }.refreshable { async let a:Void=store.refresh(); async let b:Void=billing.refresh(); _=await(a,b); await refreshScreenshotIDs() }
+                    }
+                    .scrollBounceBehavior(.basedOnSize)
+                    .refreshable { await refreshLibrary() }
                 }
             }
             .navigationTitle(isSelecting ? language.text("Select", "Sélection") : language.text("Library", "Bibliothèque"))
@@ -119,10 +103,10 @@ struct ProtectedLibraryView: View {
                 if isSelecting {
                     HStack(spacing: 12) {
                         Button {
-                            let visible = Set(filteredItems.map(\.id))
+                            let visible = Set(displayItems.map(\.id))
                             if !visible.isEmpty && selectedIDs == visible { selectedIDs.removeAll() } else { selectedIDs = visible }
                         } label: {
-                            let visible = Set(filteredItems.map(\.id))
+                            let visible = Set(displayItems.map(\.id))
                             Text(!visible.isEmpty && selectedIDs == visible ? language.text("Deselect all", "Tout désélectionner") : language.text("Select all", "Tout sélectionner")).font(.subheadline.weight(.semibold))
                         }
                         Spacer()
@@ -132,30 +116,79 @@ struct ProtectedLibraryView: View {
                     }.padding(.horizontal, 18).padding(.vertical, 12).background(.ultraThinMaterial)
                 }
             }
-            .task { async let a:Void=store.refresh(); async let b:Void=billing.refresh(); _=await(a,b); await refreshScreenshotIDs() }
-            .fullScreenCover(item: $viewerItem) { item in ProtectedGalleryViewer(items: filteredItems, initialID: item.id, language: language, billing: billing).onDisappear { Task { await store.refresh(); await refreshScreenshotIDs() } } }
+            .task { await refreshLibrary() }
+            .fullScreenCover(item: $viewerItem) { item in ProtectedGalleryViewer(items: displayItems, initialID: item.id, language: language, billing: billing).onDisappear { Task { await refreshLibrary() } } }
             .sheet(isPresented:$showBulkDelete){VStack(spacing:0){Capsule().fill(.secondary.opacity(0.35)).frame(width:38,height:5).padding(.top,10);VStack(spacing:18){Image(systemName:"trash.fill").font(.system(size:28,weight:.semibold)).foregroundStyle(.red).frame(width:62,height:62).background(Color.red.opacity(0.10),in:Circle());VStack(spacing:8){Text(language.text("Delete from Libérons?","Supprimer de Libérons ?")).font(.title2.bold()).multilineTextAlignment(.center);Text(language.text("The selected protected memories will be permanently removed from Libérons Cloud.","Les souvenirs protégés sélectionnés seront supprimés définitivement de Libérons Cloud.")).font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)};Label(language.text("This cannot be undone.","Cette action est irréversible."),systemImage:"exclamationmark.triangle.fill").font(.footnote.bold()).foregroundStyle(.red).padding(12).frame(maxWidth:.infinity).background(Color.red.opacity(0.08),in:RoundedRectangle(cornerRadius:14));Button{showBulkDelete=false;Task{await deleteSelected()}}label:{Text(language.text("Delete permanently","Supprimer définitivement")).font(.headline).frame(maxWidth:.infinity).padding(.vertical,15).foregroundStyle(.white).background(Color.red,in:RoundedRectangle(cornerRadius:16))}.buttonStyle(.plain);Button(language.text("Cancel","Annuler")){showBulkDelete=false}.font(.headline).foregroundStyle(.primary).padding(.bottom,4)}.padding(24)}.presentationDetents([.height(410)]).presentationDragIndicator(.hidden).presentationCornerRadius(30)}
         }
     }
+
     private func toggle(_ id: UUID) { if selectedIDs.contains(id) { selectedIDs.remove(id) } else { selectedIDs.insert(id) } }
-    @MainActor private func deleteSelected() async { deletingSelection = true; for id in selectedIDs { try? await SupabaseService.deleteCloudMedia(assetID: id) }; selectedIDs.removeAll(); isSelecting = false; deletingSelection = false; await store.refresh(); await refreshScreenshotIDs() }
-    @MainActor private func refreshScreenshotIDs() async {
-        let pairs = store.items.compactMap { item -> (UUID, String)? in guard !isVideo(item), let id = item.iosLocalIdentifier else { return nil }; return (item.id, id) }
-        guard !pairs.isEmpty else { screenshotIDs = []; return }
-        let mapping = Dictionary(uniqueKeysWithValues: pairs.map { ($0.1, $0.0) })
-        let identifiers = Array(mapping.keys)
-        let found: Set<UUID> = await Task.detached(priority: .utility) {
-            var ids = Set<UUID>()
-            let chunkSize = 500
-            for start in stride(from: 0, to: identifiers.count, by: chunkSize) {
-                let end = min(start + chunkSize, identifiers.count)
-                let result = PHAsset.fetchAssets(withLocalIdentifiers: Array(identifiers[start..<end]), options: nil)
-                result.enumerateObjects { asset, _, _ in
-                    if asset.mediaSubtypes.contains(.photoScreenshot), let id = mapping[asset.localIdentifier] { ids.insert(id) }
-                }
+
+    @MainActor private func selectFilter(_ filter: ProtectedLibraryFilter) {
+        mediaFilter = filter
+        rebuildDisplayItems()
+        if isSelecting { selectedIDs.formIntersection(Set(displayItems.map(\.id))) }
+    }
+
+    @MainActor private func setSort(newestFirst: Bool) {
+        guard sortNewestFirst != newestFirst else { return }
+        sortNewestFirst = newestFirst
+        rebuildDisplayItems()
+    }
+
+    @MainActor private func rebuildDisplayItems() {
+        var all = 0, photos = 0, videos = 0, screenshots = 0
+        var visible: [ProtectedCloudMedia] = []
+        visible.reserveCapacity(store.items.count)
+        for item in store.items {
+            all += 1
+            let video = isVideo(item)
+            let screenshot = isScreenshot(item)
+            if video { videos += 1 } else if screenshot { screenshots += 1 } else { photos += 1 }
+            let include: Bool
+            switch mediaFilter {
+            case .all: include = true
+            case .photos: include = !video && !screenshot
+            case .videos: include = video
+            case .screenshots: include = screenshot
             }
-            return ids
-        }.value
+            if include { visible.append(item) }
+        }
+        visible.sort {
+            let lhs = $0.capturedAt ?? $0.createdAt
+            let rhs = $1.capturedAt ?? $1.createdAt
+            return sortNewestFirst ? lhs > rhs : lhs < rhs
+        }
+        filterCounts = [.all: all, .photos: photos, .videos: videos, .screenshots: screenshots]
+        displayItems = visible
+    }
+
+    @MainActor private func refreshLibrary() async {
+        async let a: Void = store.refresh()
+        async let b: Void = billing.refresh()
+        _ = await (a, b)
+        await refreshScreenshotIDs()
+        rebuildDisplayItems()
+    }
+
+    @MainActor private func deleteSelected() async { deletingSelection = true; for id in selectedIDs { try? await SupabaseService.deleteCloudMedia(assetID: id) }; selectedIDs.removeAll(); isSelecting = false; deletingSelection = false; await refreshLibrary() }
+
+    @MainActor private func refreshScreenshotIDs() async {
+        let pairs = store.items.compactMap { item -> (UUID, String)? in guard !isVideo(item), let id = item.iosLocalIdentifier, !id.isEmpty else { return nil }; return (item.id, id) }
+        guard !pairs.isEmpty else { screenshotIDs = []; return }
+        var mapping: [String: [UUID]] = [:]
+        for (uuid, localIdentifier) in pairs { mapping[localIdentifier, default: []].append(uuid) }
+        let identifiers = Array(mapping.keys)
+        var found = Set<UUID>()
+        let chunkSize = 500
+        for start in stride(from: 0, to: identifiers.count, by: chunkSize) {
+            let end = min(start + chunkSize, identifiers.count)
+            let result = PHAsset.fetchAssets(withLocalIdentifiers: Array(identifiers[start..<end]), options: nil)
+            result.enumerateObjects { asset, _, _ in
+                if asset.mediaSubtypes.contains(.photoScreenshot) { for id in mapping[asset.localIdentifier] ?? [] { found.insert(id) } }
+            }
+            await Task.yield()
+        }
         screenshotIDs = found
     }
 }
