@@ -1,0 +1,62 @@
+name: Finish protected library Photos polish
+on:
+  push:
+    paths:
+      - '.github/workflows/finish-protected-library-photos-polish.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: library-protected-media
+      - name: Apply Photos-style interaction and performance polish
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('Liberons/ProtectedLibraryView.swift')
+          s = p.read_text()
+
+          old = '.fullScreenCover(item: $viewerItem) { item in ProtectedGalleryViewer(items: displayItems, initialID: item.id, language: language, billing: billing).onDisappear { Task { await refreshLibrary() } } }'
+          new = '.fullScreenCover(item: $viewerItem) { item in ProtectedGalleryViewer(items: displayItems, initialID: item.id, language: language, billing: billing).navigationTransition(.zoom(sourceID: item.id, in: photoTransition)).onDisappear { Task { await refreshLibrary() } } }'
+          if old not in s:
+              raise SystemExit('viewer presentation anchor not found')
+          s = s.replace(old, new, 1)
+
+          old = '@Environment(\\.dismiss) private var dismiss; @State private var selection:UUID; @State private var showInfo=false; @State private var verticalOffset:CGFloat=0\n    init(items:[ProtectedCloudMedia],initialID:UUID,language:LanguageStore,billing:CloudStorageSummary){self.items=items;self.initialID=initialID;self.language=language;self.billing=billing;_selection=State(initialValue:initialID)}\n    private var current:ProtectedCloudMedia?{items.first{$0.id==selection}}'
+          new = '@Environment(\\.dismiss) private var dismiss; @State private var selection:UUID; @State private var showInfo=false; @State private var verticalOffset:CGFloat=0\n    private let indexByID:[UUID:Int]\n    init(items:[ProtectedCloudMedia],initialID:UUID,language:LanguageStore,billing:CloudStorageSummary){self.items=items;self.initialID=initialID;self.language=language;self.billing=billing;self.indexByID=Dictionary(uniqueKeysWithValues:items.enumerated().map{($0.element.id,$0.offset)});_selection=State(initialValue:initialID)}\n    private var currentIndex:Int?{indexByID[selection]}\n    private var current:ProtectedCloudMedia?{guard let i=currentIndex,items.indices.contains(i) else{return nil};return items[i]}'
+          if old not in s:
+              raise SystemExit('viewer state anchor not found')
+          s = s.replace(old, new, 1)
+
+          old = 'if let i=items.firstIndex(where:{$0.id==selection}){Text("\\(i+1) / \\(items.count)")'
+          new = 'if let i=currentIndex{Text("\\(i+1) / \\(items.count)")'
+          if old not in s:
+              raise SystemExit('viewer counter anchor not found')
+          s = s.replace(old, new, 1)
+
+          old = '}.tabViewStyle(.page(indexDisplayMode:.never)).ignoresSafeArea().offset(y:verticalOffset);VStack{'
+          new = '}.tabViewStyle(.page(indexDisplayMode:.never)).ignoresSafeArea().offset(y:verticalOffset).scaleEffect(1-min(max(verticalOffset,0)/1800,0.055));VStack{'
+          if old not in s:
+              raise SystemExit('viewer page anchor not found')
+          s = s.replace(old, new, 1)
+
+          old = 'var body: some View { ZStack{Color.black.ignoresSafeArea();TabView(selection:$selection)'
+          new = 'var body: some View { ZStack{Color.black.opacity(1-min(max(verticalOffset,0)/520,0.72)).ignoresSafeArea();TabView(selection:$selection)'
+          if old not in s:
+              raise SystemExit('viewer background anchor not found')
+          s = s.replace(old, new, 1)
+
+          p.write_text(s)
+          PY
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Liberons/ProtectedLibraryView.swift
+          git diff --cached --quiet && exit 0
+          git commit -m "Polish protected library Photos interactions"
+          git push origin HEAD:library-protected-media
