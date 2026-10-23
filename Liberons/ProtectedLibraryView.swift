@@ -64,7 +64,7 @@ struct ProtectedLibraryView: View {
                                     .frame(width: 26, height: 26)
                                     .background(Color.green.opacity(0.09), in: Circle())
 
-                                Text("\(filterCounts[.all, default: store.items.count].formatted()) \(language.text("protected memories", "souvenirs protégés"))")
+                                Text("\(Int(store.totalCount).formatted()) \(language.text("protected memories", "souvenirs protégés"))")
                                     .font(.subheadline.weight(.semibold))
                                     .lineLimit(1)
 
@@ -147,6 +147,11 @@ struct ProtectedLibraryView: View {
                                 LazyVGrid(columns: columns, spacing: 1.5) {
                                     ForEach(displayItems) { item in
                                         ProtectedLibraryTile(item: item).matchedTransitionSource(id: item.id, in: photoTransition)
+                                            .task {
+                                                let before = store.items.count
+                                                await store.loadMoreIfNeeded(currentItem: item)
+                                                if store.items.count != before { rebuildDisplayItems() }
+                                            }
                                             .overlay(alignment: .topTrailing) { if isSelecting { Image(systemName: selectedIDs.contains(item.id) ? "checkmark.circle.fill" : "circle").font(.title2).foregroundStyle(.white).shadow(radius: 3).padding(7) } }
                                             .contentShape(Rectangle()).onTapGesture { isSelecting ? toggle(item.id) : (viewerItem = item) }.onLongPressGesture(minimumDuration: 0.35) { if !isSelecting { isSelecting = true; selectedIDs = [item.id] } }
                                     }
@@ -201,14 +206,21 @@ struct ProtectedLibraryView: View {
     @MainActor private func selectFilter(_ filter: ProtectedLibraryFilter) {
         guard mediaFilter != filter else { return }
         withAnimation(.snappy(duration: 0.24)) { mediaFilter = filter }
-        rebuildDisplayItems()
-        if isSelecting { selectedIDs.formIntersection(Set(displayItems.map(\.id))) }
+        selectedIDs.removeAll()
+        Task {
+            await store.refresh(filter: filter.rawValue, newestFirst: sortNewestFirst)
+            rebuildDisplayItems()
+        }
     }
 
     @MainActor private func setSort(newestFirst: Bool) {
         guard sortNewestFirst != newestFirst else { return }
         sortNewestFirst = newestFirst
-        rebuildDisplayItems()
+        selectedIDs.removeAll()
+        Task {
+            await store.refresh(filter: mediaFilter.rawValue, newestFirst: newestFirst)
+            rebuildDisplayItems()
+        }
     }
 
     @MainActor private func rebuildDisplayItems() {
@@ -232,12 +244,12 @@ struct ProtectedLibraryView: View {
             let rhs = $1.capturedAt ?? $1.createdAt
             return sortNewestFirst ? lhs > rhs : lhs < rhs
         }
-        filterCounts = [.all: all, .photos: photos, .videos: videos]
+        filterCounts = [.all: Int(store.totalCount), .photos: Int(store.photoCount), .videos: Int(store.videoCount)]
         displayItems = visible
     }
 
     @MainActor private func refreshLibrary() async {
-        async let a: Void = store.refresh()
+        async let a: Void = store.refresh(filter: mediaFilter.rawValue, newestFirst: sortNewestFirst)
         async let b: Void = billing.refresh()
         _ = await (a, b)
         rebuildDisplayItems()
