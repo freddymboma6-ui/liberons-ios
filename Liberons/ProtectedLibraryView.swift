@@ -284,6 +284,7 @@ private struct ProtectedGalleryViewer: View {
     @State private var dismissTranslation: CGSize = .zero
     @State private var verticalDismissLocked = false
     @State private var isDismissing = false
+    @State private var chromeVisible = true
     private let indexByID: [UUID: Int]
 
     init(items: [ProtectedCloudMedia], initialID: UUID, language: LanguageStore, billing: CloudStorageSummary) {
@@ -307,6 +308,7 @@ private struct ProtectedGalleryViewer: View {
       .tabViewStyle(.page(indexDisplayMode: .never))
       .ignoresSafeArea()
       .onChange(of: selection) { _, newID in
+          chromeVisible = true
           prefetchNeighbors(around: newID)
       }
       .task {
@@ -331,10 +333,15 @@ private struct ProtectedGalleryViewer: View {
       }.padding(.horizontal, 8).padding(.top, 4)
       Spacer()
   }
-  .opacity(verticalDismissLocked ? Double(max(0, 1 - dismissProgress * 4)) : 1)
-  .allowsHitTesting(!verticalDismissLocked)
+  .opacity(verticalDismissLocked ? Double(max(0, 1 - dismissProgress * 4)) : (chromeVisible ? 1 : 0))
+  .allowsHitTesting(!verticalDismissLocked && chromeVisible)
+  .animation(.easeOut(duration: 0.18), value: chromeVisible)
         }
         .contentShape(Rectangle())
+        .onTapGesture {
+            guard !verticalDismissLocked, !showInfo else { return }
+            withAnimation(.easeOut(duration: 0.18)) { chromeVisible.toggle() }
+        }
         .simultaneousGesture(
   DragGesture(minimumDistance: 10, coordinateSpace: .global)
       .onChanged { value in
