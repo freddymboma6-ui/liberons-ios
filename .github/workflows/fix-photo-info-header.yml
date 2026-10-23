@@ -1,0 +1,23 @@
+name: Fix photo info header
+on:
+  push:
+    branches:
+      - library-protected-media
+    paths:
+      - .github/workflows/fix-photo-info-header.yml
+permissions:
+  contents: write
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: library-protected-media
+      - run: python3 .github/scripts/fix_photo_info_header.py
+      - run: git diff --check
+      - run: git config user.name gallery-fix
+      - run: git config user.email gallery-fix@users.noreply.github.com
+      - run: git add Liberons/ProtectedLibraryView.swift
+      - run: git commit -m "Keep photo info control in top header"
+      - run: git push origin HEAD:library-protected-media
