@@ -14,10 +14,12 @@ jobs:
       - run: python3 .github/scripts/move_gallery_info_button.py
       - run: |
           git diff --check
-          grep -q 'buttonStyle(.plain).padding(.trailing, 54)' Liberons/ProtectedLibraryView.swift
+          grep -q 'buttonStyle(.plain).offset(y: 64)' Liberons/ProtectedLibraryView.swift
+          ! grep -q 'isVideoMuted' Liberons/ProtectedLibraryView.swift
+          ! grep -q 'speaker.slash.fill' Liberons/ProtectedLibraryView.swift
       - run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add Liberons/ProtectedLibraryView.swift
-          git commit -m 'Move gallery info button away from native audio control'
+          git commit -m 'Keep native audio and place info below it'
           git push origin HEAD:library-protected-media
