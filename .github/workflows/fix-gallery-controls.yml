@@ -1,0 +1,23 @@
+name: Fix gallery controls
+on:
+  push:
+    branches:
+      - library-protected-media
+    paths:
+      - .github/workflows/fix-gallery-controls.yml
+permissions:
+  contents: write
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: library-protected-media
+      - run: python3 .github/scripts/move_gallery_info_button.py
+      - run: git diff --check
+      - run: git config user.name gallery-fix
+      - run: git config user.email gallery-fix@users.noreply.github.com
+      - run: git add Liberons/ProtectedLibraryView.swift
+      - run: git commit -m "Fix duplicate-looking gallery controls"
+      - run: git push origin HEAD:library-protected-media
