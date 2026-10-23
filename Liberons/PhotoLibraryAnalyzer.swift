@@ -16,7 +16,10 @@ final class PhotoLibraryAnalyzer: NSObject, ObservableObject, PHPhotoLibraryChan
     @Published var errorMessage: String?
 
     private let defaults = UserDefaults.standard
-    private let cacheVersion = 1
+    // v2 invalidates the old dashboard cache whose byte estimate could survive
+    // after the photo library changed and disagree with Storage Analysis.
+    private let cacheVersion = 2
+    private let maximumCacheAge: TimeInterval = 6 * 60 * 60
     private var pullToRefreshObserver: NSObjectProtocol?
     private enum Key { static let version="liberons.photoScan.version"; static let photos="liberons.photoScan.photos"; static let videos="liberons.photoScan.videos"; static let bytes="liberons.photoScan.bytes"; static let total="liberons.photoScan.total"; static let date="liberons.photoScan.date" }
 
@@ -37,7 +40,13 @@ final class PhotoLibraryAnalyzer: NSObject, ObservableObject, PHPhotoLibraryChan
     var canReadLibrary: Bool { authorizationStatus == .authorized || authorizationStatus == .limited }
     var hasCompletedScan: Bool { lastScanDate != nil && totalItems > 0 }
 
-    func requestAccessAndScan() async { authorizationStatus = await PHPhotoLibrary.requestAuthorization(for: .readWrite); guard canReadLibrary else { return }; refreshCountsFast(); if !hasCompletedScan { await scan(force: true) } }
+    func requestAccessAndScan() async {
+        authorizationStatus = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
+        guard canReadLibrary else { return }
+        let previousTotal = totalItems
+        refreshCountsFast()
+        if !hasCompletedScan || previousTotal != totalItems { await scan(force: true) }
+    }
 
     func scan(force: Bool = false) async {
         guard canReadLibrary, !isScanning else { return }
@@ -61,8 +70,27 @@ final class PhotoLibraryAnalyzer: NSObject, ObservableObject, PHPhotoLibraryChan
         if expectedTotal != result.1 { refreshCountsFast() }
     }
 
-    func refreshIfNeeded() async { authorizationStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite); guard canReadLibrary else { return }; refreshCountsFast(); if !hasCompletedScan { await scan(force: true) } }
-    func refreshDashboardFast() async { authorizationStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite); guard canReadLibrary else { return }; refreshCountsFast(); persistCountsOnly(); await Task.yield() }
+    func refreshIfNeeded() async {
+        authorizationStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        guard canReadLibrary else { return }
+        let previousTotal = totalItems
+        let previousScanDate = lastScanDate
+        refreshCountsFast()
+        let countChanged = previousTotal != totalItems
+        let stale = previousScanDate.map { Date().timeIntervalSince($0) > maximumCacheAge } ?? true
+        if !hasCompletedScan || countChanged || libraryHasChanged || stale {
+            await scan(force: true)
+        }
+    }
+
+    // A manual dashboard refresh must refresh the byte estimate too, not only
+    // the asset counters. This keeps Home aligned with Storage Analysis.
+    func refreshDashboardFast() async {
+        authorizationStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        guard canReadLibrary else { return }
+        await scan(force: true)
+    }
+
     func scanNow() async { await scan(force: true) }
 
     nonisolated func photoLibraryDidChange(_ changeInstance: PHChange) { Task { @MainActor [weak self] in guard let self else { return }; self.libraryHasChanged = true; self.refreshCountsFast(); self.persistCountsOnly() } }
