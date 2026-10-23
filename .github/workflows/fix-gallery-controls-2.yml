@@ -1,0 +1,23 @@
+name: Gallery controls focused fix
+on:
+  push:
+    branches:
+      - library-protected-media
+    paths:
+      - .github/scripts/move_gallery_info_button.py
+permissions:
+  contents: write
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: library-protected-media
+      - run: python3 .github/scripts/move_gallery_info_button.py
+      - run: git diff --check
+      - run: git config user.name gallery-fix
+      - run: git config user.email gallery-fix@users.noreply.github.com
+      - run: git add Liberons/ProtectedLibraryView.swift
+      - run: git commit -m "Keep one native audio control and separate info"
+      - run: git push origin HEAD:library-protected-media
