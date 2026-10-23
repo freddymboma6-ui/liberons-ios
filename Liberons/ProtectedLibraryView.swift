@@ -141,7 +141,16 @@ struct ProtectedLibraryView: View {
                                     .padding(.top, 1)
                             }
 
-                            if displayItems.isEmpty {
+                            if displayItems.isEmpty && !store.items.isEmpty {
+                                VStack(spacing: 10) {
+                                    ProgressView()
+                                    Text(language.text("Loading protected memories…", "Chargement des souvenirs protégés…"))
+                                        .font(.footnote)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 42)
+                            } else if displayItems.isEmpty {
                                 ContentUnavailableView(language.text("Nothing here yet", "Rien ici pour le moment"), systemImage: mediaFilter.icon, description: Text(language.text("Protected media in this category will appear here.", "Les médias protégés de cette catégorie apparaîtront ici."))).frame(maxWidth: .infinity).padding(.vertical, 42)
                             } else {
                                 LazyVGrid(columns: columns, spacing: 1.5) {
@@ -271,6 +280,7 @@ private struct ProtectedGalleryViewer: View {
     @Environment(\.dismiss) private var dismiss
     @State private var selection: UUID
     @State private var showInfo = false
+    @State private var infoDetent: PresentationDetent = .fraction(0.64)
     @State private var dismissTranslation: CGSize = .zero
     @State private var verticalDismissLocked = false
     @State private var isDismissing = false
@@ -365,7 +375,10 @@ private struct ProtectedGalleryViewer: View {
             including: showInfo ? .all : .none
         )
         .sheet(isPresented: $showInfo) {
-  if let current { ProtectedMediaDetail(item: current, language: language, billing: billing, closeViewer: { showInfo = false; dismiss() }).presentationDetents([.fraction(0.32), .fraction(0.64), .large]).presentationDragIndicator(.visible).presentationCornerRadius(34).presentationBackground(.regularMaterial).presentationContentInteraction(.resizes).presentationBackgroundInteraction(.enabled(upThrough: .fraction(0.32))) }
+  if let current { ProtectedMediaDetail(item: current, language: language, billing: billing, closeViewer: { showInfo = false; dismiss() }).presentationDetents([.fraction(0.32), .fraction(0.64), .large], selection: $infoDetent).presentationDragIndicator(.visible).presentationCornerRadius(34).presentationBackground(.regularMaterial).presentationContentInteraction(.resizes).presentationBackgroundInteraction(.enabled(upThrough: .fraction(0.32))) }
+        }
+        .onChange(of: showInfo) { _, isPresented in
+            if isPresented { infoDetent = .fraction(0.64) }
         }
     }
 
