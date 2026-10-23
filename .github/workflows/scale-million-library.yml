@@ -19,75 +19,26 @@ jobs:
           from pathlib import Path
           p=Path('Liberons/ProtectedLibraryView.swift')
           s=p.read_text()
-
           old='Text("\\(filterCounts[.all, default: store.items.count].formatted()) \\(language.text("protected memories", "souvenirs protégés"))")'
           new='Text("\\(Int(store.totalCount).formatted()) \\(language.text("protected memories", "souvenirs protégés"))")'
-          if old not in s: raise SystemExit('count label anchor missing')
+          assert old in s, 'count label anchor missing'
           s=s.replace(old,new,1)
-
           old='ProtectedLibraryTile(item: item).matchedTransitionSource(id: item.id, in: photoTransition)'
           new='ProtectedLibraryTile(item: item).matchedTransitionSource(id: item.id, in: photoTransition)\n                                            .task {\n                                                let before = store.items.count\n                                                await store.loadMoreIfNeeded(currentItem: item)\n                                                if store.items.count != before { rebuildDisplayItems() }\n                                            }'
-          if old not in s: raise SystemExit('tile anchor missing')
+          assert old in s, 'tile anchor missing'
           s=s.replace(old,new,1)
-
-          old='''    @MainActor private func selectFilter(_ filter: ProtectedLibraryFilter) {
-        guard mediaFilter != filter else { return }
-        withAnimation(.snappy(duration: 0.24)) { mediaFilter = filter }
-        rebuildDisplayItems()
-        if isSelecting { selectedIDs.formIntersection(Set(displayItems.map(\\.id))) }
-    }
-
-    @MainActor private func setSort(newestFirst: Bool) {
-        guard sortNewestFirst != newestFirst else { return }
-        sortNewestFirst = newestFirst
-        rebuildDisplayItems()
-    }
-'''
-          new='''    @MainActor private func selectFilter(_ filter: ProtectedLibraryFilter) {
-        guard mediaFilter != filter else { return }
-        withAnimation(.snappy(duration: 0.24)) { mediaFilter = filter }
-        selectedIDs.removeAll()
-        Task {
-            await store.refresh(filter: filter.rawValue, newestFirst: sortNewestFirst)
-            rebuildDisplayItems()
-        }
-    }
-
-    @MainActor private func setSort(newestFirst: Bool) {
-        guard sortNewestFirst != newestFirst else { return }
-        sortNewestFirst = newestFirst
-        selectedIDs.removeAll()
-        Task {
-            await store.refresh(filter: mediaFilter.rawValue, newestFirst: newestFirst)
-            rebuildDisplayItems()
-        }
-    }
-'''
-          if old not in s: raise SystemExit('filter/sort anchor missing')
+          old='    @MainActor private func selectFilter(_ filter: ProtectedLibraryFilter) {\n        guard mediaFilter != filter else { return }\n        withAnimation(.snappy(duration: 0.24)) { mediaFilter = filter }\n        rebuildDisplayItems()\n        if isSelecting { selectedIDs.formIntersection(Set(displayItems.map(\\.id))) }\n    }\n\n    @MainActor private func setSort(newestFirst: Bool) {\n        guard sortNewestFirst != newestFirst else { return }\n        sortNewestFirst = newestFirst\n        rebuildDisplayItems()\n    }\n'
+          new='    @MainActor private func selectFilter(_ filter: ProtectedLibraryFilter) {\n        guard mediaFilter != filter else { return }\n        withAnimation(.snappy(duration: 0.24)) { mediaFilter = filter }\n        selectedIDs.removeAll()\n        Task {\n            await store.refresh(filter: filter.rawValue, newestFirst: sortNewestFirst)\n            rebuildDisplayItems()\n        }\n    }\n\n    @MainActor private func setSort(newestFirst: Bool) {\n        guard sortNewestFirst != newestFirst else { return }\n        sortNewestFirst = newestFirst\n        selectedIDs.removeAll()\n        Task {\n            await store.refresh(filter: mediaFilter.rawValue, newestFirst: newestFirst)\n            rebuildDisplayItems()\n        }\n    }\n'
+          assert old in s, 'filter/sort anchor missing'
           s=s.replace(old,new,1)
-
-          old='''        filterCounts = [.all: all, .photos: photos, .videos: videos]
-        displayItems = visible
-'''
-          new='''        filterCounts = [
-            .all: Int(store.totalCount),
-            .photos: Int(store.photoCount),
-            .videos: Int(store.videoCount)
-        ]
-        displayItems = visible
-'''
-          if old not in s: raise SystemExit('counts anchor missing')
+          old='        filterCounts = [.all: all, .photos: photos, .videos: videos]\n        displayItems = visible\n'
+          new='        filterCounts = [.all: Int(store.totalCount), .photos: Int(store.photoCount), .videos: Int(store.videoCount)]\n        displayItems = visible\n'
+          assert old in s, 'counts anchor missing'
           s=s.replace(old,new,1)
-
-          old='''        async let a: Void = store.refresh()
-        async let b: Void = billing.refresh()
-'''
-          new='''        async let a: Void = store.refresh(filter: mediaFilter.rawValue, newestFirst: sortNewestFirst)
-        async let b: Void = billing.refresh()
-'''
-          if old not in s: raise SystemExit('refresh anchor missing')
+          old='        async let a: Void = store.refresh()\n        async let b: Void = billing.refresh()\n'
+          new='        async let a: Void = store.refresh(filter: mediaFilter.rawValue, newestFirst: sortNewestFirst)\n        async let b: Void = billing.refresh()\n'
+          assert old in s, 'refresh anchor missing'
           s=s.replace(old,new,1)
-
           p.write_text(s)
           PY
       - name: Commit
