@@ -38,18 +38,16 @@ jobs:
                             } else if displayItems.isEmpty {
                                 ContentUnavailableView(language.text("Nothing here yet", "Rien ici pour le moment"), systemImage: mediaFilter.icon, description: Text(language.text("Protected media in this category will appear here.", "Les médias protégés de cette catégorie apparaîtront ici."))).frame(maxWidth: .infinity).padding(.vertical, 42)
                             } else {'''
-          if old not in s:
-              raise SystemExit('Library empty-state block not found')
-          s = s.replace(old, new, 1)
+          if old in s:
+              s = s.replace(old, new, 1)
 
           old = '''    @State private var showInfo = false
     @State private var dismissTranslation: CGSize = .zero'''
           new = '''    @State private var showInfo = false
     @State private var infoDetent: PresentationDetent = .fraction(0.64)
     @State private var dismissTranslation: CGSize = .zero'''
-          if old not in s:
-              raise SystemExit('showInfo state block not found')
-          s = s.replace(old, new, 1)
+          if old in s:
+              s = s.replace(old, new, 1)
 
           old = '''  if let current { ProtectedMediaDetail(item: current, language: language, billing: billing, closeViewer: { showInfo = false; dismiss() }).presentationDetents([.fraction(0.32), .fraction(0.64), .large]).presentationDragIndicator(.visible).presentationCornerRadius(34).presentationBackground(.regularMaterial).presentationContentInteraction(.resizes).presentationBackgroundInteraction(.enabled(upThrough: .fraction(0.32))) }
         }'''
@@ -58,10 +56,15 @@ jobs:
         .onChange(of: showInfo) { _, isPresented in
             if isPresented { infoDetent = .fraction(0.64) }
         }'''
-          if old not in s:
-              raise SystemExit('Info sheet block not found')
-          s = s.replace(old, new, 1)
+          if old in s:
+              s = s.replace(old, new, 1)
 
+          if 'Loading protected memories…' not in s:
+              raise SystemExit('loading patch missing')
+          if '@State private var infoDetent: PresentationDetent = .fraction(0.64)' not in s:
+              raise SystemExit('detent state patch missing')
+          if 'selection: $infoDetent' not in s:
+              raise SystemExit('detent selection patch missing')
           p.write_text(s)
           PY
       - name: Commit
