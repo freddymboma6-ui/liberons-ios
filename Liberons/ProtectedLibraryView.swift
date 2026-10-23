@@ -325,12 +325,43 @@ private struct ProtectedGalleryViewer: View {
   }
 
   VStack {
-      HStack {
-          Button { dismiss() } label: { Image(systemName: "chevron.left").font(.title2.bold()).foregroundStyle(.white).frame(width: 48, height: 48).background(.black.opacity(0.45), in: Circle()) }.buttonStyle(.plain)
-          if let i = currentIndex { Text("\(i + 1) / \(items.count)").font(.subheadline.bold()).foregroundStyle(.white).padding(8).background(.black.opacity(0.45), in: Capsule()) }
+      HStack(alignment: .top) {
+          HStack(spacing: 10) {
+              Button { dismiss() } label: {
+                  Image(systemName: "chevron.left")
+                      .font(.title2.bold())
+                      .foregroundStyle(.white)
+                      .frame(width: 48, height: 48)
+                      .background(.black.opacity(0.45), in: Circle())
+              }
+              .buttonStyle(.plain)
+
+              if let i = currentIndex {
+                  Text("\(i + 1) / \(items.count)")
+                      .font(.subheadline.bold())
+                      .foregroundStyle(.white)
+                      .padding(.horizontal, 10)
+                      .frame(height: 48)
+                      .background(.black.opacity(0.45), in: Capsule())
+              }
+          }
+
           Spacer()
-          Button { showInfo = true } label: { Image(systemName: "ellipsis.circle.fill").font(.title2).foregroundStyle(.white).frame(width: 56, height: 56) }.buttonStyle(.plain).offset(y: 64)
-      }.padding(.horizontal, 8).padding(.top, 4)
+
+          // AVKit owns the native audio button at the top-right. Keep Libérons info
+          // clearly below it so the two controls never overlap visually.
+          Button { showInfo = true } label: {
+              Image(systemName: "ellipsis")
+                  .font(.system(size: 20, weight: .bold))
+                  .foregroundStyle(.white)
+                  .frame(width: 48, height: 48)
+                  .background(.black.opacity(0.45), in: Circle())
+          }
+          .buttonStyle(.plain)
+          .padding(.top, 76)
+      }
+      .padding(.horizontal, 14)
+      .padding(.top, 4)
       Spacer()
   }
   .opacity(verticalDismissLocked ? Double(max(0, 1 - dismissProgress * 4)) : (chromeVisible ? 1 : 0))
