@@ -1,0 +1,23 @@
+name: Move gallery info button
+'on':
+  push:
+    branches: [library-protected-media]
+    paths: [.github/workflows/move-gallery-info-button.yml]
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: library-protected-media}
+      - run: python3 .github/scripts/move_gallery_info_button.py
+      - run: |
+          git diff --check
+          grep -q 'buttonStyle(.plain).padding(.trailing, 54)' Liberons/ProtectedLibraryView.swift
+      - run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add Liberons/ProtectedLibraryView.swift
+          git commit -m 'Move gallery info button away from native audio control'
+          git push origin HEAD:library-protected-media
