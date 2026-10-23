@@ -19,5 +19,6 @@ jobs:
       - run: git config user.name gallery-fix
       - run: git config user.email gallery-fix@users.noreply.github.com
       - run: git add Liberons/ProtectedLibraryView.swift
-      - run: git commit -m "Fix duplicate-looking gallery controls"
+      - run: git commit -m "Separate info from native video controls"
       - run: git push origin HEAD:library-protected-media
+# run-video-separation
