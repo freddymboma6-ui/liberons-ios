@@ -1,0 +1,52 @@
+name: Fix dashboard real coverage
+
+on:
+  push:
+    branches: [library-protected-media]
+    paths:
+      - '.github/workflows/fix-dashboard-real-coverage.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: library-protected-media
+      - name: Patch dashboard coverage
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('Liberons/ContentView.swift')
+          s = p.read_text()
+          replacements = [
+            ('@StateObject private var analyzer=PhotoLibraryAnalyzer(); @StateObject private var preferences=BackupPreferences(); @StateObject private var backup=BackupEngine(); @StateObject private var cloud=CloudStorageSummary()',
+             '@StateObject private var analyzer=PhotoLibraryAnalyzer(); @StateObject private var preferences=BackupPreferences(); @StateObject private var backup=BackupEngine(); @StateObject private var cloud=CloudStorageSummary(); @StateObject private var coverage=DeviceProtectionCoverage()'),
+            ('DashboardView(analyzer:analyzer,cloud:cloud,language:language)',
+             'DashboardView(analyzer:analyzer,cloud:cloud,coverage:coverage,language:language)'),
+            ('}.task{async let a:Void=analyzer.refreshIfNeeded();async let b:Void=cloud.refresh();_=await(a,b)} }',
+             '}.task{async let a:Void=analyzer.refreshIfNeeded();async let b:Void=cloud.refresh();_=await(a,b);await coverage.refresh()} }'),
+            ('@ObservedObject var analyzer:PhotoLibraryAnalyzer; @ObservedObject var cloud:CloudStorageSummary; @ObservedObject var language:LanguageStore',
+             '@ObservedObject var analyzer:PhotoLibraryAnalyzer; @ObservedObject var cloud:CloudStorageSummary; @ObservedObject var coverage:DeviceProtectionCoverage; @ObservedObject var language:LanguageStore'),
+            ('private var total:Int{analyzer.photoCount+analyzer.videoCount}; private var percent:Int{total==0 ? 0:min(100,Int(Double(cloud.protectedCount)/Double(total)*100))};',
+             'private var total:Int{analyzer.photoCount+analyzer.videoCount}; private var percent:Int{coverage.percent};'),
+            ('async let a:Void=analyzer.refreshDashboardFast();async let b:Void=cloud.refresh();_=await(a,b);refreshing=false',
+             'async let a:Void=analyzer.refreshDashboardFast();async let b:Void=cloud.refresh();_=await(a,b);await coverage.refresh();refreshing=false')
+          ]
+          for old, new in replacements:
+              if old not in s:
+                  raise SystemExit(f'Missing expected source fragment: {old[:90]}')
+              s = s.replace(old, new, 1)
+          p.write_text(s)
+          PY
+      - name: Commit
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add Liberons/ContentView.swift
+          git diff --cached --quiet && exit 0
+          git commit -m 'Use real current-device protection coverage'
+          git push origin HEAD:library-protected-media
