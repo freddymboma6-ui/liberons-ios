@@ -16,9 +16,11 @@ jobs:
           ref: library-protected-media
       - run: python3 .github/scripts/move_gallery_info_button.py
       - run: git diff --check
+      - run: |
+          ! grep -q 'VideoPlayer(player:' Liberons/ProtectedLibraryView.swift
+          grep -q 'ProtectedVideoSurface(player: player)' Liberons/ProtectedLibraryView.swift
       - run: git config user.name gallery-fix
       - run: git config user.email gallery-fix@users.noreply.github.com
       - run: git add Liberons/ProtectedLibraryView.swift
-      - run: git commit -m "Separate info from native video controls"
+      - run: git commit -m "Remove native volume control from protected video viewer"
       - run: git push origin HEAD:library-protected-media
-# run-video-separation
