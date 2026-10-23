@@ -359,7 +359,6 @@ private struct ProtectedGalleryViewer: View {
           }
           .buttonStyle(.plain)
           .padding(.trailing, current?.mediaType.lowercased().contains("video") == true ? 72 : 0)
-          .padding(.top, current?.mediaType.lowercased().contains("video") == true ? 0 : 76)
       }
       .padding(.horizontal, 14)
       .padding(.top, 4)
