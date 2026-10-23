@@ -303,7 +303,7 @@ private struct ProtectedGalleryViewer: View {
 
   if !verticalDismissLocked {
       TabView(selection: $selection) {
-          ForEach(items) { CloudPhotoPage(item: $0, language: language, billing: billing).tag($0.id) }
+          ForEach(items) { CloudPhotoPage(item: $0, language: language, billing: billing, chromeVisible: $chromeVisible).tag($0.id) }
       }
       .tabViewStyle(.page(indexDisplayMode: .never))
       .ignoresSafeArea()
@@ -358,7 +358,6 @@ private struct ProtectedGalleryViewer: View {
                   .background(.black.opacity(0.45), in: Circle())
           }
           .buttonStyle(.plain)
-          .padding(.trailing, current?.mediaType.lowercased().contains("video") == true ? 72 : 0)
       }
       .padding(.horizontal, 14)
       .padding(.top, 4)
@@ -480,6 +479,7 @@ private struct CloudPhotoPage: View {
     let item: ProtectedCloudMedia
     @ObservedObject var language: LanguageStore
     @ObservedObject var billing: CloudStorageSummary
+    @Binding var chromeVisible: Bool
     @State private var image: UIImage?
     @State private var player: AVPlayer?
     @State private var loading = true
@@ -497,6 +497,12 @@ private struct CloudPhotoPage: View {
             if isVideo, let player {
                 ZStack {
                     ProtectedVideoSurface(player: player)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            withAnimation(.easeOut(duration: 0.18)) {
+                                chromeVisible.toggle()
+                            }
+                        }
 
                     HStack(spacing: 54) {
                         Button {
@@ -534,6 +540,9 @@ private struct CloudPhotoPage: View {
                                 .foregroundStyle(.white)
                         }
                     }
+                    .opacity(chromeVisible ? 1 : 0)
+                    .allowsHitTesting(chromeVisible)
+                    .animation(.easeOut(duration: 0.18), value: chromeVisible)
 
                     VStack {
                         Spacer()
@@ -562,6 +571,9 @@ private struct CloudPhotoPage: View {
                         .padding(.horizontal, 14)
                         .padding(.bottom, 14)
                     }
+                    .opacity(chromeVisible ? 1 : 0)
+                    .allowsHitTesting(chromeVisible)
+                    .animation(.easeOut(duration: 0.18), value: chromeVisible)
                 }
                 .onAppear {
                     player.play()
