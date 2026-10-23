@@ -12,8 +12,6 @@ final class ProtectedMediaStore: ObservableObject {
     private var activeRefresh: Task<Void, Never>?
 
     func refresh() async {
-        // Every caller awaits the same real refresh. Explicitly returning Void keeps
-        // this task typed as Task<Void, Never> even though self is captured weakly.
         if let activeRefresh {
             await activeRefresh.value
             return
@@ -34,8 +32,8 @@ final class ProtectedMediaStore: ObservableObject {
         defer { isLoading = false }
 
         do {
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
+            let userID = try await SupabaseService.client.auth.session.user.id
+            let decoder = Self.makeDecoder()
             var allItems: [ProtectedCloudMedia] = []
             var offset = 0
 
@@ -43,8 +41,10 @@ final class ProtectedMediaStore: ObservableObject {
                 let response = try await SupabaseService.client
                     .from("media_assets")
                     .select("id,ios_local_identifier,original_filename,media_type,size_bytes,captured_at,protected_at,created_at,local_removed_at")
+                    .eq("user_id", value: userID.uuidString)
                     .eq("status", value: "protected")
                     .order("captured_at", ascending: false)
+                    .order("created_at", ascending: false)
                     .range(from: offset, to: offset + pageSize - 1)
                     .execute()
 
@@ -55,10 +55,6 @@ final class ProtectedMediaStore: ObservableObject {
                 offset += pageSize
             }
 
-            // A local Photos identifier can legitimately be present on more than one
-            // historical cloud row. Keep every protected cloud item, but expose the
-            // PhotoKit identifier only once so consumers can safely build identifier
-            // lookups without Dictionary(uniqueKeysWithValues:) trapping at runtime.
             var seenLocalIdentifiers = Set<String>()
             items = allItems.map { item in
                 guard let localIdentifier = item.iosLocalIdentifier,
@@ -82,6 +78,28 @@ final class ProtectedMediaStore: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    private static func makeDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            let raw = try container.decode(String.self)
+
+            let fractional = ISO8601DateFormatter()
+            fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            if let date = fractional.date(from: raw) { return date }
+
+            let standard = ISO8601DateFormatter()
+            standard.formatOptions = [.withInternetDateTime]
+            if let date = standard.date(from: raw) { return date }
+
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Invalid ISO-8601 timestamp: \(raw)"
+            )
+        }
+        return decoder
     }
 
     func refreshAfterProtection() { Task { await refresh() } }
