@@ -1,0 +1,45 @@
+name: Fix dashboard launch state
+on:
+  push:
+    branches: [library-protected-media]
+    paths:
+      - '.github/workflows/fix-dashboard-launch-placeholder.yml'
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: library-protected-media
+      - name: Patch false zero launch state only
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('Liberons/ContentView.swift')
+          s=p.read_text()
+          old='Text(bytes(cloud.protectedBytes)).fontWeight(.bold)'
+          new='Group { if cloud.hasLoadedData { Text(bytes(cloud.protectedBytes)) } else { ProgressView().controlSize(.small) } }.fontWeight(.bold)'
+          if old not in s: raise SystemExit('protected bytes target missing')
+          s=s.replace(old,new,1)
+          old='Metric(icon:"checkmark.shield.fill",value:cloud.protectedCount.formatted(),label:language.text("Protected","Protégés"),tint:.green)'
+          new='Metric(icon:"checkmark.shield.fill",value:cloud.hasLoadedData ? cloud.protectedCount.formatted() : "—",label:language.text("Protected","Protégés"),tint:.green)'
+          if old not in s: raise SystemExit('protected count target missing')
+          s=s.replace(old,new,1)
+          old='Label(cloud.protectedCount>0 ? language.text("Libérons protection is active","Protection Libérons active"):language.text("Ready to protect","Prêt à protéger"),systemImage:cloud.protectedCount>0 ? "checkmark.circle.fill":"shield.fill").foregroundStyle(cloud.protectedCount>0 ? .green:.orange)'
+          new='Label(!cloud.hasLoadedData ? language.text("Checking protection…","Vérification de la protection…") : (cloud.protectedCount>0 ? language.text("Libérons protection is active","Protection Libérons active"):language.text("Ready to protect","Prêt à protéger")),systemImage:!cloud.hasLoadedData ? "arrow.triangle.2.circlepath" : (cloud.protectedCount>0 ? "checkmark.circle.fill":"shield.fill")).foregroundStyle(!cloud.hasLoadedData ? .secondary : (cloud.protectedCount>0 ? .green:.orange))'
+          if old not in s: raise SystemExit('protection status target missing')
+          s=s.replace(old,new,1)
+          p.write_text(s)
+          PY
+      - name: Validate and commit
+        run: |
+          grep -q 'cloud.hasLoadedData ? cloud.protectedCount.formatted() : "—"' Liberons/ContentView.swift
+          grep -q 'Checking protection' Liberons/ContentView.swift
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Liberons/ContentView.swift
+          git commit -m 'Avoid false zero cloud totals on launch'
+          git push origin HEAD:library-protected-media
