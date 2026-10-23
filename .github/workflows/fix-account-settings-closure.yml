@@ -1,9 +1,10 @@
-name: Apply library loading and info sheet fixes
-on:
+name: Apply library polish
+'on':
   push:
-    branches: [library-protected-media]
+    branches:
+      - library-protected-media
     paths:
-      - '.github/workflows/fix-account-settings-closure.yml'
+      - .github/workflows/fix-account-settings-closure.yml
 permissions:
   contents: write
 jobs:
@@ -13,64 +14,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: library-protected-media
-      - name: Patch only requested library UI
+      - name: Apply patch
+        run: python3 .github/scripts/patch_library_polish.py
+      - name: Validate
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('Liberons/ProtectedLibraryView.swift')
-          s = p.read_text()
-
-          old = '''                            if displayItems.isEmpty {
-                                ContentUnavailableView(language.text("Nothing here yet", "Rien ici pour le moment"), systemImage: mediaFilter.icon, description: Text(language.text("Protected media in this category will appear here.", "Les médias protégés de cette catégorie apparaîtront ici."))).frame(maxWidth: .infinity).padding(.vertical, 42)
-                            } else {'''
-          new = '''                            if displayItems.isEmpty && !store.items.isEmpty {
-                                VStack(spacing: 10) {
-                                    ProgressView()
-                                    Text(language.text("Loading protected memories…", "Chargement des souvenirs protégés…"))
-                                        .font(.footnote)
-                                        .foregroundStyle(.secondary)
-                                }
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 42)
-                            } else if displayItems.isEmpty {
-                                ContentUnavailableView(language.text("Nothing here yet", "Rien ici pour le moment"), systemImage: mediaFilter.icon, description: Text(language.text("Protected media in this category will appear here.", "Les médias protégés de cette catégorie apparaîtront ici."))).frame(maxWidth: .infinity).padding(.vertical, 42)
-                            } else {'''
-          if old not in s:
-              raise SystemExit('Expected gallery empty-state block not found; refusing to alter file')
-          s = s.replace(old, new, 1)
-
-          old = '''    @State private var showInfo = false
-    @State private var dismissTranslation: CGSize = .zero'''
-          new = '''    @State private var showInfo = false
-    @State private var infoDetent: PresentationDetent = .fraction(0.64)
-    @State private var dismissTranslation: CGSize = .zero'''
-          if old not in s:
-              raise SystemExit('Expected viewer state block not found; refusing to alter file')
-          s = s.replace(old, new, 1)
-
-          old = '''        .sheet(isPresented: $showInfo) {
-  if let current { ProtectedMediaDetail(item: current, language: language, billing: billing, closeViewer: { showInfo = false; dismiss() }).presentationDetents([.fraction(0.32), .fraction(0.64), .large]).presentationDragIndicator(.visible).presentationCornerRadius(34).presentationBackground(.regularMaterial).presentationContentInteraction(.resizes).presentationBackgroundInteraction(.enabled(upThrough: .fraction(0.32))) }
-        }'''
-          new = '''        .sheet(isPresented: $showInfo) {
-  if let current { ProtectedMediaDetail(item: current, language: language, billing: billing, closeViewer: { showInfo = false; dismiss() }).presentationDetents([.fraction(0.32), .fraction(0.64), .large], selection: $infoDetent).presentationDragIndicator(.visible).presentationCornerRadius(34).presentationBackground(.regularMaterial).presentationContentInteraction(.resizes).presentationBackgroundInteraction(.enabled(upThrough: .fraction(0.32))) }
-        }
-        .onChange(of: showInfo) { _, isPresented in
-            if isPresented { infoDetent = .fraction(0.64) }
-        }'''
-          if old not in s:
-              raise SystemExit('Expected info sheet block not found; refusing to alter file')
-          s = s.replace(old, new, 1)
-
-          p.write_text(s)
-          PY
-      - name: Validate exact changes and commit
-        run: |
-          grep -q 'Loading protected memories' Liberons/ProtectedLibraryView.swift
-          grep -q 'infoDetent: PresentationDetent = .fraction(0.64)' Liberons/ProtectedLibraryView.swift
-          grep -q 'selection: $infoDetent' Liberons/ProtectedLibraryView.swift
+          grep -q "Loading protected memories" Liberons/ProtectedLibraryView.swift
+          grep -q "infoDetent: PresentationDetent = .fraction(0.64)" Liberons/ProtectedLibraryView.swift
           git diff --check
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+      - name: Commit
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add Liberons/ProtectedLibraryView.swift
-          git commit -m 'Polish library loading and info sheet height'
+          git commit -m "Polish library loading and info sheet height"
           git push origin HEAD:library-protected-media
