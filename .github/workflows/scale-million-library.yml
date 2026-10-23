@@ -1,0 +1,100 @@
+name: Wire million-scale protected library paging
+on:
+  push:
+    paths:
+      - '.github/workflows/scale-million-library.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: library-protected-media
+      - name: Connect Library UI to cursor-paged store
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('Liberons/ProtectedLibraryView.swift')
+          s=p.read_text()
+
+          old='Text("\\(filterCounts[.all, default: store.items.count].formatted()) \\(language.text("protected memories", "souvenirs protégés"))")'
+          new='Text("\\(Int(store.totalCount).formatted()) \\(language.text("protected memories", "souvenirs protégés"))")'
+          if old not in s: raise SystemExit('count label anchor missing')
+          s=s.replace(old,new,1)
+
+          old='ProtectedLibraryTile(item: item).matchedTransitionSource(id: item.id, in: photoTransition)'
+          new='ProtectedLibraryTile(item: item).matchedTransitionSource(id: item.id, in: photoTransition)\n                                            .task {\n                                                let before = store.items.count\n                                                await store.loadMoreIfNeeded(currentItem: item)\n                                                if store.items.count != before { rebuildDisplayItems() }\n                                            }'
+          if old not in s: raise SystemExit('tile anchor missing')
+          s=s.replace(old,new,1)
+
+          old='''    @MainActor private func selectFilter(_ filter: ProtectedLibraryFilter) {
+        guard mediaFilter != filter else { return }
+        withAnimation(.snappy(duration: 0.24)) { mediaFilter = filter }
+        rebuildDisplayItems()
+        if isSelecting { selectedIDs.formIntersection(Set(displayItems.map(\\.id))) }
+    }
+
+    @MainActor private func setSort(newestFirst: Bool) {
+        guard sortNewestFirst != newestFirst else { return }
+        sortNewestFirst = newestFirst
+        rebuildDisplayItems()
+    }
+'''
+          new='''    @MainActor private func selectFilter(_ filter: ProtectedLibraryFilter) {
+        guard mediaFilter != filter else { return }
+        withAnimation(.snappy(duration: 0.24)) { mediaFilter = filter }
+        selectedIDs.removeAll()
+        Task {
+            await store.refresh(filter: filter.rawValue, newestFirst: sortNewestFirst)
+            rebuildDisplayItems()
+        }
+    }
+
+    @MainActor private func setSort(newestFirst: Bool) {
+        guard sortNewestFirst != newestFirst else { return }
+        sortNewestFirst = newestFirst
+        selectedIDs.removeAll()
+        Task {
+            await store.refresh(filter: mediaFilter.rawValue, newestFirst: newestFirst)
+            rebuildDisplayItems()
+        }
+    }
+'''
+          if old not in s: raise SystemExit('filter/sort anchor missing')
+          s=s.replace(old,new,1)
+
+          old='''        filterCounts = [.all: all, .photos: photos, .videos: videos]
+        displayItems = visible
+'''
+          new='''        filterCounts = [
+            .all: Int(store.totalCount),
+            .photos: Int(store.photoCount),
+            .videos: Int(store.videoCount)
+        ]
+        displayItems = visible
+'''
+          if old not in s: raise SystemExit('counts anchor missing')
+          s=s.replace(old,new,1)
+
+          old='''        async let a: Void = store.refresh()
+        async let b: Void = billing.refresh()
+'''
+          new='''        async let a: Void = store.refresh(filter: mediaFilter.rawValue, newestFirst: sortNewestFirst)
+        async let b: Void = billing.refresh()
+'''
+          if old not in s: raise SystemExit('refresh anchor missing')
+          s=s.replace(old,new,1)
+
+          p.write_text(s)
+          PY
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Liberons/ProtectedLibraryView.swift
+          git diff --cached --quiet && exit 0
+          git commit -m "Connect Library UI to cursor pagination"
+          git push origin HEAD:library-protected-media
