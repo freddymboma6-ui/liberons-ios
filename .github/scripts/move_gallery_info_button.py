@@ -1,26 +1,56 @@
 from pathlib import Path
 p=Path('Liberons/ProtectedLibraryView.swift')
 s=p.read_text()
-# Add Apple-style chrome visibility state.
-needle='''    @State private var isDismissing = false\n    private let indexByID: [UUID: Int]'''
-replacement='''    @State private var isDismissing = false\n    @State private var chromeVisible = true\n    private let indexByID: [UUID: Int]'''
-if needle not in s: raise SystemExit('viewer state anchor not found')
-s=s.replace(needle,replacement,1)
-old='''.opacity(verticalDismissLocked ? Double(max(0, 1 - dismissProgress * 4)) : 1)\n  .allowsHitTesting(!verticalDismissLocked)'''
-new='''.opacity(verticalDismissLocked ? Double(max(0, 1 - dismissProgress * 4)) : (chromeVisible ? 1 : 0))\n  .allowsHitTesting(!verticalDismissLocked && chromeVisible)\n  .animation(.easeOut(duration: 0.18), value: chromeVisible)'''
-if old not in s: raise SystemExit('chrome opacity anchor not found')
+old='''  VStack {
+      HStack {
+          Button { dismiss() } label: { Image(systemName: "chevron.left").font(.title2.bold()).foregroundStyle(.white).frame(width: 48, height: 48).background(.black.opacity(0.45), in: Circle()) }.buttonStyle(.plain)
+          if let i = currentIndex { Text("\\(i + 1) / \\(items.count)").font(.subheadline.bold()).foregroundStyle(.white).padding(8).background(.black.opacity(0.45), in: Capsule()) }
+          Spacer()
+          Button { showInfo = true } label: { Image(systemName: "ellipsis.circle.fill").font(.title2).foregroundStyle(.white).frame(width: 56, height: 56) }.buttonStyle(.plain).offset(y: 64)
+      }.padding(.horizontal, 8).padding(.top, 4)
+      Spacer()
+  }'''
+new='''  VStack {
+      HStack(alignment: .top) {
+          HStack(spacing: 10) {
+              Button { dismiss() } label: {
+                  Image(systemName: "chevron.left")
+                      .font(.title2.bold())
+                      .foregroundStyle(.white)
+                      .frame(width: 48, height: 48)
+                      .background(.black.opacity(0.45), in: Circle())
+              }
+              .buttonStyle(.plain)
+
+              if let i = currentIndex {
+                  Text("\\(i + 1) / \\(items.count)")
+                      .font(.subheadline.bold())
+                      .foregroundStyle(.white)
+                      .padding(.horizontal, 10)
+                      .frame(height: 48)
+                      .background(.black.opacity(0.45), in: Capsule())
+              }
+          }
+
+          Spacer()
+
+          // AVKit owns the native audio button at the top-right. Keep Libérons info
+          // clearly below it so the two controls never overlap visually.
+          Button { showInfo = true } label: {
+              Image(systemName: "ellipsis")
+                  .font(.system(size: 20, weight: .bold))
+                  .foregroundStyle(.white)
+                  .frame(width: 48, height: 48)
+                  .background(.black.opacity(0.45), in: Circle())
+          }
+          .buttonStyle(.plain)
+          .padding(.top, 76)
+      }
+      .padding(.horizontal, 14)
+      .padding(.top, 4)
+      Spacer()
+  }'''
+if old not in s: raise SystemExit('viewer top chrome anchor not found')
 s=s.replace(old,new,1)
-old='''.contentShape(Rectangle())\n        .simultaneousGesture(\n  DragGesture(minimumDistance: 10, coordinateSpace: .global)'''
-new='''.contentShape(Rectangle())\n        .onTapGesture {\n            guard !verticalDismissLocked, !showInfo else { return }\n            withAnimation(.easeOut(duration: 0.18)) { chromeVisible.toggle() }\n        }\n        .simultaneousGesture(\n  DragGesture(minimumDistance: 10, coordinateSpace: .global)'''
-if old not in s: raise SystemExit('gesture anchor not found')
-s=s.replace(old,new,1)
-old='''      .onChange(of: selection) { _, newID in\n          prefetchNeighbors(around: newID)\n      }'''
-new='''      .onChange(of: selection) { _, newID in\n          chromeVisible = true\n          prefetchNeighbors(around: newID)\n      }'''
-if old not in s: raise SystemExit('selection anchor not found')
-s=s.replace(old,new,1)
-s=s.replace('    @State private var isVideoMuted = false\n','')
-s=s.replace('                        player.isMuted = isVideoMuted\n','')
 if 'speaker.slash.fill' in s or 'isVideoMuted' in s: raise SystemExit('duplicate custom audio control present')
-if '.buttonStyle(.plain).offset(y: 64)' not in s: raise SystemExit('info control is not below native audio zone')
 p.write_text(s)
-# premium-viewer-trigger-2
