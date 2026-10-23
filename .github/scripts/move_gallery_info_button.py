@@ -21,7 +21,6 @@ new='''  VStack {
                       .background(.black.opacity(0.45), in: Circle())
               }
               .buttonStyle(.plain)
-
               if let i = currentIndex {
                   Text("\\(i + 1) / \\(items.count)")
                       .font(.subheadline.bold())
@@ -31,11 +30,7 @@ new='''  VStack {
                       .background(.black.opacity(0.45), in: Capsule())
               }
           }
-
           Spacer()
-
-          // AVKit owns the native audio button at the top-right. Keep Libérons info
-          // clearly below it so the two controls never overlap visually.
           Button { showInfo = true } label: {
               Image(systemName: "ellipsis")
                   .font(.system(size: 20, weight: .bold))
@@ -54,3 +49,4 @@ if old not in s: raise SystemExit('viewer top chrome anchor not found')
 s=s.replace(old,new,1)
 if 'speaker.slash.fill' in s or 'isVideoMuted' in s: raise SystemExit('duplicate custom audio control present')
 p.write_text(s)
+# focused-fix-trigger
