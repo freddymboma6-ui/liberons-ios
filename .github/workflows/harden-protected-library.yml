@@ -1,0 +1,76 @@
+name: One-time protected library hardening
+on:
+  push:
+    branches: [library-protected-media]
+    paths: ['.github/workflows/harden-protected-library.yml']
+permissions:
+  contents: write
+jobs:
+  harden:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: library-protected-media
+          fetch-depth: 0
+      - name: Patch memory and auth ownership
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p=Path('Liberons/ProtectedLibraryView.swift')
+          s=p.read_text()
+          s=s.replace('import AVFoundation\n','import AVFoundation\nimport ImageIO\n')
+          s=s.replace('.fullScreenCover(item: $viewerItem) { item in ProtectedGalleryViewer(items: displayItems, initialID: item.id, language: language, billing: billing).navigationTransition(.zoom(sourceID: item.id, in: photoTransition)).onDisappear { Task { await refreshLibrary() } } }', '.fullScreenCover(item: $viewerItem) { item in ProtectedGalleryViewer(items: displayItems, initialID: item.id, language: language, billing: billing).navigationTransition(.zoom(sourceID: item.id, in: photoTransition)).onDisappear { ProtectedMediaCache.shared.clearFullResolution(); Task { await refreshLibrary() } } }\n            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in ProtectedMediaCache.shared.removeAll() }')
+          s=s.replace('targetSize:PHImageManagerMaximumSize','targetSize:CGSize(width:2560,height:2560)')
+          s=s.replace('targetSize:CGSize(width:1200,height:1200)','targetSize:CGSize(width:600,height:600)')
+          s=s.replace('thumbnailCache.countLimit=350;thumbnailCache.totalCostLimit=80*1024*1024;fullResolutionCache.countLimit=40;fullResolutionCache.totalCostLimit=240*1024*1024','thumbnailCache.countLimit=120;thumbnailCache.totalCostLimit=48*1024*1024;fullResolutionCache.countLimit=4;fullResolutionCache.totalCostLimit=96*1024*1024')
+          old='func storeFullResolution(_ image:UIImage,for id:UUID){let cost=Int(image.size.width*image.size.height*4);fullResolutionCache.setObject(image,forKey:id.uuidString as NSString,cost:cost)}}'
+          new='func storeFullResolution(_ image:UIImage,for id:UUID){let cost=Int(image.size.width*image.scale*image.size.height*image.scale*4);fullResolutionCache.setObject(image,forKey:id.uuidString as NSString,cost:cost)};func clearFullResolution(){fullResolutionCache.removeAllObjects()};func removeAll(){thumbnailCache.removeAllObjects();fullResolutionCache.removeAllObjects()}}'
+          assert old in s
+          s=s.replace(old,new)
+          # Grid: previews first; originals are fallback only, and decode to bounded pixels.
+          old='if !isVideo,let original=try? await SupabaseService.cloudOriginalURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:original),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300,let decoded=UIImage(data:data){ProtectedMediaCache.shared.storeThumbnail(decoded,for:item.id);image=decoded;return};if let preview=try? await SupabaseService.cloudPreviewURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:preview),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300,let decoded=UIImage(data:data){ProtectedMediaCache.shared.storeThumbnail(decoded,for:item.id);image=decoded;return}'
+          new='if let preview=try? await SupabaseService.cloudPreviewURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:preview),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300,let decoded=ProtectedImageDecoder.downsample(data,maxPixelSize:600){ProtectedMediaCache.shared.storeThumbnail(decoded,for:item.id);image=decoded;return};if !isVideo,let original=try? await SupabaseService.cloudOriginalURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:original),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300,let decoded=ProtectedImageDecoder.downsample(data,maxPixelSize:600){ProtectedMediaCache.shared.storeThumbnail(decoded,for:item.id);image=decoded;return}'
+          assert old in s
+          s=s.replace(old,new)
+          # Viewer cloud originals and previews are decoded at bounded size.
+          s=s.replace('let decoded=UIImage(data:data){ProtectedMediaCache.shared.storeFullResolution(decoded,for:item.id);image=decoded;return}', 'let decoded=ProtectedImageDecoder.downsample(data,maxPixelSize:2560){ProtectedMediaCache.shared.storeFullResolution(decoded,for:item.id);image=decoded;return}',1)
+          # Prefetch cloud original is bounded too.
+          old='let image = UIImage(data: data) else { return }\n        ProtectedMediaCache.shared.storeFullResolution(image, for: item.id)'
+          new='let image = ProtectedImageDecoder.downsample(data, maxPixelSize: 2048) else { return }\n        ProtectedMediaCache.shared.storeFullResolution(image, for: item.id)'
+          assert old in s
+          s=s.replace(old,new)
+          # Add decoder before cache.
+          marker='private final class ProtectedMediaCache:'
+          decoder='''private enum ProtectedImageDecoder {\n    static func downsample(_ data: Data, maxPixelSize: CGFloat) -> UIImage? {\n        let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary\n        guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions) else { return nil }\n        let options: [CFString: Any] = [\n            kCGImageSourceCreateThumbnailFromImageAlways: true,\n            kCGImageSourceCreateThumbnailWithTransform: true,\n            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,\n            kCGImageSourceShouldCacheImmediately: true\n        ]\n        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }\n        return UIImage(cgImage: cgImage)\n    }\n}\n\n'''
+          assert marker in s
+          s=s.replace(marker,decoder+marker,1)
+          p.write_text(s)
+
+          p=Path('Liberons/ContentView.swift')
+          s=p.read_text()
+          old='struct ContentView: View {\n    @StateObject private var auth = AuthStore()\n    @StateObject private var language = LanguageStore()'
+          new='struct ContentView: View {\n    @ObservedObject var auth: AuthStore\n    @StateObject private var language = LanguageStore()'
+          assert old in s
+          p.write_text(s.replace(old,new,1))
+
+          p=Path('Liberons/PublicAccessRootView.swift')
+          s=p.read_text(); assert 'ContentView()' in s
+          p.write_text(s.replace('ContentView()','ContentView(auth: auth)',1))
+          PY
+      - name: Verify dangerous paths are gone
+        run: |
+          ! grep -q 'PHImageManagerMaximumSize' Liberons/ProtectedLibraryView.swift
+          ! grep -q 'fullResolutionCache.countLimit=40' Liberons/ProtectedLibraryView.swift
+          ! grep -q '@StateObject private var auth = AuthStore()' Liberons/ContentView.swift
+          grep -q 'ContentView(auth: auth)' Liberons/PublicAccessRootView.swift
+          grep -q 'ProtectedImageDecoder.downsample' Liberons/ProtectedLibraryView.swift
+      - name: Commit hardening
+        run: |
+          rm .github/workflows/harden-protected-library.yml
+          git config user.name 'Libérons Automation'
+          git config user.email 'actions@users.noreply.github.com'
+          git add Liberons/ProtectedLibraryView.swift Liberons/ContentView.swift Liberons/PublicAccessRootView.swift .github/workflows/harden-protected-library.yml
+          git commit -m 'Harden protected gallery memory and auth lifecycle'
+          git push origin HEAD:library-protected-media
