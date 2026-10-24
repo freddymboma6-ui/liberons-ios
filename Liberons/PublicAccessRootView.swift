@@ -18,7 +18,7 @@ struct PublicAccessRootView: View {
                 // LanguageStore restores the user's persisted EN/FR choice.
                 RestrictedAccountView(auth: auth, language: LanguageStore())
             } else {
-                ContentView()
+                ContentView(auth: auth)
             }
         }
     }

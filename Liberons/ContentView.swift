@@ -3,7 +3,7 @@ import Photos
 import Auth
 
 struct ContentView: View {
-    @StateObject private var auth = AuthStore()
+    @ObservedObject var auth: AuthStore
     @StateObject private var language = LanguageStore()
     var body: some View { Group { if auth.isLoading { ProgressView() } else if auth.isAuthenticated { MainAppView(auth: auth, language: language) } else { SignInView(auth: auth, language: language) } } }
 }
