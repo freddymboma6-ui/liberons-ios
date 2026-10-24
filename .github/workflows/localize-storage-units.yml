@@ -1,0 +1,93 @@
+name: Localize storage units
+
+on:
+  push:
+    branches: [library-protected-media]
+    paths:
+      - '.github/workflows/localize-storage-units.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  localize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: library-protected-media
+      - name: Apply FR Go/To and EN GB/TB formatting
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('Liberons/StorageAnalysisView.swift')
+          s = p.read_text()
+          old = 'private func size(_ bytes:Int64)->String{bytes<=0 ? language.text("0 KB","0 Ko"):ByteCountFormatter.string(fromByteCount:bytes,countStyle:.file)}'
+          new = '''private func size(_ bytes:Int64)->String{
+              if bytes <= 0 { return language.text("0 KB", "0 Ko") }
+              if bytes >= 1_000_000_000_000 { return String(format: "%.2f %@", Double(bytes) / 1_000_000_000_000, language.text("TB", "To")) }
+              if bytes >= 1_000_000_000 { return String(format: "%.2f %@", Double(bytes) / 1_000_000_000, language.text("GB", "Go")) }
+              let formatted = ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+              return language.language == .french ? formatted.replacingOccurrences(of: "KB", with: "Ko").replacingOccurrences(of: "MB", with: "Mo") : formatted
+          }'''
+          if old not in s: raise SystemExit('StorageAnalysis size formatter not found')
+          p.write_text(s.replace(old, new))
+
+          p = Path('Liberons/FreeSpaceView.swift')
+          s = p.read_text()
+          old = 'private var selectedSize: String { ByteCountFormatter.string(fromByteCount: cleaner.selectedBytes, countStyle: .file) }'
+          new = '''private var selectedSize: String {
+              let bytes = cleaner.selectedBytes
+              if bytes <= 0 { return language.text("0 KB", "0 Ko") }
+              if bytes >= 1_000_000_000_000 { return String(format: "%.2f %@", Double(bytes) / 1_000_000_000_000, language.text("TB", "To")) }
+              if bytes >= 1_000_000_000 { return String(format: "%.2f %@", Double(bytes) / 1_000_000_000, language.text("GB", "Go")) }
+              let formatted = ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+              return language.language == .french ? formatted.replacingOccurrences(of: "KB", with: "Ko").replacingOccurrences(of: "MB", with: "Mo") : formatted
+          }'''
+          if old not in s: raise SystemExit('FreeSpace selectedSize formatter not found')
+          p.write_text(s.replace(old, new))
+
+          p = Path('Liberons/ContentView.swift')
+          s = p.read_text()
+          old = 'Text(analyzer.formattedSize).font(.system(size:48,weight:.bold,design:.rounded))'
+          new = 'Text(bytes(analyzer.estimatedBytes)).font(.system(size:48,weight:.bold,design:.rounded))'
+          if old not in s: raise SystemExit('Dashboard photo library formatter not found')
+          s = s.replace(old, new)
+
+          old = 'Text(ByteCountFormatter.string(fromByteCount:protectedBytes,countStyle:.file)).font(.system(size:40,weight:.bold,design:.rounded))'
+          new = 'Text(storageSize(protectedBytes)).font(.system(size:40,weight:.bold,design:.rounded))'
+          if old not in s: raise SystemExit('Backup protected formatter not found')
+          s = s.replace(old, new)
+
+          old = 'Text(ByteCountFormatter.string(fromByteCount:removableBytes,countStyle:.file)).font(.system(size:40,weight:.bold,design:.rounded))'
+          new = 'Text(storageSize(removableBytes)).font(.system(size:40,weight:.bold,design:.rounded))'
+          if old not in s: raise SystemExit('Backup removable formatter not found')
+          s = s.replace(old, new)
+
+          marker = 'private struct BackupView: View {'
+          replacement = '''private struct BackupView: View {
+              private func storageSize(_ n:Int64)->String{
+                  if n <= 0 { return language.text("0 KB", "0 Ko") }
+                  if n >= 1_000_000_000_000 { return String(format:"%.2f %@", Double(n)/1_000_000_000_000, language.text("TB","To")) }
+                  if n >= 1_000_000_000 { return String(format:"%.2f %@", Double(n)/1_000_000_000, language.text("GB","Go")) }
+                  let formatted = ByteCountFormatter.string(fromByteCount:n,countStyle:.file)
+                  return language.language == .french ? formatted.replacingOccurrences(of:"KB",with:"Ko").replacingOccurrences(of:"MB",with:"Mo") : formatted
+              }'''
+          if marker not in s: raise SystemExit('BackupView marker not found')
+          s = s.replace(marker, replacement, 1)
+          p.write_text(s)
+          PY
+      - name: Verify no affected screen uses raw GB formatter
+        run: |
+          grep -n 'analyzer.formattedSize\|fromByteCount:protectedBytes\|fromByteCount:removableBytes' Liberons/ContentView.swift && exit 1 || true
+          grep -n 'private func size' Liberons/StorageAnalysisView.swift
+      - name: Commit changes
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Liberons/ContentView.swift Liberons/StorageAnalysisView.swift Liberons/FreeSpaceView.swift
+          git diff --cached --quiet && exit 0
+          git commit -m 'Use localized storage units across iOS'
+          git push origin HEAD:library-protected-media
