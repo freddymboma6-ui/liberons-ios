@@ -7,7 +7,14 @@ struct FreeSpaceView: View {
     @StateObject private var cleaner = ProtectedSpaceCleaner()
     @State private var showReview = false
 
-    private var selectedSize: String { ByteCountFormatter.string(fromByteCount: cleaner.selectedBytes, countStyle: .file) }
+    private var selectedSize: String {
+    let bytes = cleaner.selectedBytes
+    if bytes <= 0 { return language.text("0 KB", "0 Ko") }
+    if bytes >= 1_000_000_000_000 { return String(format: "%.2f %@", Double(bytes) / 1_000_000_000_000, language.text("TB", "To")) }
+    if bytes >= 1_000_000_000 { return String(format: "%.2f %@", Double(bytes) / 1_000_000_000, language.text("GB", "Go")) }
+    let formatted = ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    return language.language == .french ? formatted.replacingOccurrences(of: "KB", with: "Ko").replacingOccurrences(of: "MB", with: "Mo") : formatted
+}
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
