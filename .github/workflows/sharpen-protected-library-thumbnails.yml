@@ -1,0 +1,55 @@
+name: Sharpen protected library thumbnails
+
+on:
+  push:
+    branches: [library-protected-media]
+    paths:
+      - '.github/workflows/sharpen-protected-library-thumbnails.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: library-protected-media
+      - name: Patch thumbnail quality
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('Liberons/ProtectedLibraryView.swift')
+          s = p.read_text()
+          start = s.index('private struct ProtectedLibraryTile:View')
+          tile = s[start:]
+
+          # A 500 px request is visibly soft on Retina iPhones. Ask PhotoKit for a
+          # real high-quality Retina thumbnail while keeping it out of the full-res cache.
+          tile = tile.replace('targetSize:CGSize(width:500,height:500),contentMode:.aspectFill,options:options', 'targetSize:CGSize(width:1200,height:1200),contentMode:.aspectFill,options:options', 1)
+          tile = tile.replace('let options=PHImageRequestOptions();options.isNetworkAccessAllowed=true;PHImageManager.default().requestImage', 'let options=PHImageRequestOptions();options.isNetworkAccessAllowed=true;options.deliveryMode = .highQualityFormat;options.resizeMode = .exact;PHImageManager.default().requestImage', 1)
+
+          # Cloud-only photos must not use the deliberately small preview as the
+          # final grid image. Decode the protected original, then cache it only as
+          # a thumbnail. Videos keep their preview image because their original is video data.
+          marker = 'if let preview=try? await SupabaseService.cloudPreviewURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:preview),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300,let decoded=UIImage(data:data){ProtectedMediaCache.shared.storeThumbnail(decoded,for:item.id);image=decoded}'
+          replacement = 'if !isVideo,let original=try? await SupabaseService.cloudOriginalURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:original),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300,let decoded=UIImage(data:data){ProtectedMediaCache.shared.storeThumbnail(decoded,for:item.id);image=decoded;return};if let preview=try? await SupabaseService.cloudPreviewURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:preview),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300,let decoded=UIImage(data:data){ProtectedMediaCache.shared.storeThumbnail(decoded,for:item.id);image=decoded}'
+          if marker not in tile:
+              raise SystemExit('ProtectedLibraryTile cloud preview block not found')
+          tile = tile.replace(marker, replacement, 1)
+          s = s[:start] + tile
+          p.write_text(s)
+      - name: Verify patch
+        run: |
+          grep -q 'CGSize(width:1200,height:1200)' Liberons/ProtectedLibraryView.swift
+          grep -q 'if !isVideo,let original=try? await SupabaseService.cloudOriginalURL' Liberons/ProtectedLibraryView.swift
+          git diff --check
+      - name: Commit fix
+        run: |
+          if git diff --quiet; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Liberons/ProtectedLibraryView.swift
+          git commit -m 'Sharpen protected library thumbnails'
+          git push origin HEAD:library-protected-media
