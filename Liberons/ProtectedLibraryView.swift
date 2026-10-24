@@ -492,6 +492,7 @@ private struct CloudPhotoPage: View {
     @State private var videoCurrentTime: Double = 0
     @State private var videoDuration: Double = 0
     @State private var videoObserver: Any?
+    @State private var videoObserverPlayer: AVPlayer?
     private var isVideo: Bool { item.mediaType.lowercased().contains("video") }
     var body: some View {
         ZStack {
@@ -624,6 +625,7 @@ private struct CloudPhotoPage: View {
 
         let interval = CMTime(seconds: 0.25, preferredTimescale: 600)
 
+        videoObserverPlayer = player
         videoObserver = player.addPeriodicTimeObserver(
             forInterval: interval,
             queue: .main
@@ -646,9 +648,17 @@ private struct CloudPhotoPage: View {
 
     @MainActor
     private func removeVideoProgressObserver() {
-        guard let videoObserver else { return }
-        player?.removeTimeObserver(videoObserver)
-        self.videoObserver = nil
+        guard let observer = videoObserver else {
+            videoObserverPlayer = nil
+            return
+        }
+        // A periodic observer must be removed from the exact AVPlayer instance
+        // that created it. The current `player` state may already point to a
+        // different video after paging/loading, which otherwise raises
+        // NSInvalidArgumentException and terminates the app.
+        videoObserverPlayer?.removeTimeObserver(observer)
+        videoObserver = nil
+        videoObserverPlayer = nil
     }
 
     @MainActor private func loadProtectedVideo() async throws {
