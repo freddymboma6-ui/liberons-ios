@@ -56,12 +56,52 @@ final class AuthStore: ObservableObject {
     }
 
     func restoreSession() async {
+        isLoading = true
         defer { isLoading = false }
-        session = try? await SupabaseService.client.auth.session
-        if session != nil {
+
+        // Never turn a temporary Keychain/network/token-refresh hiccup into a logout.
+        // Supabase normally restores immediately from local storage, but after an iOS
+        // memory termination the first refresh can race with app/network startup.
+        var restoredSession: Session?
+        var lastError: Error?
+
+        for attempt in 0..<3 {
+            do {
+                restoredSession = try await SupabaseService.client.auth.session
+                lastError = nil
+                break
+            } catch {
+                lastError = error
+                if attempt < 2 {
+                    try? await Task.sleep(for: .milliseconds(350 * (attempt + 1)))
+                }
+            }
+        }
+
+        if let restoredSession {
+            session = restoredSession
+            errorMessage = nil
             await refreshRestrictionState()
             startRestrictionRealtime()
             if !isRestricted { await validateDeviceAndFreeTier() }
+            return
+        }
+
+        // If this AuthStore already had a valid in-memory session, preserve it.
+        // Only a real explicit signOut() is allowed to clear it here.
+        if session != nil {
+            await refreshRestrictionState()
+            startRestrictionRealtime()
+            return
+        }
+
+        // A failed restore is not proof that the user signed out. Keep the error
+        // non-destructive so a subsequent foreground/relaunch can restore normally.
+        if let lastError {
+            let friendly = friendlyAuthError(lastError)
+            if friendly == "auth_network_error" {
+                errorMessage = friendly
+            }
         }
     }
 
