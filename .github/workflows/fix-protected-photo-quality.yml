@@ -1,0 +1,88 @@
+name: Fix protected photo quality
+
+on:
+  push:
+    branches: [library-protected-media]
+    paths:
+      - '.github/workflows/fix-protected-photo-quality.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: library-protected-media
+      - name: Patch protected media quality
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('Liberons/ProtectedLibraryView.swift')
+          s = p.read_text()
+
+          old_cache = 'private final class ProtectedMediaCache:@unchecked Sendable{static let shared=ProtectedMediaCache();private let cache=NSCache<NSString,UIImage>();private init(){cache.countLimit=350;cache.totalCostLimit=80*1024*1024};func image(for id:UUID)->UIImage?{cache.object(forKey:id.uuidString as NSString)};func store(_ image:UIImage,for id:UUID){let cost=Int(image.size.width*image.size.height*4);cache.setObject(image,forKey:id.uuidString as NSString,cost:cost)}}'
+          new_cache = '''private final class ProtectedMediaCache:@unchecked Sendable{static let shared=ProtectedMediaCache();private let thumbnailCache=NSCache<NSString,UIImage>();private let fullResolutionCache=NSCache<NSString,UIImage>();private init(){thumbnailCache.countLimit=350;thumbnailCache.totalCostLimit=80*1024*1024;fullResolutionCache.countLimit=40;fullResolutionCache.totalCostLimit=240*1024*1024};func thumbnail(for id:UUID)->UIImage?{thumbnailCache.object(forKey:id.uuidString as NSString)};func storeThumbnail(_ image:UIImage,for id:UUID){let cost=Int(image.size.width*image.size.height*4);thumbnailCache.setObject(image,forKey:id.uuidString as NSString,cost:cost)};func fullResolutionImage(for id:UUID)->UIImage?{fullResolutionCache.object(forKey:id.uuidString as NSString)};func storeFullResolution(_ image:UIImage,for id:UUID){let cost=Int(image.size.width*image.size.height*4);fullResolutionCache.setObject(image,forKey:id.uuidString as NSString,cost:cost)}}'''
+          if old_cache not in s:
+              raise SystemExit('ProtectedMediaCache signature not found')
+          s = s.replace(old_cache, new_cache, 1)
+
+          # Grid thumbnails stay lightweight and can never poison the fullscreen cache.
+          tile_start = s.index('private struct ProtectedLibraryTile:View')
+          tile = s[tile_start:]
+          tile = tile.replace('ProtectedMediaCache.shared.image(for:item.id)', 'ProtectedMediaCache.shared.thumbnail(for:item.id)', 1)
+          tile = tile.replace('ProtectedMediaCache.shared.store(value,for:self.item.id)', 'ProtectedMediaCache.shared.storeThumbnail(value,for:self.item.id)', 1)
+          tile = tile.replace('ProtectedMediaCache.shared.store(decoded,for:item.id)', 'ProtectedMediaCache.shared.storeThumbnail(decoded,for:item.id)', 1)
+          s = s[:tile_start] + tile
+
+          # Fullscreen photo: full-res cache -> local high-quality image -> cloud ORIGINAL.
+          cloud_start = s.index('private struct CloudPhotoPage: View')
+          cloud_end = s.index('private struct ProtectedVideoSurface:', cloud_start)
+          cloud = s[cloud_start:cloud_end]
+          old_load = '''        if let cached=ProtectedMediaCache.shared.image(for:item.id){image=cached;return}\n        if let id=item.iosLocalIdentifier,let asset=PHAsset.fetchAssets(withLocalIdentifiers:[id],options:nil).firstObject{let options=PHImageRequestOptions();options.isNetworkAccessAllowed=true;options.deliveryMode = .opportunistic;options.resizeMode = .fast;PHImageManager.default().requestImage(for:asset,targetSize:CGSize(width:1600,height:1600),contentMode:.aspectFit,options:options){value,_ in if let value{ProtectedMediaCache.shared.store(value,for:self.item.id);Task{@MainActor in image=value}}};return}\n        if let preview=try? await SupabaseService.cloudPreviewURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:preview),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300,let decoded=UIImage(data:data){ProtectedMediaCache.shared.store(decoded,for:item.id);image=decoded;return}\n        guard !billing.isPaymentRestricted else{return}\n        if let original=try? await SupabaseService.cloudOriginalURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:original),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300,let decoded=UIImage(data:data){ProtectedMediaCache.shared.store(decoded,for:item.id);image=decoded}'''
+          new_load = '''        if let cached=ProtectedMediaCache.shared.fullResolutionImage(for:item.id){image=cached;return}\n        if let id=item.iosLocalIdentifier,let asset=PHAsset.fetchAssets(withLocalIdentifiers:[id],options:nil).firstObject{let options=PHImageRequestOptions();options.isNetworkAccessAllowed=true;options.deliveryMode = .highQualityFormat;options.resizeMode = .exact;PHImageManager.default().requestImage(for:asset,targetSize:PHImageManagerMaximumSize,contentMode:.aspectFit,options:options){value,info in guard let value else{return};let degraded=(info?[PHImageResultIsDegradedKey] as? Bool) ?? false;if !degraded{ProtectedMediaCache.shared.storeFullResolution(value,for:self.item.id);Task{@MainActor in image=value}}};return}\n        guard !billing.isPaymentRestricted else{return}\n        if let original=try? await SupabaseService.cloudOriginalURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:original),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300,let decoded=UIImage(data:data){ProtectedMediaCache.shared.storeFullResolution(decoded,for:item.id);image=decoded;return}\n        if let preview=try? await SupabaseService.cloudPreviewURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:preview),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300,let decoded=UIImage(data:data){image=decoded}'''
+          if old_load not in cloud:
+              raise SystemExit('CloudPhotoPage load block not found')
+          cloud = cloud.replace(old_load, new_load, 1)
+          s = s[:cloud_start] + cloud + s[cloud_end:]
+
+          # Prefetch only full-quality local photos; never cache cloud previews as fullscreen originals.
+          prefetch_start = s.index('private enum ProtectedMediaPrefetcher')
+          prefetch_end = s.index('private final class ProtectedMediaCache', prefetch_start)
+          pre = s[prefetch_start:prefetch_end]
+          pre = pre.replace('ProtectedMediaCache.shared.image(for: item.id)', 'ProtectedMediaCache.shared.fullResolutionImage(for: item.id)')
+          pre = pre.replace('ProtectedMediaCache.shared.store(image, for: item.id)', 'ProtectedMediaCache.shared.storeFullResolution(image, for: item.id)')
+          preview_marker = '''        guard let preview = try? await SupabaseService.cloudPreviewURL(assetID: item.id) else {\n            return\n        }\n\n        guard let (data, response) = try? await URLSession.shared.data(from: preview),\n              ((response as? HTTPURLResponse)?.statusCode ?? 500) < 300,\n              let image = UIImage(data: data) else {\n            return\n        }\n\n        ProtectedMediaCache.shared.storeFullResolution(image, for: item.id)'''
+          if preview_marker in pre:
+              pre = pre.replace(preview_marker, '''        guard let original = try? await SupabaseService.cloudOriginalURL(assetID: item.id),\n              let (data, response) = try? await URLSession.shared.data(from: original),\n              ((response as? HTTPURLResponse)?.statusCode ?? 500) < 300,\n              let image = UIImage(data: data) else { return }\n        ProtectedMediaCache.shared.storeFullResolution(image, for: item.id)''')
+          s = s[:prefetch_start] + pre + s[prefetch_end:]
+
+          # Dismiss snapshot must also use the full-res cache, not a grid thumbnail.
+          dismiss_start = s.index('private struct ProtectedDismissMedia: View')
+          dismiss_end = s.index('private struct CloudPhotoPage: View', dismiss_start)
+          dismiss = s[dismiss_start:dismiss_end]
+          dismiss = dismiss.replace('ProtectedMediaCache.shared.image(for: item.id)', 'ProtectedMediaCache.shared.fullResolutionImage(for: item.id)')
+          dismiss = dismiss.replace('ProtectedMediaCache.shared.store(value, for: item.id)', 'ProtectedMediaCache.shared.storeFullResolution(value, for: item.id)')
+          dismiss = dismiss.replace('ProtectedMediaCache.shared.store(decoded, for: item.id)', 'ProtectedMediaCache.shared.storeFullResolution(decoded, for: item.id)')
+          s = s[:dismiss_start] + dismiss + s[dismiss_end:]
+
+          p.write_text(s)
+      - name: Verify patch
+        shell: bash
+        run: |
+          grep -q 'fullResolutionImage(for:item.id)' Liberons/ProtectedLibraryView.swift
+          grep -q 'thumbnail(for:item.id)' Liberons/ProtectedLibraryView.swift
+          grep -q 'PHImageManagerMaximumSize' Liberons/ProtectedLibraryView.swift
+          git diff --check
+      - name: Commit fix
+        shell: bash
+        run: |
+          if git diff --quiet; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Liberons/ProtectedLibraryView.swift
+          git commit -m 'Fix protected photo full-resolution loading'
+          git push origin HEAD:library-protected-media
