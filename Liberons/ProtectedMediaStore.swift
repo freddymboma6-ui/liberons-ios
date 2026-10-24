@@ -13,7 +13,9 @@ final class ProtectedMediaStore: ObservableObject {
     @Published private(set) var photoCount: Int64 = 0
     @Published private(set) var videoCount: Int64 = 0
 
-    private let pageSize = 240
+    // Keep the initial grid lightweight. The previous 240-item page could create a
+    // large burst of thumbnail/image work just before opening the full-screen viewer.
+    private let pageSize = 96
     private var activeRefresh: Task<Void, Never>?
     private var activeLoadMore: Task<Void, Never>?
     private var cursor: Cursor?
@@ -56,7 +58,7 @@ final class ProtectedMediaStore: ObservableObject {
 
     func loadMoreIfNeeded(currentItem item: ProtectedCloudMedia) async {
         guard hasMore, !isLoading, !isLoadingMore else { return }
-        let threshold = max(items.count - 48, 0)
+        let threshold = max(items.count - 24, 0)
         guard let index = items.firstIndex(where: { $0.id == item.id }), index >= threshold else { return }
         await loadMore()
     }
