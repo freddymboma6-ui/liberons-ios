@@ -79,10 +79,10 @@ jobs:
           s = s.replace(marker, replacement, 1)
           p.write_text(s)
           PY
-      - name: Verify no affected screen uses raw GB formatter
+      - name: Verify localized storage paths
         run: |
           grep -n 'analyzer.formattedSize\|fromByteCount:protectedBytes\|fromByteCount:removableBytes' Liberons/ContentView.swift && exit 1 || true
-          grep -n 'private func size' Liberons/StorageAnalysisView.swift
+          grep -n 'language.text("GB", "Go")' Liberons/StorageAnalysisView.swift
       - name: Commit changes
         run: |
           git config user.name 'github-actions[bot]'
