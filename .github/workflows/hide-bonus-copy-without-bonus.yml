@@ -1,0 +1,45 @@
+name: Hide bonus copy without bonus
+
+on:
+  push:
+    branches: [library-protected-media]
+    paths:
+      - '.github/workflows/hide-bonus-copy-without-bonus.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: library-protected-media
+      - name: Patch StoragePlanView bonus copy
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('Liberons/ContentView.swift')
+          s = p.read_text()
+          old = 'Text(language.text("This is the plan you actually pay for. Any space offered by Libérons does not change its price.","C’est le forfait que vous payez réellement. L’espace offert par Libérons ne change pas son prix.")).font(.caption).foregroundStyle(.secondary)'
+          new = 'Text(cloud.hasGrantedBonus ? language.text("This is the plan you actually pay for. Any space offered by Libérons does not change its price.","C’est le forfait que vous payez réellement. L’espace offert par Libérons ne change pas son prix.") : language.text("This is the plan you currently pay for.","C’est le forfait que vous payez actuellement.")).font(.caption).foregroundStyle(.secondary)'
+          if old not in s:
+              raise SystemExit('Expected billed-plan copy not found')
+          s = s.replace(old, new, 1)
+          old2 = 'Text(language.text("Your billed plan and your total Libérons capacity are shown separately. Extra capacity granted by Libérons is a bonus and is not billed as a higher plan.","Votre forfait facturé et votre capacité totale Libérons sont affichés séparément. Toute capacité supplémentaire accordée par Libérons est un bonus et n’est pas facturée comme un forfait supérieur.")).font(.subheadline).foregroundStyle(.secondary)'
+          new2 = 'Text(cloud.hasGrantedBonus ? language.text("Your billed plan and your total Libérons capacity are shown separately. Extra capacity granted by Libérons is a bonus and is not billed as a higher plan.","Votre forfait facturé et votre capacité totale Libérons sont affichés séparément. Toute capacité supplémentaire accordée par Libérons est un bonus et n’est pas facturée comme un forfait supérieur.") : language.text("Manage your Libérons plan and review the storage included with your subscription.","Gérez votre forfait Libérons et consultez l’espace inclus avec votre abonnement.")).font(.subheadline).foregroundStyle(.secondary)'
+          if old2 not in s:
+              raise SystemExit('Expected plan-management copy not found')
+          s = s.replace(old2, new2, 1)
+          p.write_text(s)
+          PY
+      - name: Commit patch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Liberons/ContentView.swift
+          git diff --cached --quiet && exit 0
+          git commit -m 'Hide gifted storage messaging for standard accounts'
+          git push origin HEAD:library-protected-media
