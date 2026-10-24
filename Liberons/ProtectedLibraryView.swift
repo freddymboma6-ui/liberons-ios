@@ -461,16 +461,16 @@ private struct ProtectedDismissMedia: View {
     }
 
     @MainActor private func load() async {
-        if let cached = ProtectedMediaCache.shared.image(for: item.id) { image = cached; return }
+        if let cached = ProtectedMediaCache.shared.fullResolutionImage(for: item.id) { image = cached; return }
         if let id = item.iosLocalIdentifier, let asset = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).firstObject {
   let options = PHImageRequestOptions(); options.isNetworkAccessAllowed = true; options.deliveryMode = .highQualityFormat; options.resizeMode = .fast
   PHImageManager.default().requestImage(for: asset, targetSize: CGSize(width: 1600, height: 1600), contentMode: .aspectFit, options: options) { value, _ in
-      if let value { ProtectedMediaCache.shared.store(value, for: item.id); Task { @MainActor in image = value } }
+      if let value { ProtectedMediaCache.shared.storeFullResolution(value, for: item.id); Task { @MainActor in image = value } }
   }
   return
         }
         if let preview = try? await SupabaseService.cloudPreviewURL(assetID: item.id), let (data, response) = try? await URLSession.shared.data(from: preview), ((response as? HTTPURLResponse)?.statusCode ?? 500) < 300, let decoded = UIImage(data: data) {
-  ProtectedMediaCache.shared.store(decoded, for: item.id); image = decoded
+  ProtectedMediaCache.shared.storeFullResolution(decoded, for: item.id); image = decoded
         }
     }
 }
@@ -610,11 +610,11 @@ private struct CloudPhotoPage: View {
     @MainActor private func load() async {
         loading=true;loadFailed=false;defer{loading=false}
         if isVideo{guard !billing.isPaymentRestricted else{loadFailed=true;return};do{try await loadProtectedVideo()}catch{print("[Libérons Video] Playback failed:",item.id,error.localizedDescription);loadFailed=true};return}
-        if let cached=ProtectedMediaCache.shared.image(for:item.id){image=cached;return}
-        if let id=item.iosLocalIdentifier,let asset=PHAsset.fetchAssets(withLocalIdentifiers:[id],options:nil).firstObject{let options=PHImageRequestOptions();options.isNetworkAccessAllowed=true;options.deliveryMode = .opportunistic;options.resizeMode = .fast;PHImageManager.default().requestImage(for:asset,targetSize:CGSize(width:1600,height:1600),contentMode:.aspectFit,options:options){value,_ in if let value{ProtectedMediaCache.shared.store(value,for:self.item.id);Task{@MainActor in image=value}}};return}
-        if let preview=try? await SupabaseService.cloudPreviewURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:preview),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300,let decoded=UIImage(data:data){ProtectedMediaCache.shared.store(decoded,for:item.id);image=decoded;return}
+        if let cached=ProtectedMediaCache.shared.fullResolutionImage(for:item.id){image=cached;return}
+        if let id=item.iosLocalIdentifier,let asset=PHAsset.fetchAssets(withLocalIdentifiers:[id],options:nil).firstObject{let options=PHImageRequestOptions();options.isNetworkAccessAllowed=true;options.deliveryMode = .highQualityFormat;options.resizeMode = .exact;PHImageManager.default().requestImage(for:asset,targetSize:PHImageManagerMaximumSize,contentMode:.aspectFit,options:options){value,info in guard let value else{return};let degraded=(info?[PHImageResultIsDegradedKey] as? Bool) ?? false;if !degraded{ProtectedMediaCache.shared.storeFullResolution(value,for:self.item.id);Task{@MainActor in image=value}}};return}
         guard !billing.isPaymentRestricted else{return}
-        if let original=try? await SupabaseService.cloudOriginalURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:original),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300,let decoded=UIImage(data:data){ProtectedMediaCache.shared.store(decoded,for:item.id);image=decoded}
+        if let original=try? await SupabaseService.cloudOriginalURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:original),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300,let decoded=UIImage(data:data){ProtectedMediaCache.shared.storeFullResolution(decoded,for:item.id);image=decoded;return}
+        if let preview=try? await SupabaseService.cloudPreviewURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:preview),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300,let decoded=UIImage(data:data){image=decoded}
     }
     @MainActor
     private func installVideoProgressObserver(on player: AVPlayer) {
@@ -755,7 +755,7 @@ private struct ProtectedZoomablePhoto: View {
 private enum ProtectedMediaPrefetcher {
     @MainActor
     static func prefetch(_ item: ProtectedCloudMedia) async {
-        if ProtectedMediaCache.shared.image(for: item.id) != nil {
+        if ProtectedMediaCache.shared.fullResolutionImage(for: item.id) != nil {
             return
         }
 
@@ -777,26 +777,20 @@ private enum ProtectedMediaPrefetcher {
                 options: options
             ) { image, _ in
                 guard let image else { return }
-                ProtectedMediaCache.shared.store(image, for: item.id)
+                ProtectedMediaCache.shared.storeFullResolution(image, for: item.id)
             }
             return
         }
 
-        guard let preview = try? await SupabaseService.cloudPreviewURL(assetID: item.id) else {
-            return
-        }
-
-        guard let (data, response) = try? await URLSession.shared.data(from: preview),
+        guard let original = try? await SupabaseService.cloudOriginalURL(assetID: item.id),
+              let (data, response) = try? await URLSession.shared.data(from: original),
               ((response as? HTTPURLResponse)?.statusCode ?? 500) < 300,
-              let image = UIImage(data: data) else {
-            return
-        }
-
-        ProtectedMediaCache.shared.store(image, for: item.id)
+              let image = UIImage(data: data) else { return }
+        ProtectedMediaCache.shared.storeFullResolution(image, for: item.id)
     }
 }
 
-private final class ProtectedMediaCache:@unchecked Sendable{static let shared=ProtectedMediaCache();private let cache=NSCache<NSString,UIImage>();private init(){cache.countLimit=350;cache.totalCostLimit=80*1024*1024};func image(for id:UUID)->UIImage?{cache.object(forKey:id.uuidString as NSString)};func store(_ image:UIImage,for id:UUID){let cost=Int(image.size.width*image.size.height*4);cache.setObject(image,forKey:id.uuidString as NSString,cost:cost)}}
+private final class ProtectedMediaCache:@unchecked Sendable{static let shared=ProtectedMediaCache();private let thumbnailCache=NSCache<NSString,UIImage>();private let fullResolutionCache=NSCache<NSString,UIImage>();private init(){thumbnailCache.countLimit=350;thumbnailCache.totalCostLimit=80*1024*1024;fullResolutionCache.countLimit=40;fullResolutionCache.totalCostLimit=240*1024*1024};func thumbnail(for id:UUID)->UIImage?{thumbnailCache.object(forKey:id.uuidString as NSString)};func storeThumbnail(_ image:UIImage,for id:UUID){let cost=Int(image.size.width*image.size.height*4);thumbnailCache.setObject(image,forKey:id.uuidString as NSString,cost:cost)};func fullResolutionImage(for id:UUID)->UIImage?{fullResolutionCache.object(forKey:id.uuidString as NSString)};func storeFullResolution(_ image:UIImage,for id:UUID){let cost=Int(image.size.width*image.size.height*4);fullResolutionCache.setObject(image,forKey:id.uuidString as NSString,cost:cost)}}
 private enum ProtectedAction:Hashable{case restore,removeDevice,deleteCloud}
 private struct ProtectedMediaDetail:View{
     let item:ProtectedCloudMedia;@ObservedObject var language:LanguageStore;@ObservedObject var billing:CloudStorageSummary;var closeViewer:(()->Void)?=nil
@@ -819,4 +813,4 @@ private struct ProtectedMediaDetail:View{
     @MainActor private func deleteFromCloud()async{deleting=true;operationError=nil;do{_=try await SupabaseService.deleteCloudMedia(assetID:item.id);deleting=false;dismiss();closeViewer?()}catch{deleting=false;operationError=error.localizedDescription}}
 }
 private struct MetadataRow:View{let icon:String;let title:String;let value:String;var body:some View{HStack(alignment:.top,spacing:13){Image(systemName:icon).frame(width:24).foregroundStyle(.blue);VStack(alignment:.leading,spacing:3){Text(title).font(.caption).foregroundStyle(.secondary);Text(value).font(.subheadline.bold())};Spacer()}}}
-private struct ProtectedLibraryTile:View{let item:ProtectedCloudMedia;@State private var image:UIImage?;private var isVideo:Bool{item.mediaType.lowercased().contains("video")};var body:some View{ZStack{GeometryReader{proxy in ZStack{Rectangle().fill(Color.secondary.opacity(0.08));if let image{Image(uiImage:image).resizable().scaledToFill().frame(width:proxy.size.width,height:proxy.size.height).clipped()}else{Image(systemName:isVideo ? "video.fill":"photo.fill").font(.system(size:18,weight:.medium)).foregroundStyle(.tertiary)}}}.aspectRatio(1,contentMode:.fit);if isVideo{VStack{Spacer();HStack{Image(systemName:"play.fill").font(.system(size:10,weight:.bold)).foregroundStyle(.white).frame(width:25,height:25).background(.black.opacity(0.52),in:Circle()).padding(6);Spacer()}}}}.task(id:item.id){await loadThumbnail()}};@MainActor private func loadThumbnail()async{if let cached=ProtectedMediaCache.shared.image(for:item.id){image=cached;return};if let id=item.iosLocalIdentifier,let asset=PHAsset.fetchAssets(withLocalIdentifiers:[id],options:nil).firstObject{let options=PHImageRequestOptions();options.isNetworkAccessAllowed=true;PHImageManager.default().requestImage(for:asset,targetSize:CGSize(width:500,height:500),contentMode:.aspectFill,options:options){value,_ in if let value{ProtectedMediaCache.shared.store(value,for:self.item.id);Task{@MainActor in image=value}}};return};if let preview=try? await SupabaseService.cloudPreviewURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:preview),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300,let decoded=UIImage(data:data){ProtectedMediaCache.shared.store(decoded,for:item.id);image=decoded;return};if isVideo{if let url=try? await SupabaseService.cloudOriginalURL(assetID:item.id){let asset=AVURLAsset(url:url);let generator=AVAssetImageGenerator(asset:asset);generator.appliesPreferredTrackTransform=true;if let cg=try? await generator.image(at:.zero).image{image=UIImage(cgImage:cg)}};return};if let url=try? await SupabaseService.cloudOriginalURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:url),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300{image=UIImage(data:data)}}}
+private struct ProtectedLibraryTile:View{let item:ProtectedCloudMedia;@State private var image:UIImage?;private var isVideo:Bool{item.mediaType.lowercased().contains("video")};var body:some View{ZStack{GeometryReader{proxy in ZStack{Rectangle().fill(Color.secondary.opacity(0.08));if let image{Image(uiImage:image).resizable().scaledToFill().frame(width:proxy.size.width,height:proxy.size.height).clipped()}else{Image(systemName:isVideo ? "video.fill":"photo.fill").font(.system(size:18,weight:.medium)).foregroundStyle(.tertiary)}}}.aspectRatio(1,contentMode:.fit);if isVideo{VStack{Spacer();HStack{Image(systemName:"play.fill").font(.system(size:10,weight:.bold)).foregroundStyle(.white).frame(width:25,height:25).background(.black.opacity(0.52),in:Circle()).padding(6);Spacer()}}}}.task(id:item.id){await loadThumbnail()}};@MainActor private func loadThumbnail()async{if let cached=ProtectedMediaCache.shared.thumbnail(for:item.id){image=cached;return};if let id=item.iosLocalIdentifier,let asset=PHAsset.fetchAssets(withLocalIdentifiers:[id],options:nil).firstObject{let options=PHImageRequestOptions();options.isNetworkAccessAllowed=true;PHImageManager.default().requestImage(for:asset,targetSize:CGSize(width:500,height:500),contentMode:.aspectFill,options:options){value,_ in if let value{ProtectedMediaCache.shared.storeThumbnail(value,for:self.item.id);Task{@MainActor in image=value}}};return};if let preview=try? await SupabaseService.cloudPreviewURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:preview),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300,let decoded=UIImage(data:data){ProtectedMediaCache.shared.storeThumbnail(decoded,for:item.id);image=decoded;return};if isVideo{if let url=try? await SupabaseService.cloudOriginalURL(assetID:item.id){let asset=AVURLAsset(url:url);let generator=AVAssetImageGenerator(asset:asset);generator.appliesPreferredTrackTransform=true;if let cg=try? await generator.image(at:.zero).image{image=UIImage(cgImage:cg)}};return};if let url=try? await SupabaseService.cloudOriginalURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:url),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300{image=UIImage(data:data)}}}
