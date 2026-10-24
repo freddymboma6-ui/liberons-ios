@@ -1,0 +1,46 @@
+name: Fix protected video observer crash
+on:
+  push:
+    paths:
+      - '.github/workflows/fix-protected-video-observer-crash.yml'
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: library-protected-media
+      - name: Patch AVPlayer observer ownership
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('Liberons/ProtectedLibraryView.swift')
+          s=p.read_text()
+          old='''    @State private var videoObserver: Any?\n    private var isVideo: Bool { item.mediaType.lowercased().contains("video") }'''
+          new='''    @State private var videoObserver: Any?\n    @State private var videoObserverPlayer: AVPlayer?\n    private var isVideo: Bool { item.mediaType.lowercased().contains("video") }'''
+          assert old in s, 'observer state anchor missing'
+          s=s.replace(old,new,1)
+          old='''        videoObserver = player.addPeriodicTimeObserver(\n            forInterval: interval,\n            queue: .main\n        ) { time in'''
+          new='''        videoObserverPlayer = player\n        videoObserver = player.addPeriodicTimeObserver(\n            forInterval: interval,\n            queue: .main\n        ) { time in'''
+          assert old in s, 'install anchor missing'
+          s=s.replace(old,new,1)
+          old='''    private func removeVideoProgressObserver() {\n        guard let videoObserver else { return }\n        player?.removeTimeObserver(videoObserver)\n        self.videoObserver = nil\n    }'''
+          new='''    private func removeVideoProgressObserver() {\n        guard let observer = videoObserver else {\n            videoObserverPlayer = nil\n            return\n        }\n        // A periodic observer must be removed from the exact AVPlayer instance\n        // that created it. The current `player` state may already point to a\n        // different video after paging/loading, which otherwise raises\n        // NSInvalidArgumentException and terminates the app.\n        videoObserverPlayer?.removeTimeObserver(observer)\n        videoObserver = nil\n        videoObserverPlayer = nil\n    }'''
+          assert old in s, 'remove anchor missing'
+          s=s.replace(old,new,1)
+          p.write_text(s)
+          PY
+      - name: Verify patch
+        run: |
+          grep -q 'videoObserverPlayer = player' Liberons/ProtectedLibraryView.swift
+          grep -q 'videoObserverPlayer?.removeTimeObserver(observer)' Liberons/ProtectedLibraryView.swift
+          if grep -q 'player?.removeTimeObserver(videoObserver)' Liberons/ProtectedLibraryView.swift; then exit 1; fi
+      - name: Commit
+        run: |
+          git config user.name 'Libérons Automation'
+          git config user.email 'actions@users.noreply.github.com'
+          git add Liberons/ProtectedLibraryView.swift
+          git commit -m 'Fix AVPlayer observer crash in protected videos'
+          git push origin HEAD:library-protected-media
