@@ -14,9 +14,9 @@ final class ProtectedMediaStore: ObservableObject {
     @Published private(set) var videoCount: Int64 = 0
 
     // Keep the viewer working set deliberately small. Each item can create image
-    // decoding work in the grid/viewer, so 24 gives us a much safer ceiling while
-    // cursor pagination keeps the complete cloud library accessible.
-    private let pageSize = 24
+    // Grid cells are lazy, so keeping a larger metadata page avoids constant network
+    // pagination while scrolling without decoding every asset into memory.
+    private let pageSize = 120
     private var activeRefresh: Task<Void, Never>?
     private var activeLoadMore: Task<Void, Never>?
     private var cursor: Cursor?
@@ -36,7 +36,7 @@ final class ProtectedMediaStore: ObservableObject {
 
     func loadMoreIfNeeded(currentItem item: ProtectedCloudMedia) async {
         guard hasMore, !isLoading, !isLoadingMore else { return }
-        let threshold = max(items.count - 8, 0)
+        let threshold = max(items.count - 30, 0)
         guard let index = items.firstIndex(where: { $0.id == item.id }), index >= threshold else { return }
         await loadMore()
     }
