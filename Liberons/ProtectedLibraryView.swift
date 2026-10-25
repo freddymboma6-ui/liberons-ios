@@ -455,9 +455,12 @@ private struct ProtectedZoomablePhoto: UIViewRepresentable {
         scrollView.minimumZoomScale = 1
         scrollView.maximumZoomScale = 5
         scrollView.bouncesZoom = true
+        scrollView.alwaysBounceVertical = false
+        scrollView.alwaysBounceHorizontal = false
         scrollView.showsVerticalScrollIndicator = false
         scrollView.showsHorizontalScrollIndicator = false
         scrollView.contentInsetAdjustmentBehavior = .never
+        scrollView.decelerationRate = .fast
         scrollView.backgroundColor = .black
 
         let imageView = context.coordinator.imageView
@@ -480,52 +483,87 @@ private struct ProtectedZoomablePhoto: UIViewRepresentable {
     }
 
     func updateUIView(_ scrollView: ProtectedPhotoScrollView, context: Context) {
-        context.coordinator.imageView.image = image
-        scrollView.setNeedsLayout()
-        scrollView.layoutIfNeeded()
+        if context.coordinator.imageView.image !== image {
+            context.coordinator.imageView.image = image
+            context.coordinator.lastViewportSize = .zero
+        }
         context.coordinator.layoutImage(in: scrollView)
     }
 
-    @MainActor final class Coordinator: NSObject, UIScrollViewDelegate {
+    final class Coordinator: NSObject, UIScrollViewDelegate {
         let imageView = UIImageView()
         weak var scrollView: UIScrollView?
+        var lastViewportSize: CGSize = .zero
 
         func viewForZooming(in scrollView: UIScrollView) -> UIView? { imageView }
-        func scrollViewDidZoom(_ scrollView: UIScrollView) { centerImage(in: scrollView) }
+
+        func scrollViewDidZoom(_ scrollView: UIScrollView) {
+            centerImage(in: scrollView)
+        }
 
         func layoutImage(in scrollView: UIScrollView) {
-            guard scrollView.bounds.width > 0, scrollView.bounds.height > 0 else { return }
-            let size = scrollView.bounds.size
-            imageView.frame = CGRect(origin: .zero, size: size)
-            scrollView.contentSize = size
+            let viewport = scrollView.bounds.size
+            guard viewport.width > 0, viewport.height > 0,
+                  let image = imageView.image,
+                  image.size.width > 0, image.size.height > 0 else { return }
+
+            // layoutSubviews is also called continuously while UIScrollView is zooming.
+            // Never rewrite the image frame during a pinch: doing so fights the native
+            // zoom transform and makes the photo collapse into a tiny thumbnail.
+            guard viewport != lastViewportSize || imageView.bounds.size == .zero else {
+                centerImage(in: scrollView)
+                return
+            }
+
+            lastViewportSize = viewport
+            scrollView.setZoomScale(1, animated: false)
+
+            let fitScale = min(viewport.width / image.size.width, viewport.height / image.size.height)
+            let fittedSize = CGSize(
+                width: max(1, image.size.width * fitScale),
+                height: max(1, image.size.height * fitScale)
+            )
+
+            imageView.transform = .identity
+            imageView.frame = CGRect(origin: .zero, size: fittedSize)
+            scrollView.contentSize = fittedSize
             centerImage(in: scrollView)
         }
 
         private func centerImage(in scrollView: UIScrollView) {
-            let scaledWidth = imageView.bounds.width * scrollView.zoomScale
-            let scaledHeight = imageView.bounds.height * scrollView.zoomScale
-            let horizontal = max(0, (scrollView.bounds.width - scaledWidth) / 2)
-            let vertical = max(0, (scrollView.bounds.height - scaledHeight) / 2)
+            let contentWidth = imageView.frame.width
+            let contentHeight = imageView.frame.height
+            let horizontal = max(0, (scrollView.bounds.width - contentWidth) * 0.5)
+            let vertical = max(0, (scrollView.bounds.height - contentHeight) * 0.5)
             scrollView.contentInset = UIEdgeInsets(top: vertical, left: horizontal, bottom: vertical, right: horizontal)
         }
 
         @objc func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
             guard let scrollView else { return }
-            if scrollView.zoomScale > 1.01 {
-                scrollView.setZoomScale(1, animated: true)
+
+            if scrollView.zoomScale > scrollView.minimumZoomScale + 0.01 {
+                scrollView.setZoomScale(scrollView.minimumZoomScale, animated: true)
                 return
             }
+
             let targetScale = min(CGFloat(2.5), scrollView.maximumZoomScale)
             let point = gesture.location(in: imageView)
-            let width = scrollView.bounds.width / targetScale
-            let height = scrollView.bounds.height / targetScale
-            scrollView.zoom(to: CGRect(x: point.x - width / 2, y: point.y - height / 2, width: width, height: height), animated: true)
+            let width = imageView.bounds.width / targetScale
+            let height = imageView.bounds.height / targetScale
+            let zoomRect = CGRect(
+                x: point.x - width * 0.5,
+                y: point.y - height * 0.5,
+                width: width,
+                height: height
+            )
+            scrollView.zoom(to: zoomRect, animated: true)
         }
     }
 }
 
 private final class ProtectedPhotoScrollView: UIScrollView {
     var onLayout: (() -> Void)?
+
     override func layoutSubviews() {
         super.layoutSubviews()
         onLayout?()
