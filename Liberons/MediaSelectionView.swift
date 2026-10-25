@@ -135,8 +135,8 @@ private struct NativeMediaGrid: UIViewRepresentable {
     static func dismantleUIView(_ uiView: UICollectionView, coordinator: Coordinator) { coordinator.captureAnchor(); coordinator.stopAllCaching() }
 
     @MainActor
-    final class Coordinator: NSObject, @preconcurrency UICollectionViewDelegateFlowLayout, @preconcurrency UICollectionViewDataSourcePrefetching {
-        private enum Section { case main }
+    final class Coordinator: NSObject, @MainActor UICollectionViewDelegateFlowLayout, @MainActor UICollectionViewDataSourcePrefetching {
+        private nonisolated enum Section: Hashable, Sendable { case main }
         private var parent: NativeMediaGrid
         private weak var collectionView: UICollectionView?
         private var dataSource: UICollectionViewDiffableDataSource<Section, String>?
