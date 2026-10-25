@@ -1,0 +1,87 @@
+name: Repair protected media viewer
+on:
+  push:
+    paths:
+      - '.github/workflows/repair-protected-viewer.yml'
+permissions:
+  contents: write
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: library-protected-media
+      - name: Repair viewer rendering
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('Liberons/ProtectedLibraryView.swift')
+          s = p.read_text()
+          start = s.index('private struct ProtectedZoomablePhoto:UIViewRepresentable')
+          end = s.index('private enum ProtectedMediaPrefetcher', start)
+          replacement = '''private struct ProtectedZoomablePhoto: View {
+    let image: UIImage
+    @State private var scale: CGFloat = 1
+    @State private var lastScale: CGFloat = 1
+    @State private var offset: CGSize = .zero
+    @State private var lastOffset: CGSize = .zero
+    private let maximumScale: CGFloat = 5
+
+    var body: some View {
+        GeometryReader { proxy in
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+                .frame(width: proxy.size.width, height: proxy.size.height)
+                .scaleEffect(scale)
+                .offset(offset)
+                .contentShape(Rectangle())
+                .gesture(
+                    MagnificationGesture()
+                        .onChanged { value in
+                            scale = min(max(lastScale * value, 1), maximumScale)
+                            if scale <= 1.01 { offset = .zero }
+                        }
+                        .onEnded { _ in
+                            if scale < 1.05 {
+                                withAnimation(.interactiveSpring(response: 0.30, dampingFraction: 0.86)) {
+                                    scale = 1
+                                    offset = .zero
+                                }
+                                lastScale = 1
+                                lastOffset = .zero
+                            } else {
+                                lastScale = scale
+                            }
+                        }
+                )
+                .onTapGesture(count: 2) {
+                    withAnimation(.interactiveSpring(response: 0.30, dampingFraction: 0.84)) {
+                        if scale > 1.01 {
+                            scale = 1
+                            lastScale = 1
+                            offset = .zero
+                            lastOffset = .zero
+                        } else {
+                            scale = 2.5
+                            lastScale = 2.5
+                        }
+                    }
+                }
+        }
+        .clipped()
+    }
+}
+'''
+          s = s[:start] + replacement + s[end:]
+          p.write_text(s)
+          PY
+      - name: Commit source repair
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Liberons/ProtectedLibraryView.swift
+          git diff --cached --quiet && exit 0
+          git commit -m 'Fix protected photo and video viewer rendering'
+          git push origin HEAD:library-protected-media
