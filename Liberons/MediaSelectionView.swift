@@ -1,6 +1,6 @@
 import SwiftUI
 import Photos
-import UIKit
+@preconcurrency import UIKit
 import AVKit
 
 struct MediaSelectionView: View {
@@ -124,7 +124,6 @@ struct MediaSelectionView: View {
     }
 }
 
-// UIKit owns the grid and its scroll position. SwiftUI only supplies stable asset identities.
 private struct NativeMediaGrid: UIViewRepresentable {
     let assets: [PHAsset]
     @Binding var selected: Set<String>
