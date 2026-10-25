@@ -444,17 +444,91 @@ private struct CloudPhotoPage: View {
 
 private struct ProtectedVideoSurface:UIViewRepresentable{let player:AVPlayer;func makeUIView(context:Context)->ProtectedPlayerLayerView{let view=ProtectedPlayerLayerView();view.playerLayer.player=player;return view};func updateUIView(_ uiView:ProtectedPlayerLayerView,context:Context){uiView.playerLayer.player=player}}
 private final class ProtectedPlayerLayerView:UIView{override class var layerClass:AnyClass{AVPlayerLayer.self};var playerLayer:AVPlayerLayer{layer as! AVPlayerLayer};override init(frame:CGRect){super.init(frame:frame);playerLayer.videoGravity = .resizeAspect;backgroundColor = .black};required init?(coder:NSCoder){super.init(coder:coder);playerLayer.videoGravity = .resizeAspect;backgroundColor = .black}}
-private struct ProtectedZoomablePhoto: View {
+private struct ProtectedZoomablePhoto: UIViewRepresentable {
     let image: UIImage
-    var body: some View {
-        GeometryReader { proxy in
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFit()
-                .frame(width: proxy.size.width, height: proxy.size.height)
-                .contentShape(Rectangle())
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> ProtectedPhotoScrollView {
+        let scrollView = ProtectedPhotoScrollView()
+        scrollView.delegate = context.coordinator
+        scrollView.minimumZoomScale = 1
+        scrollView.maximumZoomScale = 5
+        scrollView.bouncesZoom = true
+        scrollView.showsVerticalScrollIndicator = false
+        scrollView.showsHorizontalScrollIndicator = false
+        scrollView.contentInsetAdjustmentBehavior = .never
+        scrollView.backgroundColor = .black
+
+        let imageView = context.coordinator.imageView
+        imageView.image = image
+        imageView.contentMode = .scaleAspectFit
+        imageView.isUserInteractionEnabled = true
+        scrollView.addSubview(imageView)
+
+        let doubleTap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleDoubleTap(_:)))
+        doubleTap.numberOfTapsRequired = 2
+        scrollView.addGestureRecognizer(doubleTap)
+
+        context.coordinator.scrollView = scrollView
+        let coordinator = context.coordinator
+        scrollView.onLayout = { [weak scrollView, weak coordinator] in
+            guard let scrollView, let coordinator else { return }
+            coordinator.layoutImage(in: scrollView)
         }
-        .ignoresSafeArea()
+        return scrollView
+    }
+
+    func updateUIView(_ scrollView: ProtectedPhotoScrollView, context: Context) {
+        context.coordinator.imageView.image = image
+        scrollView.setNeedsLayout()
+        scrollView.layoutIfNeeded()
+        context.coordinator.layoutImage(in: scrollView)
+    }
+
+    @MainActor final class Coordinator: NSObject, UIScrollViewDelegate {
+        let imageView = UIImageView()
+        weak var scrollView: UIScrollView?
+
+        func viewForZooming(in scrollView: UIScrollView) -> UIView? { imageView }
+        func scrollViewDidZoom(_ scrollView: UIScrollView) { centerImage(in: scrollView) }
+
+        func layoutImage(in scrollView: UIScrollView) {
+            guard scrollView.bounds.width > 0, scrollView.bounds.height > 0 else { return }
+            let size = scrollView.bounds.size
+            imageView.frame = CGRect(origin: .zero, size: size)
+            scrollView.contentSize = size
+            centerImage(in: scrollView)
+        }
+
+        private func centerImage(in scrollView: UIScrollView) {
+            let scaledWidth = imageView.bounds.width * scrollView.zoomScale
+            let scaledHeight = imageView.bounds.height * scrollView.zoomScale
+            let horizontal = max(0, (scrollView.bounds.width - scaledWidth) / 2)
+            let vertical = max(0, (scrollView.bounds.height - scaledHeight) / 2)
+            scrollView.contentInset = UIEdgeInsets(top: vertical, left: horizontal, bottom: vertical, right: horizontal)
+        }
+
+        @objc func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
+            guard let scrollView else { return }
+            if scrollView.zoomScale > 1.01 {
+                scrollView.setZoomScale(1, animated: true)
+                return
+            }
+            let targetScale = min(CGFloat(2.5), scrollView.maximumZoomScale)
+            let point = gesture.location(in: imageView)
+            let width = scrollView.bounds.width / targetScale
+            let height = scrollView.bounds.height / targetScale
+            scrollView.zoom(to: CGRect(x: point.x - width / 2, y: point.y - height / 2, width: width, height: height), animated: true)
+        }
+    }
+}
+
+private final class ProtectedPhotoScrollView: UIScrollView {
+    var onLayout: (() -> Void)?
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        onLayout?()
     }
 }
 private enum ProtectedMediaPrefetcher{@MainActor static func prefetch(_ item:ProtectedCloudMedia)async{if ProtectedMediaCache.shared.fullResolutionImage(for:item.id) != nil{return};if let localIdentifier=item.iosLocalIdentifier,let asset=PHAsset.fetchAssets(withLocalIdentifiers:[localIdentifier],options:nil).firstObject{let options=PHImageRequestOptions();options.isNetworkAccessAllowed=true;options.deliveryMode = .opportunistic;options.resizeMode = .fast;PHImageManager.default().requestImage(for:asset,targetSize:CGSize(width:1600,height:1600),contentMode:.aspectFit,options:options){image,_ in guard let image else{return};ProtectedMediaCache.shared.storeFullResolution(image,for:item.id)};return};guard let original=try? await SupabaseService.cloudOriginalURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:original),((response as? HTTPURLResponse)?.statusCode ?? 500)<300,let image=ProtectedImageDecoder.downsample(data,maxPixelSize:2048)else{return};ProtectedMediaCache.shared.storeFullResolution(image,for:item.id)}}
