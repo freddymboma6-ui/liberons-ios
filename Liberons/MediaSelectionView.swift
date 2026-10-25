@@ -15,10 +15,7 @@ struct MediaSelectionView: View {
     @State private var showingPreview = false
     @State private var filter: MediaFilter = .all
 
-    private enum MediaFilter: String, CaseIterable, Identifiable {
-        case all, photos, videos, screenshots
-        var id: String { rawValue }
-    }
+    private enum MediaFilter: String, CaseIterable, Identifiable { case all, photos, videos, screenshots; var id: String { rawValue } }
 
     private var filteredAssets: [PHAsset] {
         let base: [PHAsset]
@@ -30,7 +27,6 @@ struct MediaSelectionView: View {
         }
         return showSelectedOnly ? base.filter { selected.contains($0.localIdentifier) } : base
     }
-
     private var photoCount: Int { assets.filter { $0.mediaType == .image && !$0.mediaSubtypes.contains(.photoScreenshot) }.count }
     private var videoCount: Int { assets.filter { $0.mediaType == .video }.count }
     private var screenshotCount: Int { assets.filter { $0.mediaType == .image && $0.mediaSubtypes.contains(.photoScreenshot) }.count }
@@ -41,32 +37,23 @@ struct MediaSelectionView: View {
                 VStack(spacing: 0) {
                     stableHeader
                     filterBar
-                    NativeMediaGrid(
-                        assets: filteredAssets,
-                        selected: $selected,
-                        onOpen: { index in
-                            let snapshot = filteredAssets
-                            guard snapshot.indices.contains(index) else { return }
-                            previewAssets = snapshot
-                            previewIndex = index
-                            showingPreview = true
-                        }
-                    )
+                    NativeMediaGrid(assets: filteredAssets, selected: $selected) { assetID in
+                        let snapshot = filteredAssets
+                        guard let index = snapshot.firstIndex(where: { $0.localIdentifier == assetID }) else { return }
+                        previewAssets = snapshot
+                        previewIndex = index
+                        showingPreview = true
+                    }
                     bottomBar
                 }
                 .background(Color(uiColor: .systemBackground))
                 .allowsHitTesting(!showingPreview)
 
                 if showingPreview {
-                    MediaPreviewGallery(
-                        assets: previewAssets,
-                        initialIndex: previewIndex,
-                        selected: $selected,
-                        language: language,
-                        onClose: { showingPreview = false }
-                    )
-                    .zIndex(100)
-                    .ignoresSafeArea()
+                    MediaPreviewGallery(assets: previewAssets, initialIndex: previewIndex, selected: $selected, language: language) {
+                        showingPreview = false
+                    }
+                    .zIndex(100).ignoresSafeArea()
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
@@ -76,29 +63,17 @@ struct MediaSelectionView: View {
 
     private var stableHeader: some View {
         HStack {
-            Button(language.text("Cancel", "Annuler")) { dismiss() }
-                .frame(minWidth: 64, alignment: .leading)
+            Button(language.text("Cancel", "Annuler")) { dismiss() }.frame(minWidth: 64, alignment: .leading)
             Spacer()
-            Text(language.text("Choose media", "Choisir les médias"))
-                .font(.headline)
-                .lineLimit(1)
+            Text(language.text("Choose media", "Choisir les médias")).font(.headline).lineLimit(1)
             Spacer()
             Menu {
-                if !selected.isEmpty {
-                    Button(showSelectedOnly ? language.text("Show all", "Tout voir") : language.text("Show selected", "Voir la sélection")) { withAnimation { showSelectedOnly.toggle() } }
-                }
+                if !selected.isEmpty { Button(showSelectedOnly ? language.text("Show all", "Tout voir") : language.text("Show selected", "Voir la sélection")) { showSelectedOnly.toggle() } }
                 Button(language.text("Select visible", "Tout sélectionner ici")) { selected.formUnion(filteredAssets.map(\.localIdentifier)); showSelectedOnly = false }
-                if !selected.isEmpty {
-                    Button(language.text("Clear selection", "Effacer la sélection"), role: .destructive) { selected.removeAll(); showSelectedOnly = false }
-                }
-            } label: {
-                Image(systemName: "ellipsis.circle").font(.title3)
-                    .frame(minWidth: 64, alignment: .trailing)
-            }
+                if !selected.isEmpty { Button(language.text("Clear selection", "Effacer la sélection"), role: .destructive) { selected.removeAll(); showSelectedOnly = false } }
+            } label: { Image(systemName: "ellipsis.circle").font(.title3).frame(minWidth: 64, alignment: .trailing) }
         }
-        .padding(.horizontal, 16)
-        .frame(height: 44)
-        .background(.ultraThinMaterial)
+        .padding(.horizontal, 16).frame(height: 44).background(.ultraThinMaterial)
     }
 
     private var bottomBar: some View {
@@ -110,11 +85,9 @@ struct MediaSelectionView: View {
             }
             Button {
                 let ids = assets.filter { selected.contains($0.localIdentifier) }.map(\.localIdentifier)
-                dismiss()
-                Task { await backup.backup(localIdentifiers: ids) }
+                dismiss(); Task { await backup.backup(localIdentifiers: ids) }
             } label: {
-                Label(language.text("Protect selected media", "Protéger les médias sélectionnés"), systemImage: "icloud.and.arrow.up.fill")
-                    .fontWeight(.semibold).frame(maxWidth: .infinity).frame(height: 48)
+                Label(language.text("Protect selected media", "Protéger les médias sélectionnés"), systemImage: "icloud.and.arrow.up.fill").fontWeight(.semibold).frame(maxWidth: .infinity).frame(height: 48)
             }
             .buttonStyle(.borderedProminent).controlSize(.large).disabled(selected.isEmpty || backup.isRunning)
         }
@@ -134,196 +107,201 @@ struct MediaSelectionView: View {
 
     private func filterChip(_ value: MediaFilter, icon: String, count: Int) -> some View {
         let active = filter == value
-        let label: String = {
-            switch value {
-            case .all: return language.text("All", "Tout")
-            case .photos: return language.text("Photos", "Photos")
-            case .videos: return language.text("Videos", "Vidéos")
-            case .screenshots: return language.text("Screenshots", "Captures")
-            }
-        }()
-        return Button { withAnimation(.easeInOut(duration: 0.18)) { filter = value; showSelectedOnly = false } } label: {
+        let label: String = { switch value { case .all: return language.text("All", "Tout"); case .photos: return language.text("Photos", "Photos"); case .videos: return language.text("Videos", "Vidéos"); case .screenshots: return language.text("Screenshots", "Captures") } }()
+        return Button { filter = value; showSelectedOnly = false } label: {
             HStack(spacing: 6) { Image(systemName: icon); Text(label); Text(count.formatted()).font(.caption.bold()).opacity(0.75) }
-                .font(.subheadline.weight(.semibold)).foregroundStyle(active ? Color.white : Color.primary)
-                .padding(.horizontal, 13).frame(height: 36)
+                .font(.subheadline.weight(.semibold)).foregroundStyle(active ? Color.white : Color.primary).padding(.horizontal, 13).frame(height: 36)
                 .background(active ? Color.accentColor : Color(uiColor: .secondarySystemBackground), in: Capsule())
         }.buttonStyle(.plain)
     }
 
     private func loadOldest() {
-        let options = PHFetchOptions()
-        options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
+        let options = PHFetchOptions(); options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
         let result = PHAsset.fetchAssets(with: options)
-        var loaded: [PHAsset] = []
-        loaded.reserveCapacity(result.count)
+        var loaded: [PHAsset] = []; loaded.reserveCapacity(result.count)
         result.enumerateObjects { asset, _, _ in if asset.mediaType == .image || asset.mediaType == .video { loaded.append(asset) } }
         assets = loaded
     }
 }
 
+// UIKit owns the grid and its scroll position. SwiftUI only supplies stable asset identities.
 private struct NativeMediaGrid: UIViewRepresentable {
     let assets: [PHAsset]
     @Binding var selected: Set<String>
-    let onOpen: (Int) -> Void
+    let onOpen: (String) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
-
     func makeUIView(context: Context) -> UICollectionView {
-        let layout = UICollectionViewFlowLayout()
-        layout.minimumLineSpacing = 2
-        layout.minimumInteritemSpacing = 2
+        let layout = UICollectionViewFlowLayout(); layout.minimumLineSpacing = 2; layout.minimumInteritemSpacing = 2
         let view = UICollectionView(frame: .zero, collectionViewLayout: layout)
-        view.backgroundColor = .systemBackground
-        view.contentInset = UIEdgeInsets(top: 2, left: 2, bottom: 2, right: 2)
-        view.alwaysBounceVertical = true
-        view.dataSource = context.coordinator
-        view.delegate = context.coordinator
-        view.prefetchDataSource = context.coordinator
-        view.isPrefetchingEnabled = true
+        view.backgroundColor = .systemBackground; view.contentInset = UIEdgeInsets(top: 2, left: 2, bottom: 2, right: 2); view.alwaysBounceVertical = true
+        view.delegate = context.coordinator; view.prefetchDataSource = context.coordinator; view.isPrefetchingEnabled = true
         view.register(MediaGridCell.self, forCellWithReuseIdentifier: MediaGridCell.reuseIdentifier)
-        context.coordinator.collectionView = view
+        context.coordinator.install(on: view)
         return view
     }
-
     func updateUIView(_ uiView: UICollectionView, context: Context) { context.coordinator.update(parent: self) }
-    static func dismantleUIView(_ uiView: UICollectionView, coordinator: Coordinator) { coordinator.stopAllCaching() }
+    static func dismantleUIView(_ uiView: UICollectionView, coordinator: Coordinator) { coordinator.captureAnchor(); coordinator.stopAllCaching() }
 
-    final class Coordinator: NSObject, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout, UICollectionViewDataSourcePrefetching {
+    final class Coordinator: NSObject, UICollectionViewDelegateFlowLayout, UICollectionViewDataSourcePrefetching {
+        private enum Section { case main }
         private var parent: NativeMediaGrid
+        private weak var collectionView: UICollectionView?
+        private var dataSource: UICollectionViewDiffableDataSource<Section, String>?
+        private var assetsByID: [String: PHAsset] = [:]
+        private var orderedIDs: [String] = []
+        private var selectedIDs = Set<String>()
         private let imageManager = PHCachingImageManager()
-        private let options: PHImageRequestOptions = {
-            let value = PHImageRequestOptions(); value.deliveryMode = .opportunistic; value.resizeMode = .fast; value.isNetworkAccessAllowed = true; return value
-        }()
-        weak var collectionView: UICollectionView?
-        private var assetIDs: [String]
-        private var cachedIndexes = Set<Int>()
+        private let imageOptions: PHImageRequestOptions = { let o = PHImageRequestOptions(); o.deliveryMode = .opportunistic; o.resizeMode = .fast; o.isNetworkAccessAllowed = true; return o }()
+        private var cachedIDs = Set<String>()
         private var thumbnailSize: CGSize = .zero
-        private var lastKnownOffset: CGPoint = .zero
-        private var hasScrolled = false
+        private var anchorID: String?
+        private var anchorDelta: CGFloat = 0
+        private var absoluteOffset: CGPoint = .zero
+        private var applyingSnapshot = false
 
-        init(parent: NativeMediaGrid) { self.parent = parent; self.assetIDs = parent.assets.map(\.localIdentifier) }
+        init(parent: NativeMediaGrid) { self.parent = parent; self.selectedIDs = parent.selected; super.init() }
+
+        func install(on view: UICollectionView) {
+            collectionView = view
+            dataSource = UICollectionViewDiffableDataSource<Section, String>(collectionView: view) { [weak self] collectionView, indexPath, identifier in
+                guard let self, let asset = self.assetsByID[identifier], let cell = collectionView.dequeueReusableCell(withReuseIdentifier: MediaGridCell.reuseIdentifier, for: indexPath) as? MediaGridCell else { return UICollectionViewCell() }
+                self.configure(cell, asset: asset, identifier: identifier)
+                return cell
+            }
+            rebuildAssetMap(parent.assets)
+            var snapshot = NSDiffableDataSourceSnapshot<Section, String>(); snapshot.appendSections([.main]); snapshot.appendItems(orderedIDs)
+            dataSource?.applySnapshotUsingReloadData(snapshot)
+        }
 
         func update(parent: NativeMediaGrid) {
             let newIDs = parent.assets.map(\.localIdentifier)
-            let dataChanged = newIDs != assetIDs
-            let selectionChanged = parent.selected != self.parent.selected
+            let oldSelection = selectedIDs
             self.parent = parent
-            guard let collectionView else { return }
-            if dataChanged {
-                let savedOffset = collectionView.contentOffset
-                stopAllCaching(); assetIDs = newIDs; collectionView.reloadData(); collectionView.layoutIfNeeded()
-                if hasScrolled { collectionView.setContentOffset(clamped(savedOffset, in: collectionView), animated: false) }
-            } else if selectionChanged {
-                for indexPath in collectionView.indexPathsForVisibleItems {
-                    guard parent.assets.indices.contains(indexPath.item), let cell = collectionView.cellForItem(at: indexPath) as? MediaGridCell else { continue }
-                    cell.setSelected(parent.selected.contains(parent.assets[indexPath.item].localIdentifier))
-                }
-            }
-            if hasScrolled, collectionView.contentOffset.y < 20, lastKnownOffset.y > collectionView.bounds.height {
-                collectionView.setContentOffset(clamped(lastKnownOffset, in: collectionView), animated: false)
+            selectedIDs = parent.selected
+            if newIDs != orderedIDs {
+                captureAnchor()
+                rebuildAssetMap(parent.assets)
+                applyIdentifiers(newIDs)
+            } else if oldSelection != selectedIDs {
+                reconfigureSelection(changed: oldSelection.symmetricDifference(selectedIDs))
             }
         }
 
-        func scrollViewDidScroll(_ scrollView: UIScrollView) {
-            guard scrollView.isDragging || scrollView.isDecelerating else { return }
-            lastKnownOffset = scrollView.contentOffset
-            if abs(scrollView.contentOffset.y) > 20 { hasScrolled = true }
+        private func rebuildAssetMap(_ assets: [PHAsset]) {
+            orderedIDs = assets.map(\.localIdentifier)
+            assetsByID = Dictionary(uniqueKeysWithValues: assets.map { ($0.localIdentifier, $0) })
         }
 
-        func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int { parent.assets.count }
-
-        func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, sizeForItemAt indexPath: IndexPath) -> CGSize {
-            let width = floor((collectionView.bounds.width - 8) / 3)
-            let pixels = width * UIScreen.main.scale
-            thumbnailSize = CGSize(width: pixels, height: pixels)
-            return CGSize(width: width, height: width)
+        private func applyIdentifiers(_ ids: [String]) {
+            guard let dataSource else { return }
+            applyingSnapshot = true
+            stopAllCaching()
+            var snapshot = NSDiffableDataSourceSnapshot<Section, String>(); snapshot.appendSections([.main]); snapshot.appendItems(ids)
+            dataSource.apply(snapshot, animatingDifferences: false) { [weak self] in
+                guard let self else { return }
+                self.applyingSnapshot = false
+                self.restoreAnchor()
+            }
         }
 
-        func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
-            guard let cell = collectionView.dequeueReusableCell(withReuseIdentifier: MediaGridCell.reuseIdentifier, for: indexPath) as? MediaGridCell,
-                  parent.assets.indices.contains(indexPath.item) else { return UICollectionViewCell() }
-            let asset = parent.assets[indexPath.item]
-            cell.configurePlaceholder(assetID: asset.localIdentifier, selected: parent.selected.contains(asset.localIdentifier), duration: asset.mediaType == .video ? duration(asset.duration) : nil)
+        private func reconfigureSelection(changed: Set<String>) {
+            guard let dataSource, !changed.isEmpty else { return }
+            var snapshot = dataSource.snapshot()
+            let existing = changed.filter { snapshot.indexOfItem($0) != nil }
+            guard !existing.isEmpty else { return }
+            snapshot.reconfigureItems(Array(existing))
+            dataSource.apply(snapshot, animatingDifferences: false)
+        }
+
+        private func configure(_ cell: MediaGridCell, asset: PHAsset, identifier: String) {
+            cell.configurePlaceholder(assetID: identifier, selected: selectedIDs.contains(identifier), duration: asset.mediaType == .video ? duration(asset.duration) : nil)
             requestThumbnail(for: asset, cell: cell)
             cell.onSelection = { [weak self, weak cell] in
                 guard let self else { return }
-                let id = asset.localIdentifier
                 var next = self.parent.selected
-                if next.contains(id) { next.remove(id) } else { next.insert(id) }
-                self.parent.selected = next
-                cell?.setSelected(next.contains(id))
+                if next.contains(identifier) { next.remove(identifier) } else { next.insert(identifier) }
+                self.selectedIDs = next; self.parent.selected = next; cell?.setSelected(next.contains(identifier))
             }
-            return cell
         }
 
         func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-            guard parent.assets.indices.contains(indexPath.item) else { return }
-            lastKnownOffset = collectionView.contentOffset
-            if abs(collectionView.contentOffset.y) > 20 { hasScrolled = true }
-            parent.onOpen(indexPath.item)
+            guard let id = dataSource?.itemIdentifier(for: indexPath) else { return }
+            captureAnchor(); parent.onOpen(id)
+        }
+
+        func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, sizeForItemAt indexPath: IndexPath) -> CGSize {
+            let width = floor((collectionView.bounds.width - 8) / 3); let pixels = width * UIScreen.main.scale
+            thumbnailSize = CGSize(width: pixels, height: pixels); return CGSize(width: width, height: width)
+        }
+
+        func scrollViewDidScroll(_ scrollView: UIScrollView) {
+            guard !applyingSnapshot, scrollView.isDragging || scrollView.isDecelerating else { return }
+            captureAnchor()
+        }
+        func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) { if !decelerate { captureAnchor() } }
+        func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) { captureAnchor() }
+
+        func captureAnchor() {
+            guard let collectionView else { return }
+            absoluteOffset = collectionView.contentOffset
+            let visible = collectionView.indexPathsForVisibleItems.sorted()
+            guard let first = visible.first, let id = dataSource?.itemIdentifier(for: first), let attributes = collectionView.layoutAttributesForItem(at: first) else { return }
+            anchorID = id; anchorDelta = collectionView.contentOffset.y - attributes.frame.minY
+        }
+
+        private func restoreAnchor() {
+            guard let collectionView else { return }
+            collectionView.layoutIfNeeded()
+            if let anchorID, let indexPath = dataSource?.indexPath(for: anchorID) {
+                collectionView.scrollToItem(at: indexPath, at: .top, animated: false)
+                collectionView.layoutIfNeeded()
+                if let attributes = collectionView.layoutAttributesForItem(at: indexPath) {
+                    collectionView.setContentOffset(clamped(CGPoint(x: 0, y: attributes.frame.minY + anchorDelta), in: collectionView), animated: false)
+                    return
+                }
+            }
+            collectionView.setContentOffset(clamped(absoluteOffset, in: collectionView), animated: false)
         }
 
         func collectionView(_ collectionView: UICollectionView, prefetchItemsAt indexPaths: [IndexPath]) {
-            let indexes = indexPaths.map(\.item).filter { parent.assets.indices.contains($0) && !cachedIndexes.contains($0) }
-            guard !indexes.isEmpty else { return }
-            cachedIndexes.formUnion(indexes)
-            imageManager.startCachingImages(for: indexes.map { parent.assets[$0] }, targetSize: effectiveThumbnailSize(collectionView), contentMode: .aspectFill, options: options)
+            let ids = indexPaths.compactMap { dataSource?.itemIdentifier(for: $0) }.filter { !cachedIDs.contains($0) }
+            let assets = ids.compactMap { assetsByID[$0] }; guard !assets.isEmpty else { return }
+            cachedIDs.formUnion(ids); imageManager.startCachingImages(for: assets, targetSize: effectiveThumbnailSize(collectionView), contentMode: .aspectFill, options: imageOptions)
         }
-
         func collectionView(_ collectionView: UICollectionView, cancelPrefetchingForItemsAt indexPaths: [IndexPath]) {
-            let indexes = indexPaths.map(\.item).filter { parent.assets.indices.contains($0) && cachedIndexes.contains($0) }
-            guard !indexes.isEmpty else { return }
-            imageManager.stopCachingImages(for: indexes.map { parent.assets[$0] }, targetSize: effectiveThumbnailSize(collectionView), contentMode: .aspectFill, options: options)
-            cachedIndexes.subtract(indexes)
+            let ids = indexPaths.compactMap { dataSource?.itemIdentifier(for: $0) }.filter { cachedIDs.contains($0) }
+            let assets = ids.compactMap { assetsByID[$0] }; guard !assets.isEmpty else { return }
+            imageManager.stopCachingImages(for: assets, targetSize: effectiveThumbnailSize(collectionView), contentMode: .aspectFill, options: imageOptions); cachedIDs.subtract(ids)
         }
-
-        func collectionView(_ collectionView: UICollectionView, didEndDisplaying cell: UICollectionViewCell, forItemAt indexPath: IndexPath) {
-            (cell as? MediaGridCell)?.cancelImageRequest(using: imageManager)
-        }
-
-        private func clamped(_ offset: CGPoint, in collectionView: UICollectionView) -> CGPoint {
-            let minY = -collectionView.adjustedContentInset.top
-            let maxY = max(minY, collectionView.contentSize.height - collectionView.bounds.height + collectionView.adjustedContentInset.bottom)
-            return CGPoint(x: 0, y: min(max(offset.y, minY), maxY))
-        }
+        func collectionView(_ collectionView: UICollectionView, didEndDisplaying cell: UICollectionViewCell, forItemAt indexPath: IndexPath) { (cell as? MediaGridCell)?.cancelImageRequest(using: imageManager) }
 
         private func requestThumbnail(for asset: PHAsset, cell: MediaGridCell) {
-            cell.cancelImageRequest(using: imageManager)
-            let representedID = asset.localIdentifier
-            cell.requestID = imageManager.requestImage(for: asset, targetSize: effectiveThumbnailSize(collectionView), contentMode: .aspectFill, options: options) { [weak cell] image, _ in
-                guard let cell, cell.representedAssetID == representedID, let image else { return }; cell.setImage(image)
+            cell.cancelImageRequest(using: imageManager); let id = asset.localIdentifier
+            cell.requestID = imageManager.requestImage(for: asset, targetSize: effectiveThumbnailSize(collectionView), contentMode: .aspectFill, options: imageOptions) { [weak cell] image, _ in
+                guard let cell, cell.representedAssetID == id, let image else { return }; cell.setImage(image)
             }
         }
-
-        private func effectiveThumbnailSize(_ collectionView: UICollectionView?) -> CGSize {
+        private func effectiveThumbnailSize(_ view: UICollectionView?) -> CGSize {
             if thumbnailSize.width > 0 { return thumbnailSize }
-            let width = max(120, ((collectionView?.bounds.width ?? UIScreen.main.bounds.width) - 8) / 3)
-            let pixels = width * UIScreen.main.scale
+            let width = max(120, ((view?.bounds.width ?? UIScreen.main.bounds.width) - 8) / 3); let pixels = width * UIScreen.main.scale
             return CGSize(width: pixels, height: pixels)
         }
-
-        private func duration(_ value: TimeInterval) -> String {
-            let total = Int(value.rounded())
-            return total >= 3600 ? String(format: "%d:%02d:%02d", total / 3600, (total % 3600) / 60, total % 60) : String(format: "%d:%02d", total / 60, total % 60)
+        private func clamped(_ offset: CGPoint, in view: UICollectionView) -> CGPoint {
+            let minY = -view.adjustedContentInset.top; let maxY = max(minY, view.contentSize.height - view.bounds.height + view.adjustedContentInset.bottom)
+            return CGPoint(x: 0, y: min(max(offset.y, minY), maxY))
         }
-
-        func stopAllCaching() { imageManager.stopCachingImagesForAllAssets(); cachedIndexes.removeAll() }
+        private func duration(_ value: TimeInterval) -> String { let total = Int(value.rounded()); return total >= 3600 ? String(format: "%d:%02d:%02d", total / 3600, (total % 3600) / 60, total % 60) : String(format: "%d:%02d", total / 60, total % 60) }
+        func stopAllCaching() { imageManager.stopCachingImagesForAllAssets(); cachedIDs.removeAll() }
     }
 }
 
 private final class MediaGridCell: UICollectionViewCell {
     static let reuseIdentifier = "LiberonsMediaGridCell"
-    private let imageView = UIImageView()
-    private let selectionButton = UIButton(type: .system)
-    private let durationLabel = UILabel()
-    private let selectionOverlay = UIView()
-    var representedAssetID: String?
-    var requestID: PHImageRequestID = PHInvalidImageRequestID
-    var onSelection: (() -> Void)?
-
+    private let imageView = UIImageView(); private let selectionButton = UIButton(type: .system); private let durationLabel = UILabel(); private let selectionOverlay = UIView()
+    var representedAssetID: String?; var requestID: PHImageRequestID = PHInvalidImageRequestID; var onSelection: (() -> Void)?
     override init(frame: CGRect) {
-        super.init(frame: frame)
-        clipsToBounds = true
+        super.init(frame: frame); clipsToBounds = true
         imageView.contentMode = .scaleAspectFill; imageView.clipsToBounds = true; imageView.backgroundColor = .secondarySystemBackground
         selectionOverlay.backgroundColor = UIColor.systemBlue.withAlphaComponent(0.10); selectionOverlay.layer.borderColor = UIColor.systemBlue.cgColor; selectionOverlay.layer.borderWidth = 3; selectionOverlay.isUserInteractionEnabled = false
         selectionButton.tintColor = .white; selectionButton.backgroundColor = UIColor.black.withAlphaComponent(0.48); selectionButton.layer.cornerRadius = 14; selectionButton.addTarget(self, action: #selector(toggleSelection), for: .touchUpInside)
@@ -336,162 +314,80 @@ private final class MediaGridCell: UICollectionViewCell {
             durationLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 6), durationLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -6), durationLabel.heightAnchor.constraint(equalToConstant: 18), durationLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 42)
         ])
     }
-
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override func prepareForReuse() { super.prepareForReuse(); representedAssetID = nil; imageView.image = nil; durationLabel.text = nil; durationLabel.isHidden = true; onSelection = nil; requestID = PHInvalidImageRequestID }
-
-    func configurePlaceholder(assetID: String, selected: Bool, duration: String?) {
-        representedAssetID = assetID; imageView.image = nil; durationLabel.text = duration.map { "  ▶︎  \($0)  " }; durationLabel.isHidden = duration == nil; setSelected(selected)
-    }
+    func configurePlaceholder(assetID: String, selected: Bool, duration: String?) { representedAssetID = assetID; imageView.image = nil; durationLabel.text = duration.map { "  ▶︎  \($0)  " }; durationLabel.isHidden = duration == nil; setSelected(selected) }
     func setImage(_ image: UIImage) { imageView.image = image }
-    func setSelected(_ selected: Bool) {
-        selectionOverlay.isHidden = !selected
-        selectionButton.backgroundColor = selected ? .systemBlue : UIColor.black.withAlphaComponent(0.48)
-        selectionButton.setImage(UIImage(systemName: selected ? "checkmark" : "plus", withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .bold)), for: .normal)
-    }
+    func setSelected(_ selected: Bool) { selectionOverlay.isHidden = !selected; selectionButton.backgroundColor = selected ? .systemBlue : UIColor.black.withAlphaComponent(0.48); selectionButton.setImage(UIImage(systemName: selected ? "checkmark" : "plus", withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .bold)), for: .normal) }
     func cancelImageRequest(using manager: PHImageManager) { if requestID != PHInvalidImageRequestID { manager.cancelImageRequest(requestID); requestID = PHInvalidImageRequestID } }
     @objc private func toggleSelection() { onSelection?() }
 }
 
 private struct MediaPreviewGallery: View {
-    let assets: [PHAsset]
-    @Binding var selected: Set<String>
-    @ObservedObject var language: LanguageStore
-    let onClose: () -> Void
-    @State private var currentAssetID: String
-    @State private var verticalOffset: CGFloat = 0
-    @State private var pageIsZoomed = false
-
+    let assets: [PHAsset]; @Binding var selected: Set<String>; @ObservedObject var language: LanguageStore; let onClose: () -> Void
+    @State private var currentAssetID: String; @State private var verticalOffset: CGFloat = 0; @State private var pageIsZoomed = false
     init(assets: [PHAsset], initialIndex: Int, selected: Binding<Set<String>>, language: LanguageStore, onClose: @escaping () -> Void) {
-        self.assets = assets
-        self._selected = selected
-        self.language = language
-        self.onClose = onClose
-        let safeIndex = assets.indices.contains(initialIndex) ? initialIndex : 0
-        self._currentAssetID = State(initialValue: assets.indices.contains(safeIndex) ? assets[safeIndex].localIdentifier : "")
+        self.assets = assets; _selected = selected; self.language = language; self.onClose = onClose
+        let i = assets.indices.contains(initialIndex) ? initialIndex : 0; _currentAssetID = State(initialValue: assets.indices.contains(i) ? assets[i].localIdentifier : "")
     }
-
     private var currentAsset: PHAsset? { assets.first { $0.localIdentifier == currentAssetID } }
     private var backdropOpacity: Double { Swift.max(0.55, 1.0 - Double(abs(verticalOffset)) / 600.0) }
-
     var body: some View {
         ZStack {
             Color.black.opacity(backdropOpacity).ignoresSafeArea()
             TabView(selection: $currentAssetID) {
                 ForEach(assets, id: \.localIdentifier) { asset in
-                    ZoomablePreviewPage(asset: asset, isActive: currentAssetID == asset.localIdentifier, isZoomed: $pageIsZoomed)
-                        .tag(asset.localIdentifier)
+                    ZoomablePreviewPage(asset: asset, isActive: currentAssetID == asset.localIdentifier, isZoomed: $pageIsZoomed).tag(asset.localIdentifier)
                 }
-            }
-            .tabViewStyle(.page(indexDisplayMode: .never))
-            .scrollDisabled(pageIsZoomed)
-            .offset(y: pageIsZoomed ? 0 : verticalOffset)
-
+            }.tabViewStyle(.page(indexDisplayMode: .never)).scrollDisabled(pageIsZoomed).offset(y: pageIsZoomed ? 0 : verticalOffset)
             VStack {
                 HStack {
                     Button { onClose() } label: { Image(systemName: "xmark").font(.headline).foregroundStyle(.white).frame(width: 42, height: 42).background(.black.opacity(0.48), in: Circle()) }
                     Spacer()
-                    if let asset = currentAsset {
-                        let isSelected = selected.contains(asset.localIdentifier)
-                        Button {
-                            if isSelected { selected.remove(asset.localIdentifier) } else { selected.insert(asset.localIdentifier) }
-                        } label: {
-                            Label(isSelected ? language.text("Selected", "Sélectionné") : language.text("Select", "Sélectionner"), systemImage: isSelected ? "checkmark.circle.fill" : "circle")
-                                .font(.subheadline.bold()).foregroundStyle(.white).padding(.horizontal, 14).frame(height: 42)
-                                .background(isSelected ? Color.accentColor : Color.black.opacity(0.48), in: Capsule())
-                        }
-                    }
+                    if let asset = currentAsset { let chosen = selected.contains(asset.localIdentifier); Button { if chosen { selected.remove(asset.localIdentifier) } else { selected.insert(asset.localIdentifier) } } label: { Label(chosen ? language.text("Selected", "Sélectionné") : language.text("Select", "Sélectionner"), systemImage: chosen ? "checkmark.circle.fill" : "circle").font(.subheadline.bold()).foregroundStyle(.white).padding(.horizontal, 14).frame(height: 42).background(chosen ? Color.accentColor : Color.black.opacity(0.48), in: Capsule()) } }
                 }.padding()
                 Spacer()
-                if let date = currentAsset?.creationDate {
-                    Text(date.formatted(date: .long, time: .shortened)).font(.caption).foregroundStyle(.white).padding(.horizontal, 12).padding(.vertical, 7).background(.black.opacity(0.5), in: Capsule()).padding(.bottom, 16)
-                }
+                if let date = currentAsset?.creationDate { Text(date.formatted(date: .long, time: .shortened)).font(.caption).foregroundStyle(.white).padding(.horizontal, 12).padding(.vertical, 7).background(.black.opacity(0.5), in: Capsule()).padding(.bottom, 16) }
             }.opacity(pageIsZoomed ? 0 : 1).offset(y: verticalOffset)
         }
         .contentShape(Rectangle())
-        .simultaneousGesture(DragGesture(minimumDistance: 12).onChanged { value in
-            guard !pageIsZoomed else { return }
-            if abs(value.translation.height) > abs(value.translation.width) { verticalOffset = value.translation.height }
-        }.onEnded { value in
-            guard !pageIsZoomed else { return }
-            if abs(value.translation.height) > 120 || abs(value.predictedEndTranslation.height) > 220 { onClose() }
-            else { withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) { verticalOffset = 0 } }
-        })
+        .simultaneousGesture(DragGesture(minimumDistance: 12).onChanged { value in guard !pageIsZoomed else { return }; if abs(value.translation.height) > abs(value.translation.width) { verticalOffset = value.translation.height } }.onEnded { value in guard !pageIsZoomed else { return }; if abs(value.translation.height) > 120 || abs(value.predictedEndTranslation.height) > 220 { onClose() } else { withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) { verticalOffset = 0 } } })
         .onChange(of: currentAssetID) { _, _ in pageIsZoomed = false; verticalOffset = 0 }
     }
 }
 
 private struct ZoomablePreviewPage: View {
-    let asset: PHAsset
-    let isActive: Bool
-    @Binding var isZoomed: Bool
-    @State private var image: UIImage?
-    @State private var degradedImage: UIImage?
-    @State private var player: AVPlayer?
-    @State private var requestID: PHImageRequestID = PHInvalidImageRequestID
-    @State private var scale: CGFloat = 1
-    @State private var lastScale: CGFloat = 1
-    @State private var offset: CGSize = .zero
-    @State private var lastOffset: CGSize = .zero
-
+    let asset: PHAsset; let isActive: Bool; @Binding var isZoomed: Bool
+    @State private var image: UIImage?; @State private var degradedImage: UIImage?; @State private var player: AVPlayer?; @State private var requestID: PHImageRequestID = PHInvalidImageRequestID
+    @State private var scale: CGFloat = 1; @State private var lastScale: CGFloat = 1; @State private var offset: CGSize = .zero; @State private var lastOffset: CGSize = .zero
     var body: some View {
         GeometryReader { proxy in
             ZStack {
                 Color.black
-                if asset.mediaType == .video {
-                    if let player {
-                        VideoPlayer(player: player)
-                            .onAppear { if isActive { player.play() } }
-                    } else { ProgressView().tint(.white) }
-                } else if let image { fittedImage(image, in: proxy.size) }
-                else if let degradedImage { fittedImage(degradedImage, in: proxy.size).blur(radius: 3) }
-                else { VStack(spacing: 12) { ProgressView().tint(.white); Text("Loading…").font(.caption).foregroundStyle(.white.opacity(0.72)) } }
+                if asset.mediaType == .video { if let player { VideoPlayer(player: player) } else { ProgressView().tint(.white) } }
+                else if let image { fittedImage(image, in: proxy.size) } else if let degradedImage { fittedImage(degradedImage, in: proxy.size).blur(radius: 3) } else { ProgressView().tint(.white) }
             }
             .frame(width: proxy.size.width, height: proxy.size.height).clipped().contentShape(Rectangle())
-            .gesture(MagnificationGesture().onChanged { value in
-                guard asset.mediaType != .video else { return }; let next = min(max(lastScale * value, 1), 5); scale = next; isZoomed = next > 1.01
-            }.onEnded { _ in if scale < 1.05 { resetZoom() } else { lastScale = scale } })
-            .simultaneousGesture(DragGesture().onChanged { value in
-                guard asset.mediaType != .video, scale > 1 else { return }; offset = CGSize(width: lastOffset.width + value.translation.width, height: lastOffset.height + value.translation.height)
-            }.onEnded { _ in guard asset.mediaType != .video, scale > 1 else { return }; lastOffset = offset })
-            .onTapGesture(count: 2) {
-                guard asset.mediaType != .video else { return }
-                withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) { if scale > 1 { resetZoom() } else { scale = 2.5; lastScale = 2.5; isZoomed = true } }
-            }
+            .gesture(MagnificationGesture().onChanged { value in guard asset.mediaType != .video else { return }; let next = min(max(lastScale * value, 1), 5); scale = next; isZoomed = next > 1.01 }.onEnded { _ in if scale < 1.05 { resetZoom() } else { lastScale = scale } })
+            .simultaneousGesture(DragGesture().onChanged { value in guard asset.mediaType != .video, scale > 1 else { return }; offset = CGSize(width: lastOffset.width + value.translation.width, height: lastOffset.height + value.translation.height) }.onEnded { _ in guard asset.mediaType != .video, scale > 1 else { return }; lastOffset = offset })
+            .onTapGesture(count: 2) { guard asset.mediaType != .video else { return }; withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) { if scale > 1 { resetZoom() } else { scale = 2.5; lastScale = 2.5; isZoomed = true } } }
         }
         .task(id: asset.localIdentifier) { requestMedia() }
-        .onChange(of: isActive) { _, active in
-            guard asset.mediaType == .video else { return }
-            if active { player?.play() } else { player?.pause() }
-        }
-        .onDisappear {
-            if requestID != PHInvalidImageRequestID { PHImageManager.default().cancelImageRequest(requestID); requestID = PHInvalidImageRequestID }
-            player?.pause(); player = nil; resetZoom()
-        }
+        .onChange(of: isActive) { _, active in guard asset.mediaType == .video else { return }; if active { player?.play() } else { player?.pause(); player?.seek(to: .zero) } }
+        .onDisappear { cancelMedia(); resetZoom() }
     }
-
-    @ViewBuilder private func fittedImage(_ uiImage: UIImage, in size: CGSize) -> some View {
-        Image(uiImage: uiImage).resizable().aspectRatio(contentMode: .fit).frame(width: size.width, height: size.height).scaleEffect(scale).offset(offset)
-    }
-
+    @ViewBuilder private func fittedImage(_ uiImage: UIImage, in size: CGSize) -> some View { Image(uiImage: uiImage).resizable().aspectRatio(contentMode: .fit).frame(width: size.width, height: size.height).scaleEffect(scale).offset(offset) }
     private func resetZoom() { scale = 1; lastScale = 1; offset = .zero; lastOffset = .zero; isZoomed = false }
-
+    private func cancelMedia() { if requestID != PHInvalidImageRequestID { PHImageManager.default().cancelImageRequest(requestID); requestID = PHInvalidImageRequestID }; player?.pause(); player = nil }
     private func requestMedia() {
-        image = nil; degradedImage = nil; player?.pause(); player = nil
+        cancelMedia(); image = nil; degradedImage = nil
         if asset.mediaType == .video {
             let options = PHVideoRequestOptions(); options.deliveryMode = .automatic; options.isNetworkAccessAllowed = true
-            PHImageManager.default().requestPlayerItem(forVideo: asset, options: options) { item, _ in
-                guard let item else { return }
-                Task { @MainActor in player = AVPlayer(playerItem: item) }
-            }
+            PHImageManager.default().requestPlayerItem(forVideo: asset, options: options) { item, _ in guard let item else { return }; Task { @MainActor in let newPlayer = AVPlayer(playerItem: item); player = newPlayer; if isActive { newPlayer.play() } } }
             return
         }
         let options = PHImageRequestOptions(); options.deliveryMode = .opportunistic; options.resizeMode = .fast; options.isNetworkAccessAllowed = true
         let screen = UIScreen.main.bounds.size; let screenScale = UIScreen.main.scale
-        requestID = PHCachingImageManager.default().requestImage(for: asset, targetSize: CGSize(width: screen.width * screenScale, height: screen.height * screenScale), contentMode: .aspectFit, options: options) { value, info in
-            guard let value else { return }
-            let degraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false
-            Task { @MainActor in if degraded { degradedImage = value } else { image = value } }
-        }
+        requestID = PHCachingImageManager.default().requestImage(for: asset, targetSize: CGSize(width: screen.width * screenScale, height: screen.height * screenScale), contentMode: .aspectFit, options: options) { value, info in guard let value else { return }; let degraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false; Task { @MainActor in if degraded { degradedImage = value } else { image = value } } }
     }
 }
