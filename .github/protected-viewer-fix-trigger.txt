@@ -1,0 +1,1 @@
+fix protected viewer layout 2026-10-25
