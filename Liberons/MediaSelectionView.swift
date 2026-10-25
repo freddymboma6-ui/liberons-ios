@@ -14,6 +14,9 @@ struct MediaSelectionView: View {
     @State private var previewAssets: [PHAsset] = []
     @State private var showingPreview = false
     @State private var filter: MediaFilter = .all
+    @State private var gridContentOffset: CGPoint = .zero
+    @State private var gridAnchorAssetID: String?
+    @State private var gridAnchorOffset: CGFloat = 0
 
     private enum MediaFilter: String, CaseIterable, Identifiable {
         case all, photos, videos, screenshots
@@ -42,6 +45,9 @@ struct MediaSelectionView: View {
                 NativeMediaGrid(
                     assets: filteredAssets,
                     selected: $selected,
+                    contentOffset: $gridContentOffset,
+                    anchorAssetID: $gridAnchorAssetID,
+                    anchorOffset: $gridAnchorOffset,
                     onOpen: { index in
                         let snapshot = filteredAssets
                         guard snapshot.indices.contains(index) else { return }
@@ -117,7 +123,10 @@ struct MediaSelectionView: View {
             case .screenshots: return language.text("Screenshots", "Captures")
             }
         }()
-        return Button { withAnimation(.easeInOut(duration: 0.18)) { filter = value; showSelectedOnly = false } } label: {
+        return Button {
+            gridContentOffset = .zero; gridAnchorAssetID = nil; gridAnchorOffset = 0
+            withAnimation(.easeInOut(duration: 0.18)) { filter = value; showSelectedOnly = false }
+        } label: {
             HStack(spacing: 6) { Image(systemName: icon); Text(label); Text(count.formatted()).font(.caption.bold()).opacity(0.75) }
                 .font(.subheadline.weight(.semibold)).foregroundStyle(active ? Color.white : Color.primary)
                 .padding(.horizontal, 13).frame(height: 36)
@@ -139,6 +148,9 @@ struct MediaSelectionView: View {
 private struct NativeMediaGrid: UIViewRepresentable {
     let assets: [PHAsset]
     @Binding var selected: Set<String>
+    @Binding var contentOffset: CGPoint
+    @Binding var anchorAssetID: String?
+    @Binding var anchorOffset: CGFloat
     let onOpen: (Int) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
@@ -154,11 +166,12 @@ private struct NativeMediaGrid: UIViewRepresentable {
         view.isPrefetchingEnabled = true
         view.register(MediaGridCell.self, forCellWithReuseIdentifier: MediaGridCell.reuseIdentifier)
         context.coordinator.collectionView = view
+        context.coordinator.restorePosition(in: view)
         return view
     }
 
     func updateUIView(_ uiView: UICollectionView, context: Context) { context.coordinator.update(parent: self) }
-    static func dismantleUIView(_ uiView: UICollectionView, coordinator: Coordinator) { coordinator.stopAllCaching() }
+    static func dismantleUIView(_ uiView: UICollectionView, coordinator: Coordinator) { coordinator.capturePosition(in: uiView); coordinator.stopAllCaching() }
 
     final class Coordinator: NSObject, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout, UICollectionViewDataSourcePrefetching {
         private var parent: NativeMediaGrid
@@ -170,6 +183,7 @@ private struct NativeMediaGrid: UIViewRepresentable {
         private var assetIDs: [String]
         private var cachedIndexes = Set<Int>()
         private var thumbnailSize: CGSize = .zero
+        private var isRestoringPosition = false
 
         init(parent: NativeMediaGrid) { self.parent = parent; self.assetIDs = parent.assets.map(\.localIdentifier) }
 
@@ -178,9 +192,16 @@ private struct NativeMediaGrid: UIViewRepresentable {
             let dataChanged = newIDs != assetIDs
             let selectionChanged = parent.selected != self.parent.selected
             self.parent = parent
+            guard let collectionView else { return }
             if dataChanged {
-                stopAllCaching(); assetIDs = newIDs; collectionView?.reloadData()
-            } else if selectionChanged, let collectionView {
+                let previousAnchorID = self.parent.anchorAssetID
+                let previousAnchorOffset = self.parent.anchorOffset
+                stopAllCaching()
+                assetIDs = newIDs
+                collectionView.reloadData()
+                collectionView.layoutIfNeeded()
+                restorePosition(in: collectionView, preferredAnchorID: previousAnchorID, preferredAnchorOffset: previousAnchorOffset)
+            } else if selectionChanged {
                 for indexPath in collectionView.indexPathsForVisibleItems {
                     guard parent.assets.indices.contains(indexPath.item), let cell = collectionView.cellForItem(at: indexPath) as? MediaGridCell else { continue }
                     cell.setSelected(parent.selected.contains(parent.assets[indexPath.item].localIdentifier))
@@ -213,7 +234,14 @@ private struct NativeMediaGrid: UIViewRepresentable {
         }
 
         func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-            guard parent.assets.indices.contains(indexPath.item) else { return }; parent.onOpen(indexPath.item)
+            guard parent.assets.indices.contains(indexPath.item) else { return }
+            capturePosition(in: collectionView)
+            parent.onOpen(indexPath.item)
+        }
+
+        func scrollViewDidScroll(_ scrollView: UIScrollView) {
+            guard !isRestoringPosition, let collectionView = scrollView as? UICollectionView else { return }
+            capturePosition(in: collectionView)
         }
 
         func collectionView(_ collectionView: UICollectionView, prefetchItemsAt indexPaths: [IndexPath]) {
@@ -232,6 +260,46 @@ private struct NativeMediaGrid: UIViewRepresentable {
 
         func collectionView(_ collectionView: UICollectionView, didEndDisplaying cell: UICollectionViewCell, forItemAt indexPath: IndexPath) {
             (cell as? MediaGridCell)?.cancelImageRequest(using: imageManager)
+        }
+
+        func capturePosition(in collectionView: UICollectionView) {
+            guard !isRestoringPosition else { return }
+            parent.contentOffset = collectionView.contentOffset
+            let visible = collectionView.indexPathsForVisibleItems.sorted()
+            guard let first = visible.first, parent.assets.indices.contains(first.item),
+                  let attributes = collectionView.layoutAttributesForItem(at: first) else { return }
+            parent.anchorAssetID = parent.assets[first.item].localIdentifier
+            parent.anchorOffset = collectionView.contentOffset.y - attributes.frame.minY
+        }
+
+        func restorePosition(in collectionView: UICollectionView, preferredAnchorID: String? = nil, preferredAnchorOffset: CGFloat? = nil) {
+            let anchorID = preferredAnchorID ?? parent.anchorAssetID
+            let relativeOffset = preferredAnchorOffset ?? parent.anchorOffset
+            let fallbackOffset = parent.contentOffset
+            isRestoringPosition = true
+            DispatchQueue.main.async { [weak self, weak collectionView] in
+                guard let self, let collectionView else { return }
+                collectionView.layoutIfNeeded()
+                if let anchorID, let index = self.parent.assets.firstIndex(where: { $0.localIdentifier == anchorID }) {
+                    let indexPath = IndexPath(item: index, section: 0)
+                    if let attributes = collectionView.layoutAttributesForItem(at: indexPath) {
+                        let targetY = attributes.frame.minY + relativeOffset
+                        collectionView.setContentOffset(self.clampedOffset(CGPoint(x: 0, y: targetY), in: collectionView), animated: false)
+                    } else {
+                        collectionView.scrollToItem(at: indexPath, at: .top, animated: false)
+                    }
+                } else {
+                    collectionView.setContentOffset(self.clampedOffset(fallbackOffset, in: collectionView), animated: false)
+                }
+                self.isRestoringPosition = false
+                self.capturePosition(in: collectionView)
+            }
+        }
+
+        private func clampedOffset(_ offset: CGPoint, in collectionView: UICollectionView) -> CGPoint {
+            let minY = -collectionView.adjustedContentInset.top
+            let maxY = max(minY, collectionView.contentSize.height - collectionView.bounds.height + collectionView.adjustedContentInset.bottom)
+            return CGPoint(x: 0, y: min(max(offset.y, minY), maxY))
         }
 
         private func requestThumbnail(for asset: PHAsset, cell: MediaGridCell) {
@@ -326,8 +394,7 @@ private struct MediaPreviewGallery: View {
             Color.black.opacity(backdropOpacity).ignoresSafeArea()
             TabView(selection: $currentAssetID) {
                 ForEach(assets, id: \.localIdentifier) { asset in
-                    ZoomablePreviewPage(asset: asset, isZoomed: $pageIsZoomed)
-                        .tag(asset.localIdentifier)
+                    ZoomablePreviewPage(asset: asset, isZoomed: $pageIsZoomed).tag(asset.localIdentifier)
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
