@@ -337,15 +337,6 @@ private struct ProtectedGalleryViewer: View {
                       .background(.black.opacity(0.45), in: Circle())
               }
               .buttonStyle(.plain)
-
-              if let i = currentIndex {
-                  Text("\(i + 1) / \(items.count)")
-                      .font(.subheadline.bold())
-                      .foregroundStyle(.white)
-                      .padding(.horizontal, 10)
-                      .frame(height: 48)
-                      .background(.black.opacity(0.45), in: Capsule())
-              }
           }
 
           Spacer()
@@ -703,66 +694,89 @@ private final class ProtectedPlayerLayerView: UIView {
     }
 }
 
-private struct ProtectedZoomablePhoto: View {
+private struct ProtectedZoomablePhoto: UIViewRepresentable {
     let image: UIImage
 
-    @State private var scale: CGFloat = 1
-    @State private var lastScale: CGFloat = 1
-    @State private var offset: CGSize = .zero
-    @State private var lastOffset: CGSize = .zero
+    func makeCoordinator() -> Coordinator { Coordinator() }
 
-    private let maximumScale: CGFloat = 5
+    func makeUIView(context: Context) -> UIScrollView {
+        let scrollView = UIScrollView()
+        scrollView.delegate = context.coordinator
+        scrollView.minimumZoomScale = 1
+        scrollView.maximumZoomScale = 5
+        scrollView.bouncesZoom = true
+        scrollView.showsVerticalScrollIndicator = false
+        scrollView.showsHorizontalScrollIndicator = false
+        scrollView.contentInsetAdjustmentBehavior = .never
+        scrollView.decelerationRate = .fast
+        scrollView.backgroundColor = .black
 
-    var body: some View {
-        GeometryReader { proxy in
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFit()
-                .frame(width: proxy.size.width, height: proxy.size.height)
-                .scaleEffect(scale)
-                .offset(offset)
-                .contentShape(Rectangle())
-                .gesture(
-                    MagnificationGesture()
-                        .onChanged { value in
-                            let proposed = lastScale * value
-                            scale = min(max(proposed, 1), maximumScale)
-                            if scale <= 1.01 {
-                                offset = .zero
-                            }
-                        }
-                        .onEnded { _ in
-                            if scale < 1.05 {
-                                withAnimation(.interactiveSpring(response: 0.30, dampingFraction: 0.86)) {
-                                    scale = 1
-                                    offset = .zero
-                                }
-                                lastScale = 1
-                                lastOffset = .zero
-                            } else {
-                                lastScale = scale
-                            }
-                        }
-                )
+        let imageView = context.coordinator.imageView
+        imageView.image = image
+        imageView.contentMode = .scaleAspectFit
+        imageView.isUserInteractionEnabled = true
+        scrollView.addSubview(imageView)
 
-                .onTapGesture(count: 2) {
-                    withAnimation(.interactiveSpring(response: 0.30, dampingFraction: 0.84)) {
-                        if scale > 1.01 {
-                            scale = 1
-                            lastScale = 1
-                            offset = .zero
-                            lastOffset = .zero
-                        } else {
-                            scale = 2.5
-                            lastScale = 2.5
-                        }
-                    }
-                }
+        let doubleTap = UITapGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleDoubleTap(_:))
+        )
+        doubleTap.numberOfTapsRequired = 2
+        scrollView.addGestureRecognizer(doubleTap)
+        context.coordinator.scrollView = scrollView
+        return scrollView
+    }
+
+    func updateUIView(_ scrollView: UIScrollView, context: Context) {
+        context.coordinator.imageView.image = image
+        context.coordinator.layoutImage(in: scrollView)
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, UIScrollViewDelegate {
+        let imageView = UIImageView()
+        weak var scrollView: UIScrollView?
+
+        func viewForZooming(in scrollView: UIScrollView) -> UIView? { imageView }
+
+        func scrollViewDidZoom(_ scrollView: UIScrollView) { centerImage(in: scrollView) }
+
+        func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
+            centerImage(in: scrollView)
         }
-        .clipped()
+
+        func layoutImage(in scrollView: UIScrollView) {
+            guard scrollView.bounds.width > 0, scrollView.bounds.height > 0 else { return }
+            let size = scrollView.bounds.size
+            if imageView.bounds.size != size {
+                imageView.frame = CGRect(origin: .zero, size: size)
+                scrollView.contentSize = size
+            }
+            centerImage(in: scrollView)
+        }
+
+        private func centerImage(in scrollView: UIScrollView) {
+            let scaledWidth = imageView.bounds.width * scrollView.zoomScale
+            let scaledHeight = imageView.bounds.height * scrollView.zoomScale
+            let horizontal = max(0, (scrollView.bounds.width - scaledWidth) / 2)
+            let vertical = max(0, (scrollView.bounds.height - scaledHeight) / 2)
+            scrollView.contentInset = UIEdgeInsets(top: vertical, left: horizontal, bottom: vertical, right: horizontal)
+        }
+
+        @objc func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
+            guard let scrollView else { return }
+            if scrollView.zoomScale > scrollView.minimumZoomScale + 0.01 {
+                scrollView.setZoomScale(scrollView.minimumZoomScale, animated: true)
+                return
+            }
+            let targetScale = min(CGFloat(2.5), scrollView.maximumZoomScale)
+            let point = gesture.location(in: imageView)
+            let width = scrollView.bounds.width / targetScale
+            let height = scrollView.bounds.height / targetScale
+            scrollView.zoom(to: CGRect(x: point.x - width / 2, y: point.y - height / 2, width: width, height: height), animated: true)
+        }
     }
 }
-
 
 private enum ProtectedMediaPrefetcher {
     @MainActor
@@ -840,4 +854,4 @@ private struct ProtectedMediaDetail:View{
     @MainActor private func deleteFromCloud()async{deleting=true;operationError=nil;do{_=try await SupabaseService.deleteCloudMedia(assetID:item.id);deleting=false;dismiss();closeViewer?()}catch{deleting=false;operationError=error.localizedDescription}}
 }
 private struct MetadataRow:View{let icon:String;let title:String;let value:String;var body:some View{HStack(alignment:.top,spacing:13){Image(systemName:icon).frame(width:24).foregroundStyle(.blue);VStack(alignment:.leading,spacing:3){Text(title).font(.caption).foregroundStyle(.secondary);Text(value).font(.subheadline.bold())};Spacer()}}}
-private struct ProtectedLibraryTile:View{let item:ProtectedCloudMedia;@State private var image:UIImage?;private var isVideo:Bool{item.mediaType.lowercased().contains("video")};var body:some View{ZStack{GeometryReader{proxy in ZStack{Rectangle().fill(Color.secondary.opacity(0.08));if let image{Image(uiImage:image).resizable().scaledToFill().frame(width:proxy.size.width,height:proxy.size.height).clipped()}else{Image(systemName:isVideo ? "video.fill":"photo.fill").font(.system(size:18,weight:.medium)).foregroundStyle(.tertiary)}}}.aspectRatio(1,contentMode:.fit);if isVideo{VStack{Spacer();HStack{Image(systemName:"play.fill").font(.system(size:10,weight:.bold)).foregroundStyle(.white).frame(width:25,height:25).background(.black.opacity(0.52),in:Circle()).padding(6);Spacer()}}}}.task(id:item.id){await loadThumbnail()}};@MainActor private func loadThumbnail()async{if let cached=ProtectedMediaCache.shared.thumbnail(for:item.id){image=cached;return};if let id=item.iosLocalIdentifier,let asset=PHAsset.fetchAssets(withLocalIdentifiers:[id],options:nil).firstObject{let options=PHImageRequestOptions();options.isNetworkAccessAllowed=true;options.deliveryMode = .opportunistic;options.resizeMode = .fast;PHImageManager.default().requestImage(for:asset,targetSize:CGSize(width:360,height:360),contentMode:.aspectFill,options:options){value,_ in if let value{ProtectedMediaCache.shared.storeThumbnail(value,for:self.item.id);Task{@MainActor in image=value}}};return};if let preview=try? await SupabaseService.cloudPreviewURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:preview),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300,let decoded=ProtectedImageDecoder.downsample(data,maxPixelSize:600){ProtectedMediaCache.shared.storeThumbnail(decoded,for:item.id);image=decoded;return};if !isVideo,let original=try? await SupabaseService.cloudOriginalURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:original),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300,let decoded=ProtectedImageDecoder.downsample(data,maxPixelSize:600){ProtectedMediaCache.shared.storeThumbnail(decoded,for:item.id);image=decoded;return};if isVideo{if let url=try? await SupabaseService.cloudOriginalURL(assetID:item.id){let asset=AVURLAsset(url:url);let generator=AVAssetImageGenerator(asset:asset);generator.appliesPreferredTrackTransform=true;if let cg=try? await generator.image(at:.zero).image{image=UIImage(cgImage:cg)}};return};if let url=try? await SupabaseService.cloudOriginalURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:url),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300{image=UIImage(data:data)}}}
+private struct ProtectedLibraryTile:View{let item:ProtectedCloudMedia;@State private var image:UIImage?;private var isVideo:Bool{item.mediaType.lowercased().contains("video")};var body:some View{ZStack{GeometryReader{proxy in ZStack{Rectangle().fill(Color.secondary.opacity(0.08));if let image{Image(uiImage:image).resizable().scaledToFill().frame(width:proxy.size.width,height:proxy.size.height).clipped()}else{Image(systemName:isVideo ? "video.fill":"photo.fill").font(.system(size:18,weight:.medium)).foregroundStyle(.tertiary)}}}.aspectRatio(1,contentMode:.fit);if isVideo{VStack{Spacer();HStack{Image(systemName:"play.fill").font(.system(size:10,weight:.bold)).foregroundStyle(.white).frame(width:25,height:25).background(.black.opacity(0.52),in:Circle()).padding(6);Spacer()}}}}.task(id:item.id){await loadThumbnail()}};@MainActor private func loadThumbnail()async{if let cached=ProtectedMediaCache.shared.thumbnail(for:item.id){image=cached;return};if let id=item.iosLocalIdentifier,let asset=PHAsset.fetchAssets(withLocalIdentifiers:[id],options:nil).firstObject{let options=PHImageRequestOptions();options.isNetworkAccessAllowed=true;options.deliveryMode = .opportunistic;options.resizeMode = .fast;PHImageManager.default().requestImage(for:asset,targetSize:CGSize(width:900,height:900),contentMode:.aspectFill,options:options){value,_ in if let value{ProtectedMediaCache.shared.storeThumbnail(value,for:self.item.id);Task{@MainActor in image=value}}};return};if let preview=try? await SupabaseService.cloudPreviewURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:preview),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300,let decoded=ProtectedImageDecoder.downsample(data,maxPixelSize:900){ProtectedMediaCache.shared.storeThumbnail(decoded,for:item.id);image=decoded;return};if !isVideo,let original=try? await SupabaseService.cloudOriginalURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:original),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300,let decoded=ProtectedImageDecoder.downsample(data,maxPixelSize:900){ProtectedMediaCache.shared.storeThumbnail(decoded,for:item.id);image=decoded;return};if isVideo{if let url=try? await SupabaseService.cloudOriginalURL(assetID:item.id){let asset=AVURLAsset(url:url);let generator=AVAssetImageGenerator(asset:asset);generator.appliesPreferredTrackTransform=true;if let cg=try? await generator.image(at:.zero).image{image=UIImage(cgImage:cg)}};return};if let url=try? await SupabaseService.cloudOriginalURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:url),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300{image=UIImage(data:data)}}}
