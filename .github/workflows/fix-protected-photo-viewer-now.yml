@@ -1,4 +1,4 @@
-name: Fix protected photo viewer now
+name: Add native protected photo zoom
 on:
   push:
     branches: [library-protected-media]
@@ -14,37 +14,117 @@ jobs:
         with:
           ref: library-protected-media
           fetch-depth: 0
-      - name: Replace broken UIKit photo surface
+      - name: Add native pinch and double tap zoom
         run: |
           python3 - <<'PY'
           from pathlib import Path
           import re
           p = Path('Liberons/ProtectedLibraryView.swift')
           s = p.read_text()
-          pattern = r'private struct ProtectedZoomablePhoto:UIViewRepresentable\{.*?\}\nprivate enum ProtectedMediaPrefetcher'
-          replacement = '''private struct ProtectedZoomablePhoto: View {
-              let image: UIImage
-              var body: some View {
-                  GeometryReader { proxy in
-                      Image(uiImage: image)
-                          .resizable()
-                          .scaledToFit()
-                          .frame(width: proxy.size.width, height: proxy.size.height)
-                          .contentShape(Rectangle())
-                  }
-                  .ignoresSafeArea()
-              }
-          }
-          private enum ProtectedMediaPrefetcher'''
+          pattern = r'private struct ProtectedZoomablePhoto: View \{.*?\n\}\nprivate enum ProtectedMediaPrefetcher'
+          replacement = '''private struct ProtectedZoomablePhoto: UIViewRepresentable {
+    let image: UIImage
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> ProtectedPhotoScrollView {
+        let scrollView = ProtectedPhotoScrollView()
+        scrollView.delegate = context.coordinator
+        scrollView.minimumZoomScale = 1
+        scrollView.maximumZoomScale = 5
+        scrollView.bouncesZoom = true
+        scrollView.alwaysBounceVertical = false
+        scrollView.alwaysBounceHorizontal = false
+        scrollView.showsVerticalScrollIndicator = false
+        scrollView.showsHorizontalScrollIndicator = false
+        scrollView.contentInsetAdjustmentBehavior = .never
+        scrollView.decelerationRate = .fast
+        scrollView.backgroundColor = .black
+
+        let imageView = context.coordinator.imageView
+        imageView.image = image
+        imageView.contentMode = .scaleAspectFit
+        imageView.isUserInteractionEnabled = true
+        scrollView.addSubview(imageView)
+
+        let doubleTap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleDoubleTap(_:)))
+        doubleTap.numberOfTapsRequired = 2
+        scrollView.addGestureRecognizer(doubleTap)
+
+        context.coordinator.scrollView = scrollView
+        let coordinator = context.coordinator
+        scrollView.onLayout = { [weak scrollView, weak coordinator] in
+            guard let scrollView, let coordinator else { return }
+            coordinator.layoutImage(in: scrollView)
+        }
+        return scrollView
+    }
+
+    func updateUIView(_ scrollView: ProtectedPhotoScrollView, context: Context) {
+        context.coordinator.imageView.image = image
+        context.coordinator.layoutImage(in: scrollView)
+    }
+
+    @MainActor final class Coordinator: NSObject, UIScrollViewDelegate {
+        let imageView = UIImageView()
+        weak var scrollView: UIScrollView?
+
+        func viewForZooming(in scrollView: UIScrollView) -> UIView? { imageView }
+
+        func scrollViewDidZoom(_ scrollView: UIScrollView) {
+            centerImage(in: scrollView)
+        }
+
+        func layoutImage(in scrollView: UIScrollView) {
+            guard scrollView.bounds.width > 0, scrollView.bounds.height > 0 else { return }
+            let size = scrollView.bounds.size
+            if imageView.bounds.size != size {
+                imageView.frame = CGRect(origin: .zero, size: size)
+                scrollView.contentSize = size
+            }
+            centerImage(in: scrollView)
+        }
+
+        private func centerImage(in scrollView: UIScrollView) {
+            let scaledWidth = imageView.bounds.width * scrollView.zoomScale
+            let scaledHeight = imageView.bounds.height * scrollView.zoomScale
+            let horizontal = max(0, (scrollView.bounds.width - scaledWidth) / 2)
+            let vertical = max(0, (scrollView.bounds.height - scaledHeight) / 2)
+            scrollView.contentInset = UIEdgeInsets(top: vertical, left: horizontal, bottom: vertical, right: horizontal)
+        }
+
+        @objc func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
+            guard let scrollView else { return }
+            if scrollView.zoomScale > scrollView.minimumZoomScale + 0.01 {
+                scrollView.setZoomScale(scrollView.minimumZoomScale, animated: true)
+                return
+            }
+            let targetScale = min(CGFloat(2.5), scrollView.maximumZoomScale)
+            let point = gesture.location(in: imageView)
+            let width = scrollView.bounds.width / targetScale
+            let height = scrollView.bounds.height / targetScale
+            scrollView.zoom(to: CGRect(x: point.x - width / 2, y: point.y - height / 2, width: width, height: height), animated: true)
+        }
+    }
+}
+
+private final class ProtectedPhotoScrollView: UIScrollView {
+    var onLayout: (() -> Void)?
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        onLayout?()
+    }
+}
+private enum ProtectedMediaPrefetcher'''
           updated, count = re.subn(pattern, replacement, s, count=1, flags=re.S)
           if count != 1:
               raise SystemExit(f'Expected one ProtectedZoomablePhoto block, replaced {count}')
           p.write_text(updated)
           PY
-      - name: Commit hotfix
+      - name: Commit zoom support
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add Liberons/ProtectedLibraryView.swift
-          git commit -m 'Fix protected photo viewer rendering'
+          git commit -m 'Add native pinch and double-tap photo zoom'
           git push origin HEAD:library-protected-media
