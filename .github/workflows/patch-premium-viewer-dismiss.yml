@@ -1,4 +1,4 @@
-name: Protected gallery continuity patch
+name: Premium protected gallery polish
 
 on:
   push:
@@ -18,53 +18,129 @@ jobs:
         with:
           ref: library-protected-media
           fetch-depth: 0
-      - name: Patch protected gallery continuity
+      - name: Polish protected gallery
         shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          p = Path('Liberons/ProtectedLibraryView.swift')
+          s = p.read_text()
 
-          view = Path('Liberons/ProtectedLibraryView.swift')
-          s = view.read_text()
-
-          # Closing the viewer must NEVER refetch/rebuild the grid. That rebuild was
-          # invalidating SwiftUI's scroll position and sending the user back upward.
-          old = '.onDisappear { ProtectedMediaCache.shared.clearFullResolution(); Task { await refreshLibrary() } }'
-          new = '.onDisappear { ProtectedMediaCache.shared.clearFullResolution() }'
+          # The position counter is technical noise in a mixed Photos/Videos viewer.
+          old = '''              if let i = currentIndex {
+                  Text("\\(i + 1) / \\(items.count)")
+                      .font(.subheadline.bold())
+                      .foregroundStyle(.white)
+                      .padding(.horizontal, 10)
+                      .frame(height: 48)
+                      .background(.black.opacity(0.45), in: Capsule())
+              }
+'''
           if old not in s:
-              raise SystemExit('viewer refresh anchor not found')
+              raise SystemExit('viewer counter anchor not found')
+          s = s.replace(old, '', 1)
+
+          # 360px was deliberately fast but visibly soft on Retina cells. Keep
+          # opportunistic delivery (fast first frame + refinement) at a Retina-safe size.
+          old = 'options.deliveryMode = .opportunistic;options.resizeMode = .fast;PHImageManager.default().requestImage(for:asset,targetSize:CGSize(width:360,height:360),contentMode:.aspectFill'
+          new = 'options.deliveryMode = .opportunistic;options.resizeMode = .fast;PHImageManager.default().requestImage(for:asset,targetSize:CGSize(width:900,height:900),contentMode:.aspectFill'
+          if old not in s:
+              raise SystemExit('local thumbnail size anchor not found')
           s = s.replace(old, new, 1)
 
-          # PhotoKit thumbnails should paint a fast/degraded frame immediately and
-          # refine afterwards, instead of holding an empty placeholder for HQ/exact.
-          old = 'options.deliveryMode = .highQualityFormat;options.resizeMode = .exact;PHImageManager.default().requestImage(for:asset,targetSize:CGSize(width:600,height:600),contentMode:.aspectFill'
-          new = 'options.deliveryMode = .opportunistic;options.resizeMode = .fast;PHImageManager.default().requestImage(for:asset,targetSize:CGSize(width:360,height:360),contentMode:.aspectFill'
-          if old not in s:
-              raise SystemExit('thumbnail PhotoKit anchor not found')
-          s = s.replace(old, new, 1)
+          # Cloud thumbnails also need enough pixels for a 3-column Retina grid.
+          s = s.replace('downsample(data,maxPixelSize:600)', 'downsample(data,maxPixelSize:900)', 2)
 
-          # Keep more already-decoded grid thumbnails warm while browsing back/forth.
-          old = 'thumbnailCache.countLimit=120;thumbnailCache.totalCostLimit=48*1024*1024'
-          new = 'thumbnailCache.countLimit=360;thumbnailCache.totalCostLimit=72*1024*1024'
-          if old not in s:
-              raise SystemExit('thumbnail cache anchor not found')
-          s = s.replace(old, new, 1)
-          view.write_text(s)
+          start = s.find('private struct ProtectedZoomablePhoto: View {')
+          end = s.find('\n\nprivate enum ProtectedMediaPrefetcher', start)
+          if start < 0 or end < 0:
+              raise SystemExit('zoom viewer block not found')
 
-          store = Path('Liberons/ProtectedMediaStore.swift')
-          t = store.read_text()
-          if 'private let pageSize = 24' not in t:
-              raise SystemExit('page size anchor not found')
-          t = t.replace('private let pageSize = 24', 'private let pageSize = 120', 1)
-          t = t.replace('let threshold = max(items.count - 8, 0)', 'let threshold = max(items.count - 30, 0)', 1)
-          t = t.replace('// decoding work in the grid/viewer, so 24 gives us a much safer ceiling while\n    // cursor pagination keeps the complete cloud library accessible.', '// Grid cells are lazy, so keeping a larger metadata page avoids constant network\n    // pagination while scrolling without decoding every asset into memory.', 1)
-          store.write_text(t)
+          native_zoom = r'''private struct ProtectedZoomablePhoto: UIViewRepresentable {
+    let image: UIImage
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> UIScrollView {
+        let scroll = UIScrollView()
+        scroll.delegate = context.coordinator
+        scroll.minimumZoomScale = 1
+        scroll.maximumZoomScale = 5
+        scroll.bouncesZoom = true
+        scroll.alwaysBounceVertical = false
+        scroll.alwaysBounceHorizontal = false
+        scroll.showsVerticalScrollIndicator = false
+        scroll.showsHorizontalScrollIndicator = false
+        scroll.backgroundColor = .black
+        scroll.contentInsetAdjustmentBehavior = .never
+        scroll.decelerationRate = .fast
+
+        let imageView = context.coordinator.imageView
+        imageView.image = image
+        imageView.contentMode = .scaleAspectFit
+        imageView.isUserInteractionEnabled = true
+        scroll.addSubview(imageView)
+
+        let doubleTap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.doubleTapped(_:)))
+        doubleTap.numberOfTapsRequired = 2
+        scroll.addGestureRecognizer(doubleTap)
+        context.coordinator.scrollView = scroll
+        return scroll
+    }
+
+    func updateUIView(_ scroll: UIScrollView, context: Context) {
+        context.coordinator.imageView.image = image
+        context.coordinator.updateFrame(in: scroll)
+    }
+
+    final class Coordinator: NSObject, UIScrollViewDelegate {
+        let imageView = UIImageView()
+        weak var scrollView: UIScrollView?
+
+        func viewForZooming(in scrollView: UIScrollView) -> UIView? { imageView }
+
+        func scrollViewDidZoom(_ scrollView: UIScrollView) {
+            centerImage(in: scrollView)
+        }
+
+        func updateFrame(in scrollView: UIScrollView) {
+            guard scrollView.bounds.width > 0, scrollView.bounds.height > 0 else { return }
+            if imageView.frame.size != scrollView.bounds.size {
+                imageView.frame = scrollView.bounds
+                scrollView.contentSize = scrollView.bounds.size
+                centerImage(in: scrollView)
+            }
+        }
+
+        private func centerImage(in scrollView: UIScrollView) {
+            let horizontal = max(0, (scrollView.bounds.width - imageView.frame.width) / 2)
+            let vertical = max(0, (scrollView.bounds.height - imageView.frame.height) / 2)
+            scrollView.contentInset = UIEdgeInsets(top: vertical, left: horizontal, bottom: vertical, right: horizontal)
+        }
+
+        @objc func doubleTapped(_ gesture: UITapGestureRecognizer) {
+            guard let scrollView else { return }
+            if scrollView.zoomScale > scrollView.minimumZoomScale + 0.01 {
+                scrollView.setZoomScale(scrollView.minimumZoomScale, animated: true)
+                return
+            }
+            let target: CGFloat = 2.5
+            let point = gesture.location(in: imageView)
+            let width = scrollView.bounds.width / target
+            let height = scrollView.bounds.height / target
+            scrollView.zoom(to: CGRect(x: point.x - width / 2, y: point.y - height / 2, width: width, height: height), animated: true)
+        }
+    }
+}
+'''
+          s = s[:start] + native_zoom + s[end:]
+          p.write_text(s)
           PY
-      - name: Commit continuity fix
+      - name: Commit gallery polish
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add Liberons/ProtectedLibraryView.swift Liberons/ProtectedMediaStore.swift
+          git add Liberons/ProtectedLibraryView.swift
           git diff --cached --quiet && exit 0
-          git commit -m 'Keep protected gallery position and load thumbnails faster'
+          git commit -m 'Polish protected thumbnails and native photo zoom'
           git push origin HEAD:library-protected-media
