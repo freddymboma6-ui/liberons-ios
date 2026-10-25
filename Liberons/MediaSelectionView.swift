@@ -39,6 +39,7 @@ struct MediaSelectionView: View {
         NavigationStack {
             ZStack {
                 VStack(spacing: 0) {
+                    stableHeader
                     filterBar
                     NativeMediaGrid(
                         assets: filteredAssets,
@@ -48,9 +49,10 @@ struct MediaSelectionView: View {
                             guard snapshot.indices.contains(index) else { return }
                             previewAssets = snapshot
                             previewIndex = index
-                            withAnimation(.easeOut(duration: 0.12)) { showingPreview = true }
+                            showingPreview = true
                         }
                     )
+                    bottomBar
                 }
                 .background(Color(uiColor: .systemBackground))
                 .allowsHitTesting(!showingPreview)
@@ -61,36 +63,42 @@ struct MediaSelectionView: View {
                         initialIndex: previewIndex,
                         selected: $selected,
                         language: language,
-                        onClose: { withAnimation(.easeOut(duration: 0.12)) { showingPreview = false } }
+                        onClose: { showingPreview = false }
                     )
                     .zIndex(100)
-                    .transition(.opacity)
+                    .ignoresSafeArea()
                 }
             }
-            .navigationTitle(language.text("Choose media", "Choisir les médias"))
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar(showingPreview ? .hidden : .visible, for: .navigationBar)
-            .safeAreaInset(edge: .bottom) {
-                if !showingPreview { bottomBar }
-            }
-            .toolbar {
-                if !showingPreview {
-                    ToolbarItem(placement: .topBarLeading) { Button(language.text("Cancel", "Annuler")) { dismiss() } }
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Menu {
-                            if !selected.isEmpty {
-                                Button(showSelectedOnly ? language.text("Show all", "Tout voir") : language.text("Show selected", "Voir la sélection")) { withAnimation { showSelectedOnly.toggle() } }
-                            }
-                            Button(language.text("Select visible", "Tout sélectionner ici")) { selected.formUnion(filteredAssets.map(\.localIdentifier)); showSelectedOnly = false }
-                            if !selected.isEmpty {
-                                Button(language.text("Clear selection", "Effacer la sélection"), role: .destructive) { selected.removeAll(); showSelectedOnly = false }
-                            }
-                        } label: { Image(systemName: "ellipsis.circle") }
-                    }
-                }
-            }
-            .task { loadOldest() }
+            .toolbar(.hidden, for: .navigationBar)
+            .task { if assets.isEmpty { loadOldest() } }
         }
+    }
+
+    private var stableHeader: some View {
+        HStack {
+            Button(language.text("Cancel", "Annuler")) { dismiss() }
+                .frame(minWidth: 64, alignment: .leading)
+            Spacer()
+            Text(language.text("Choose media", "Choisir les médias"))
+                .font(.headline)
+                .lineLimit(1)
+            Spacer()
+            Menu {
+                if !selected.isEmpty {
+                    Button(showSelectedOnly ? language.text("Show all", "Tout voir") : language.text("Show selected", "Voir la sélection")) { withAnimation { showSelectedOnly.toggle() } }
+                }
+                Button(language.text("Select visible", "Tout sélectionner ici")) { selected.formUnion(filteredAssets.map(\.localIdentifier)); showSelectedOnly = false }
+                if !selected.isEmpty {
+                    Button(language.text("Clear selection", "Effacer la sélection"), role: .destructive) { selected.removeAll(); showSelectedOnly = false }
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle").font(.title3)
+                    .frame(minWidth: 64, alignment: .trailing)
+            }
+        }
+        .padding(.horizontal, 16)
+        .frame(height: 44)
+        .background(.ultraThinMaterial)
     }
 
     private var bottomBar: some View {
@@ -166,7 +174,7 @@ private struct NativeMediaGrid: UIViewRepresentable {
         layout.minimumInteritemSpacing = 2
         let view = UICollectionView(frame: .zero, collectionViewLayout: layout)
         view.backgroundColor = .systemBackground
-        view.contentInset = UIEdgeInsets(top: 2, left: 2, bottom: 110, right: 2)
+        view.contentInset = UIEdgeInsets(top: 2, left: 2, bottom: 2, right: 2)
         view.alwaysBounceVertical = true
         view.dataSource = context.coordinator
         view.delegate = context.coordinator
@@ -190,6 +198,8 @@ private struct NativeMediaGrid: UIViewRepresentable {
         private var assetIDs: [String]
         private var cachedIndexes = Set<Int>()
         private var thumbnailSize: CGSize = .zero
+        private var lastKnownOffset: CGPoint = .zero
+        private var hasScrolled = false
 
         init(parent: NativeMediaGrid) { self.parent = parent; self.assetIDs = parent.assets.map(\.localIdentifier) }
 
@@ -200,13 +210,24 @@ private struct NativeMediaGrid: UIViewRepresentable {
             self.parent = parent
             guard let collectionView else { return }
             if dataChanged {
-                stopAllCaching(); assetIDs = newIDs; collectionView.reloadData()
+                let savedOffset = collectionView.contentOffset
+                stopAllCaching(); assetIDs = newIDs; collectionView.reloadData(); collectionView.layoutIfNeeded()
+                if hasScrolled { collectionView.setContentOffset(clamped(savedOffset, in: collectionView), animated: false) }
             } else if selectionChanged {
                 for indexPath in collectionView.indexPathsForVisibleItems {
                     guard parent.assets.indices.contains(indexPath.item), let cell = collectionView.cellForItem(at: indexPath) as? MediaGridCell else { continue }
                     cell.setSelected(parent.selected.contains(parent.assets[indexPath.item].localIdentifier))
                 }
             }
+            if hasScrolled, collectionView.contentOffset.y < 20, lastKnownOffset.y > collectionView.bounds.height {
+                collectionView.setContentOffset(clamped(lastKnownOffset, in: collectionView), animated: false)
+            }
+        }
+
+        func scrollViewDidScroll(_ scrollView: UIScrollView) {
+            guard scrollView.isDragging || scrollView.isDecelerating else { return }
+            lastKnownOffset = scrollView.contentOffset
+            if abs(scrollView.contentOffset.y) > 20 { hasScrolled = true }
         }
 
         func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int { parent.assets.count }
@@ -237,6 +258,8 @@ private struct NativeMediaGrid: UIViewRepresentable {
 
         func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
             guard parent.assets.indices.contains(indexPath.item) else { return }
+            lastKnownOffset = collectionView.contentOffset
+            if abs(collectionView.contentOffset.y) > 20 { hasScrolled = true }
             parent.onOpen(indexPath.item)
         }
 
@@ -256,6 +279,12 @@ private struct NativeMediaGrid: UIViewRepresentable {
 
         func collectionView(_ collectionView: UICollectionView, didEndDisplaying cell: UICollectionViewCell, forItemAt indexPath: IndexPath) {
             (cell as? MediaGridCell)?.cancelImageRequest(using: imageManager)
+        }
+
+        private func clamped(_ offset: CGPoint, in collectionView: UICollectionView) -> CGPoint {
+            let minY = -collectionView.adjustedContentInset.top
+            let maxY = max(minY, collectionView.contentSize.height - collectionView.bounds.height + collectionView.adjustedContentInset.bottom)
+            return CGPoint(x: 0, y: min(max(offset.y, minY), maxY))
         }
 
         private func requestThumbnail(for asset: PHAsset, cell: MediaGridCell) {
@@ -350,7 +379,8 @@ private struct MediaPreviewGallery: View {
             Color.black.opacity(backdropOpacity).ignoresSafeArea()
             TabView(selection: $currentAssetID) {
                 ForEach(assets, id: \.localIdentifier) { asset in
-                    ZoomablePreviewPage(asset: asset, isZoomed: $pageIsZoomed).tag(asset.localIdentifier)
+                    ZoomablePreviewPage(asset: asset, isActive: currentAssetID == asset.localIdentifier, isZoomed: $pageIsZoomed)
+                        .tag(asset.localIdentifier)
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
@@ -393,6 +423,7 @@ private struct MediaPreviewGallery: View {
 
 private struct ZoomablePreviewPage: View {
     let asset: PHAsset
+    let isActive: Bool
     @Binding var isZoomed: Bool
     @State private var image: UIImage?
     @State private var degradedImage: UIImage?
@@ -408,8 +439,10 @@ private struct ZoomablePreviewPage: View {
             ZStack {
                 Color.black
                 if asset.mediaType == .video {
-                    if let player { VideoPlayer(player: player).onAppear { player.play() }.onDisappear { player.pause() } }
-                    else { ProgressView().tint(.white) }
+                    if let player {
+                        VideoPlayer(player: player)
+                            .onAppear { if isActive { player.play() } }
+                    } else { ProgressView().tint(.white) }
                 } else if let image { fittedImage(image, in: proxy.size) }
                 else if let degradedImage { fittedImage(degradedImage, in: proxy.size).blur(radius: 3) }
                 else { VStack(spacing: 12) { ProgressView().tint(.white); Text("Loading…").font(.caption).foregroundStyle(.white.opacity(0.72)) } }
@@ -427,6 +460,10 @@ private struct ZoomablePreviewPage: View {
             }
         }
         .task(id: asset.localIdentifier) { requestMedia() }
+        .onChange(of: isActive) { _, active in
+            guard asset.mediaType == .video else { return }
+            if active { player?.play() } else { player?.pause() }
+        }
         .onDisappear {
             if requestID != PHInvalidImageRequestID { PHImageManager.default().cancelImageRequest(requestID); requestID = PHInvalidImageRequestID }
             player?.pause(); player = nil; resetZoom()
