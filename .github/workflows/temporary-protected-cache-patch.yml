@@ -1,0 +1,39 @@
+name: Temporary protected cache patch
+on:
+  push:
+    paths: ['.github/protected-cache-main-trigger.txt']
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: library-protected-media
+          fetch-depth: 0
+      - run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('Liberons/ProtectedLibraryView.swift'); s=p.read_text()
+          old='private final class ProtectedMediaCache:@unchecked Sendable{static let shared=ProtectedMediaCache();private let thumbnailCache=NSCache<NSString,UIImage>();private let fullResolutionCache=NSCache<NSString,UIImage>();private init(){thumbnailCache.countLimit=360;thumbnailCache.totalCostLimit=72*1024*1024;fullResolutionCache.countLimit=4;fullResolutionCache.totalCostLimit=96*1024*1024};func thumbnail(for id:UUID)->UIImage?{thumbnailCache.object(forKey:id.uuidString as NSString)};func storeThumbnail(_ image:UIImage,for id:UUID){let cost=Int(image.size.width*image.size.height*4);thumbnailCache.setObject(image,forKey:id.uuidString as NSString,cost:cost)};func fullResolutionImage(for id:UUID)->UIImage?{fullResolutionCache.object(forKey:id.uuidString as NSString)};func storeFullResolution(_ image:UIImage,for id:UUID){let cost=Int(image.size.width*image.scale*image.size.height*image.scale*4);fullResolutionCache.setObject(image,forKey:id.uuidString as NSString,cost:cost)};func clearFullResolution(){fullResolutionCache.removeAllObjects()};func removeAll(){thumbnailCache.removeAllObjects();fullResolutionCache.removeAllObjects()}}'
+          new='''private final class ProtectedMediaCache:@unchecked Sendable{
+ static let shared=ProtectedMediaCache();private let thumbnailCache=NSCache<NSString,UIImage>();private let fullResolutionCache=NSCache<NSString,UIImage>();private let diskQueue=DispatchQueue(label:"com.liberons.protected-thumbnails",qos:.utility);private let diskDirectory:URL
+ private init(){thumbnailCache.countLimit=360;thumbnailCache.totalCostLimit=72*1024*1024;fullResolutionCache.countLimit=4;fullResolutionCache.totalCostLimit=96*1024*1024;let root=FileManager.default.urls(for:.cachesDirectory,in:.userDomainMask)[0];diskDirectory=root.appendingPathComponent("LiberonsProtectedThumbnails",isDirectory:true);try? FileManager.default.createDirectory(at:diskDirectory,withIntermediateDirectories:true)}
+ func thumbnail(for id:UUID)->UIImage?{thumbnailCache.object(forKey:id.uuidString as NSString)}
+ func diskThumbnail(for id:UUID)async->UIImage?{await withCheckedContinuation{continuation in diskQueue.async{let url=self.diskDirectory.appendingPathComponent(id.uuidString).appendingPathExtension("jpg");guard let data=try? Data(contentsOf:url),let image=UIImage(data:data)else{continuation.resume(returning:nil);return};let cost=Int(image.size.width*image.size.height*4);self.thumbnailCache.setObject(image,forKey:id.uuidString as NSString,cost:cost);continuation.resume(returning:image)}}}
+ func storeThumbnail(_ image:UIImage,for id:UUID){let cost=Int(image.size.width*image.size.height*4);thumbnailCache.setObject(image,forKey:id.uuidString as NSString,cost:cost);diskQueue.async{let url=self.diskDirectory.appendingPathComponent(id.uuidString).appendingPathExtension("jpg");guard !FileManager.default.fileExists(atPath:url.path),let data=image.jpegData(compressionQuality:0.82)else{return};try? data.write(to:url,options:.atomic)}}
+ func fullResolutionImage(for id:UUID)->UIImage?{fullResolutionCache.object(forKey:id.uuidString as NSString)};func storeFullResolution(_ image:UIImage,for id:UUID){let cost=Int(image.size.width*image.scale*image.size.height*image.scale*4);fullResolutionCache.setObject(image,forKey:id.uuidString as NSString,cost:cost)};func clearFullResolution(){fullResolutionCache.removeAllObjects()};func removeAll(){thumbnailCache.removeAllObjects();fullResolutionCache.removeAllObjects()}}
+'''
+          if old not in s: raise SystemExit('cache anchor missing')
+          s=s.replace(old,new,1)
+          old2='@MainActor private func loadThumbnail()async{if let cached=ProtectedMediaCache.shared.thumbnail(for:item.id){image=cached;return};if let id=item.iosLocalIdentifier'
+          new2='@MainActor private func loadThumbnail()async{if let cached=ProtectedMediaCache.shared.thumbnail(for:item.id){image=cached;return};if let disk=await ProtectedMediaCache.shared.diskThumbnail(for:item.id){image=disk;return};if let id=item.iosLocalIdentifier'
+          if old2 not in s: raise SystemExit('thumbnail anchor missing')
+          s=s.replace(old2,new2,1);p.write_text(s)
+          PY
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add Liberons/ProtectedLibraryView.swift
+          git commit -m 'Persist protected thumbnails between library visits'
+          git push origin HEAD:library-protected-media
