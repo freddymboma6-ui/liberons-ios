@@ -26,34 +26,28 @@ jobs:
           p = Path('Liberons/ProtectedLibraryView.swift')
           s = p.read_text()
 
-          # The position counter is technical noise in a mixed Photos/Videos viewer.
-          old = '''              if let i = currentIndex {
-                  Text("\\(i + 1) / \\(items.count)")
-                      .font(.subheadline.bold())
-                      .foregroundStyle(.white)
-                      .padding(.horizontal, 10)
-                      .frame(height: 48)
-                      .background(.black.opacity(0.45), in: Capsule())
-              }
-'''
-          if old not in s:
+          # Remove the mixed-media position counter.
+          start = s.find('              if let i = currentIndex {\n                  Text("\\(i + 1) / \\(items.count)")')
+          if start < 0:
               raise SystemExit('viewer counter anchor not found')
-          s = s.replace(old, '', 1)
+          end = s.find('              }\n', start)
+          if end < 0:
+              raise SystemExit('viewer counter end not found')
+          s = s[:start] + s[end + len('              }\n'):]
 
-          # 360px was deliberately fast but visibly soft on Retina cells. Keep
-          # opportunistic delivery (fast first frame + refinement) at a Retina-safe size.
+          # Retina-safe thumbnails while retaining opportunistic fast-first delivery.
           old = 'options.deliveryMode = .opportunistic;options.resizeMode = .fast;PHImageManager.default().requestImage(for:asset,targetSize:CGSize(width:360,height:360),contentMode:.aspectFill'
           new = 'options.deliveryMode = .opportunistic;options.resizeMode = .fast;PHImageManager.default().requestImage(for:asset,targetSize:CGSize(width:900,height:900),contentMode:.aspectFill'
           if old not in s:
               raise SystemExit('local thumbnail size anchor not found')
           s = s.replace(old, new, 1)
-
-          # Cloud thumbnails also need enough pixels for a 3-column Retina grid.
           s = s.replace('downsample(data,maxPixelSize:600)', 'downsample(data,maxPixelSize:900)', 2)
 
-          start = s.find('private struct ProtectedZoomablePhoto: View {')
-          end = s.find('\n\nprivate enum ProtectedMediaPrefetcher', start)
-          if start < 0 or end < 0:
+          # Replace the incomplete SwiftUI magnification-only implementation with
+          # UIScrollView so pinch, pan, inertia and point-centered double-tap all work.
+          zoom_start = s.find('private struct ProtectedZoomablePhoto: View {')
+          zoom_end = s.find('\n\nprivate enum ProtectedMediaPrefetcher', zoom_start)
+          if zoom_start < 0 or zoom_end < 0:
               raise SystemExit('zoom viewer block not found')
 
           native_zoom = r'''private struct ProtectedZoomablePhoto: UIViewRepresentable {
@@ -67,8 +61,6 @@ jobs:
         scroll.minimumZoomScale = 1
         scroll.maximumZoomScale = 5
         scroll.bouncesZoom = true
-        scroll.alwaysBounceVertical = false
-        scroll.alwaysBounceHorizontal = false
         scroll.showsVerticalScrollIndicator = false
         scroll.showsHorizontalScrollIndicator = false
         scroll.backgroundColor = .black
@@ -93,6 +85,7 @@ jobs:
         context.coordinator.updateFrame(in: scroll)
     }
 
+    @MainActor
     final class Coordinator: NSObject, UIScrollViewDelegate {
         let imageView = UIImageView()
         weak var scrollView: UIScrollView?
@@ -103,18 +96,24 @@ jobs:
             centerImage(in: scrollView)
         }
 
+        func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
+            centerImage(in: scrollView)
+        }
+
         func updateFrame(in scrollView: UIScrollView) {
             guard scrollView.bounds.width > 0, scrollView.bounds.height > 0 else { return }
-            if imageView.frame.size != scrollView.bounds.size {
-                imageView.frame = scrollView.bounds
+            if imageView.bounds.size != scrollView.bounds.size {
+                imageView.frame = CGRect(origin: .zero, size: scrollView.bounds.size)
                 scrollView.contentSize = scrollView.bounds.size
                 centerImage(in: scrollView)
             }
         }
 
         private func centerImage(in scrollView: UIScrollView) {
-            let horizontal = max(0, (scrollView.bounds.width - imageView.frame.width) / 2)
-            let vertical = max(0, (scrollView.bounds.height - imageView.frame.height) / 2)
+            let scaledWidth = imageView.bounds.width * scrollView.zoomScale
+            let scaledHeight = imageView.bounds.height * scrollView.zoomScale
+            let horizontal = max(0, (scrollView.bounds.width - scaledWidth) / 2)
+            let vertical = max(0, (scrollView.bounds.height - scaledHeight) / 2)
             scrollView.contentInset = UIEdgeInsets(top: vertical, left: horizontal, bottom: vertical, right: horizontal)
         }
 
@@ -124,7 +123,7 @@ jobs:
                 scrollView.setZoomScale(scrollView.minimumZoomScale, animated: true)
                 return
             }
-            let target: CGFloat = 2.5
+            let target = min(CGFloat(2.5), scrollView.maximumZoomScale)
             let point = gesture.location(in: imageView)
             let width = scrollView.bounds.width / target
             let height = scrollView.bounds.height / target
@@ -133,7 +132,7 @@ jobs:
     }
 }
 '''
-          s = s[:start] + native_zoom + s[end:]
+          s = s[:zoom_start] + native_zoom + s[zoom_end:]
           p.write_text(s)
           PY
       - name: Commit gallery polish
