@@ -2,10 +2,8 @@ name: Premium protected gallery polish
 
 on:
   push:
-    branches:
-      - library-protected-media
-    paths:
-      - .github/workflows/patch-premium-viewer-dismiss.yml
+    branches: [library-protected-media]
+    paths: [.github/workflows/patch-premium-viewer-dismiss.yml]
 
 permissions:
   contents: write
@@ -18,128 +16,17 @@ jobs:
         with:
           ref: library-protected-media
           fetch-depth: 0
-      - name: Polish protected gallery
+      - name: Apply focused gallery patch
         shell: bash
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('Liberons/ProtectedLibraryView.swift')
-          s = p.read_text()
-
-          # Remove the mixed-media position counter.
-          start = s.find('              if let i = currentIndex {\n                  Text("\\(i + 1) / \\(items.count)")')
-          if start < 0:
-              raise SystemExit('viewer counter anchor not found')
-          end = s.find('              }\n', start)
-          if end < 0:
-              raise SystemExit('viewer counter end not found')
-          s = s[:start] + s[end + len('              }\n'):]
-
-          # Retina-safe thumbnails while retaining opportunistic fast-first delivery.
-          old = 'options.deliveryMode = .opportunistic;options.resizeMode = .fast;PHImageManager.default().requestImage(for:asset,targetSize:CGSize(width:360,height:360),contentMode:.aspectFill'
-          new = 'options.deliveryMode = .opportunistic;options.resizeMode = .fast;PHImageManager.default().requestImage(for:asset,targetSize:CGSize(width:900,height:900),contentMode:.aspectFill'
-          if old not in s:
-              raise SystemExit('local thumbnail size anchor not found')
-          s = s.replace(old, new, 1)
-          s = s.replace('downsample(data,maxPixelSize:600)', 'downsample(data,maxPixelSize:900)', 2)
-
-          # Replace the incomplete SwiftUI magnification-only implementation with
-          # UIScrollView so pinch, pan, inertia and point-centered double-tap all work.
-          zoom_start = s.find('private struct ProtectedZoomablePhoto: View {')
-          zoom_end = s.find('\n\nprivate enum ProtectedMediaPrefetcher', zoom_start)
-          if zoom_start < 0 or zoom_end < 0:
-              raise SystemExit('zoom viewer block not found')
-
-          native_zoom = r'''private struct ProtectedZoomablePhoto: UIViewRepresentable {
-    let image: UIImage
-
-    func makeCoordinator() -> Coordinator { Coordinator() }
-
-    func makeUIView(context: Context) -> UIScrollView {
-        let scroll = UIScrollView()
-        scroll.delegate = context.coordinator
-        scroll.minimumZoomScale = 1
-        scroll.maximumZoomScale = 5
-        scroll.bouncesZoom = true
-        scroll.showsVerticalScrollIndicator = false
-        scroll.showsHorizontalScrollIndicator = false
-        scroll.backgroundColor = .black
-        scroll.contentInsetAdjustmentBehavior = .never
-        scroll.decelerationRate = .fast
-
-        let imageView = context.coordinator.imageView
-        imageView.image = image
-        imageView.contentMode = .scaleAspectFit
-        imageView.isUserInteractionEnabled = true
-        scroll.addSubview(imageView)
-
-        let doubleTap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.doubleTapped(_:)))
-        doubleTap.numberOfTapsRequired = 2
-        scroll.addGestureRecognizer(doubleTap)
-        context.coordinator.scrollView = scroll
-        return scroll
-    }
-
-    func updateUIView(_ scroll: UIScrollView, context: Context) {
-        context.coordinator.imageView.image = image
-        context.coordinator.updateFrame(in: scroll)
-    }
-
-    @MainActor
-    final class Coordinator: NSObject, UIScrollViewDelegate {
-        let imageView = UIImageView()
-        weak var scrollView: UIScrollView?
-
-        func viewForZooming(in scrollView: UIScrollView) -> UIView? { imageView }
-
-        func scrollViewDidZoom(_ scrollView: UIScrollView) {
-            centerImage(in: scrollView)
-        }
-
-        func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
-            centerImage(in: scrollView)
-        }
-
-        func updateFrame(in scrollView: UIScrollView) {
-            guard scrollView.bounds.width > 0, scrollView.bounds.height > 0 else { return }
-            if imageView.bounds.size != scrollView.bounds.size {
-                imageView.frame = CGRect(origin: .zero, size: scrollView.bounds.size)
-                scrollView.contentSize = scrollView.bounds.size
-                centerImage(in: scrollView)
-            }
-        }
-
-        private func centerImage(in scrollView: UIScrollView) {
-            let scaledWidth = imageView.bounds.width * scrollView.zoomScale
-            let scaledHeight = imageView.bounds.height * scrollView.zoomScale
-            let horizontal = max(0, (scrollView.bounds.width - scaledWidth) / 2)
-            let vertical = max(0, (scrollView.bounds.height - scaledHeight) / 2)
-            scrollView.contentInset = UIEdgeInsets(top: vertical, left: horizontal, bottom: vertical, right: horizontal)
-        }
-
-        @objc func doubleTapped(_ gesture: UITapGestureRecognizer) {
-            guard let scrollView else { return }
-            if scrollView.zoomScale > scrollView.minimumZoomScale + 0.01 {
-                scrollView.setZoomScale(scrollView.minimumZoomScale, animated: true)
-                return
-            }
-            let target = min(CGFloat(2.5), scrollView.maximumZoomScale)
-            let point = gesture.location(in: imageView)
-            let width = scrollView.bounds.width / target
-            let height = scrollView.bounds.height / target
-            scrollView.zoom(to: CGRect(x: point.x - width / 2, y: point.y - height / 2, width: width, height: height), animated: true)
-        }
-    }
-}
-'''
-          s = s[:zoom_start] + native_zoom + s[zoom_end:]
-          p.write_text(s)
-          PY
-      - name: Commit gallery polish
+          echo 'ZnJvbSBwYXRobGliIGltcG9ydCBQYXRoCmltcG9ydCByZQpwPVBhdGgoIkxpYmVyb25zL1Byb3RlY3RlZExpYnJhcnlWaWV3LnN3aWZ0IikKcz1wLnJlYWRfdGV4dCgpCnMyLG49cmUuc3VibihyJ1xuXHMqaWYgbGV0IGkgPSBjdXJyZW50SW5kZXggXHtcblxzKlRleHRcKCJcXFwoaSBcKyAxXCkgLyBcXFwoaXRlbXNcLmNvdW50XCkiXClcblxzKlwuZm9udFwoXC5zdWJoZWFkbGluZVwuYm9sZFwoXClcKVxuXHMqXC5mb3JlZ3JvdW5kU3R5bGVcKFwud2hpdGVcKVxuXHMqXC5wYWRkaW5nXChcLmhvcml6b250YWwsIDEwXClcblxzKlwuZnJhbWVcKGhlaWdodDogNDhcKVxuXHMqXC5iYWNrZ3JvdW5kXChcLmJsYWNrXC5vcGFjaXR5XCgwXC40NVwpLCBpbjogQ2Fwc3VsZVwoXClcKVxuXHMqXH0nLCAnJywgcywgY291bnQ9MSkKaWYgbiAhPSAxOiByYWlzZSBTeXN0ZW1FeGl0KCJjb3VudGVyIGFuY2hvciBub3QgZm91bmQiKQpzPXMyCm9sZD0nb3B0aW9ucy5kZWxpdmVyeU1vZGUgPSAub3Bwb3J0dW5pc3RpYztvcHRpb25zLnJlc2l6ZU1vZGUgPSAuZmFzdDtQSEltYWdlTWFuYWdlci5kZWZhdWx0KCkucmVxdWVzdEltYWdlKGZvcjphc3NldCx0YXJnZXRTaXplOkNHU2l6ZSh3aWR0aDozNjAsaGVpZ2h0OjM2MCksY29udGVudE1vZGU6LmFzcGVjdEZpbGwnCm5ldz0nb3B0aW9ucy5kZWxpdmVyeU1vZGUgPSAub3Bwb3J0dW5pc3RpYztvcHRpb25zLnJlc2l6ZU1vZGUgPSAuZmFzdDtQSEltYWdlTWFuYWdlci5kZWZhdWx0KCkucmVxdWVzdEltYWdlKGZvcjphc3NldCx0YXJnZXRTaXplOkNHU2l6ZSh3aWR0aDo5MDAsaGVpZ2h0OjkwMCksY29udGVudE1vZGU6LmFzcGVjdEZpbGwnCmlmIG9sZCBub3QgaW4gczogcmFpc2UgU3lzdGVtRXhpdCgidGh1bWJuYWlsIGFuY2hvciBub3QgZm91bmQiKQpzPXMucmVwbGFjZShvbGQsbmV3LDEpCnM9cy5yZXBsYWNlKCdkb3duc2FtcGxlKGRhdGEsbWF4UGl4ZWxTaXplOjYwMCknLCdkb3duc2FtcGxlKGRhdGEsbWF4UGl4ZWxTaXplOjkwMCknKQpzdGFydD1zLmZpbmQoJ3ByaXZhdGUgc3RydWN0IFByb3RlY3RlZFpvb21hYmxlUGhvdG86IFZpZXcgeycpCmVuZD1zLmZpbmQoJ1xuXG5wcml2YXRlIGVudW0gUHJvdGVjdGVkTWVkaWFQcmVmZXRjaGVyJyxzdGFydCkKaWYgc3RhcnQ8MCBvciBlbmQ8MDogcmFpc2UgU3lzdGVtRXhpdCgiem9vbSBibG9jayBub3QgZm91bmQiKQpuYXRpdmU9cicnJ3ByaXZhdGUgc3RydWN0IFByb3RlY3RlZFpvb21hYmxlUGhvdG86IFVJVmlld1JlcHJlc2VudGFibGUgewogICAgbGV0IGltYWdlOiBVSUltYWdlCgogICAgZnVuYyBtYWtlQ29vcmRpbmF0b3IoKSAtPiBDb29yZGluYXRvciB7IENvb3JkaW5hdG9yKCkgfQoKICAgIGZ1bmMgbWFrZVVJVmlldyhjb250ZXh0OiBDb250ZXh0KSAtPiBVSVNjcm9sbFZpZXcgewogICAgICAgIGxldCBzY3JvbGxWaWV3ID0gVUlTY3JvbGxWaWV3KCkKICAgICAgICBzY3JvbGxWaWV3LmRlbGVnYXRlID0gY29udGV4dC5jb29yZGluYXRvcgogICAgICAgIHNjcm9sbFZpZXcubWluaW11bVpvb21TY2FsZSA9IDEKICAgICAgICBzY3JvbGxWaWV3Lm1heGltdW1ab29tU2NhbGUgPSA1CiAgICAgICAgc2Nyb2xsVmlldy5ib3VuY2VzWm9vbSA9IHRydWUKICAgICAgICBzY3JvbGxWaWV3LnNob3dzVmVydGljYWxTY3JvbGxJbmRpY2F0b3IgPSBmYWxzZQogICAgICAgIHNjcm9sbFZpZXcuc2hvd3NIb3Jpem9udGFsU2Nyb2xsSW5kaWNhdG9yID0gZmFsc2UKICAgICAgICBzY3JvbGxWaWV3LmNvbnRlbnRJbnNldEFkanVzdG1lbnRCZWhhdmlvciA9IC5uZXZlcgogICAgICAgIHNjcm9sbFZpZXcuZGVjZWxlcmF0aW9uUmF0ZSA9IC5mYXN0CiAgICAgICAgc2Nyb2xsVmlldy5iYWNrZ3JvdW5kQ29sb3IgPSAuYmxhY2sKCiAgICAgICAgbGV0IGltYWdlVmlldyA9IGNvbnRleHQuY29vcmRpbmF0b3IuaW1hZ2VWaWV3CiAgICAgICAgaW1hZ2VWaWV3LmltYWdlID0gaW1hZ2UKICAgICAgICBpbWFnZVZpZXcuY29udGVudE1vZGUgPSAuc2NhbGVBc3BlY3RGaXQKICAgICAgICBpbWFnZVZpZXcuaXNVc2VySW50ZXJhY3Rpb25FbmFibGVkID0gdHJ1ZQogICAgICAgIHNjcm9sbFZpZXcuYWRkU3VidmlldyhpbWFnZVZpZXcpCgogICAgICAgIGxldCBkb3VibGVUYXAgPSBVSVRhcEdlc3R1cmVSZWNvZ25pemVyKAogICAgICAgICAgICB0YXJnZXQ6IGNvbnRleHQuY29vcmRpbmF0b3IsCiAgICAgICAgICAgIGFjdGlvbjogI3NlbGVjdG9yKENvb3JkaW5hdG9yLmhhbmRsZURvdWJsZVRhcChfOikpCiAgICAgICAgKQogICAgICAgIGRvdWJsZVRhcC5udW1iZXJPZlRhcHNSZXF1aXJlZCA9IDIKICAgICAgICBzY3JvbGxWaWV3LmFkZEdlc3R1cmVSZWNvZ25pemVyKGRvdWJsZVRhcCkKICAgICAgICBjb250ZXh0LmNvb3JkaW5hdG9yLnNjcm9sbFZpZXcgPSBzY3JvbGxWaWV3CiAgICAgICAgcmV0dXJuIHNjcm9sbFZpZXcKICAgIH0KCiAgICBmdW5jIHVwZGF0ZVVJVmlldyhfIHNjcm9sbFZpZXc6IFVJU2Nyb2xsVmlldywgY29udGV4dDogQ29udGV4dCkgewogICAgICAgIGNvbnRleHQuY29vcmRpbmF0b3IuaW1hZ2VWaWV3LmltYWdlID0gaW1hZ2UKICAgICAgICBjb250ZXh0LmNvb3JkaW5hdG9yLmxheW91dEltYWdlKGluOiBzY3JvbGxWaWV3KQogICAgfQoKICAgIEBNYWluQWN0b3IKICAgIGZpbmFsIGNsYXNzIENvb3JkaW5hdG9yOiBOU09iamVjdCwgVUlTY3JvbGxWaWV3RGVsZWdhdGUgewogICAgICAgIGxldCBpbWFnZVZpZXcgPSBVSUltYWdlVmlldygpCiAgICAgICAgd2VhayB2YXIgc2Nyb2xsVmlldzogVUlTY3JvbGxWaWV3PwoKICAgICAgICBmdW5jIHZpZXdGb3Jab29taW5nKGluIHNjcm9sbFZpZXc6IFVJU2Nyb2xsVmlldykgLT4gVUlWaWV3PyB7IGltYWdlVmlldyB9CgogICAgICAgIGZ1bmMgc2Nyb2xsVmlld0RpZFpvb20oXyBzY3JvbGxWaWV3OiBVSVNjcm9sbFZpZXcpIHsgY2VudGVySW1hZ2UoaW46IHNjcm9sbFZpZXcpIH0KCiAgICAgICAgZnVuYyBzY3JvbGxWaWV3RGlkRW5kWm9vbWluZyhfIHNjcm9sbFZpZXc6IFVJU2Nyb2xsVmlldywgd2l0aCB2aWV3OiBVSVZpZXc/LCBhdFNjYWxlIHNjYWxlOiBDR0Zsb2F0KSB7CiAgICAgICAgICAgIGNlbnRlckltYWdlKGluOiBzY3JvbGxWaWV3KQogICAgICAgIH0KCiAgICAgICAgZnVuYyBsYXlvdXRJbWFnZShpbiBzY3JvbGxWaWV3OiBVSVNjcm9sbFZpZXcpIHsKICAgICAgICAgICAgZ3VhcmQgc2Nyb2xsVmlldy5ib3VuZHMud2lkdGggPiAwLCBzY3JvbGxWaWV3LmJvdW5kcy5oZWlnaHQgPiAwIGVsc2UgeyByZXR1cm4gfQogICAgICAgICAgICBsZXQgc2l6ZSA9IHNjcm9sbFZpZXcuYm91bmRzLnNpemUKICAgICAgICAgICAgaWYgaW1hZ2VWaWV3LmJvdW5kcy5zaXplICE9IHNpemUgewogICAgICAgICAgICAgICAgaW1hZ2VWaWV3LmZyYW1lID0gQ0dSZWN0KG9yaWdpbjogLnplcm8sIHNpemU6IHNpemUpCiAgICAgICAgICAgICAgICBzY3JvbGxWaWV3LmNvbnRlbnRTaXplID0gc2l6ZQogICAgICAgICAgICB9CiAgICAgICAgICAgIGNlbnRlckltYWdlKGluOiBzY3JvbGxWaWV3KQogICAgICAgIH0KCiAgICAgICAgcHJpdmF0ZSBmdW5jIGNlbnRlckltYWdlKGluIHNjcm9sbFZpZXc6IFVJU2Nyb2xsVmlldykgewogICAgICAgICAgICBsZXQgc2NhbGVkV2lkdGggPSBpbWFnZVZpZXcuYm91bmRzLndpZHRoICogc2Nyb2xsVmlldy56b29tU2NhbGUKICAgICAgICAgICAgbGV0IHNjYWxlZEhlaWdodCA9IGltYWdlVmlldy5ib3VuZHMuaGVpZ2h0ICogc2Nyb2xsVmlldy56b29tU2NhbGUKICAgICAgICAgICAgbGV0IGhvcml6b250YWwgPSBtYXgoMCwgKHNjcm9sbFZpZXcuYm91bmRzLndpZHRoIC0gc2NhbGVkV2lkdGgpIC8gMikKICAgICAgICAgICAgbGV0IHZlcnRpY2FsID0gbWF4KDAsIChzY3JvbGxWaWV3LmJvdW5kcy5oZWlnaHQgLSBzY2FsZWRIZWlnaHQpIC8gMikKICAgICAgICAgICAgc2Nyb2xsVmlldy5jb250ZW50SW5zZXQgPSBVSUVkZ2VJbnNldHModG9wOiB2ZXJ0aWNhbCwgbGVmdDogaG9yaXpvbnRhbCwgYm90dG9tOiB2ZXJ0aWNhbCwgcmlnaHQ6IGhvcml6b250YWwpCiAgICAgICAgfQoKICAgICAgICBAb2JqYyBmdW5jIGhhbmRsZURvdWJsZVRhcChfIGdlc3R1cmU6IFVJVGFwR2VzdHVyZVJlY29nbml6ZXIpIHsKICAgICAgICAgICAgZ3VhcmQgbGV0IHNjcm9sbFZpZXcgZWxzZSB7IHJldHVybiB9CiAgICAgICAgICAgIGlmIHNjcm9sbFZpZXcuem9vbVNjYWxlID4gc2Nyb2xsVmlldy5taW5pbXVtWm9vbVNjYWxlICsgMC4wMSB7CiAgICAgICAgICAgICAgICBzY3JvbGxWaWV3LnNldFpvb21TY2FsZShzY3JvbGxWaWV3Lm1pbmltdW1ab29tU2NhbGUsIGFuaW1hdGVkOiB0cnVlKQogICAgICAgICAgICAgICAgcmV0dXJuCiAgICAgICAgICAgIH0KICAgICAgICAgICAgbGV0IHRhcmdldFNjYWxlID0gbWluKENHRmxvYXQoMi41KSwgc2Nyb2xsVmlldy5tYXhpbXVtWm9vbVNjYWxlKQogICAgICAgICAgICBsZXQgcG9pbnQgPSBnZXN0dXJlLmxvY2F0aW9uKGluOiBpbWFnZVZpZXcpCiAgICAgICAgICAgIGxldCB3aWR0aCA9IHNjcm9sbFZpZXcuYm91bmRzLndpZHRoIC8gdGFyZ2V0U2NhbGUKICAgICAgICAgICAgbGV0IGhlaWdodCA9IHNjcm9sbFZpZXcuYm91bmRzLmhlaWdodCAvIHRhcmdldFNjYWxlCiAgICAgICAgICAgIHNjcm9sbFZpZXcuem9vbSh0bzogQ0dSZWN0KHg6IHBvaW50LnggLSB3aWR0aCAvIDIsIHk6IHBvaW50LnkgLSBoZWlnaHQgLyAyLCB3aWR0aDogd2lkdGgsIGhlaWdodDogaGVpZ2h0KSwgYW5pbWF0ZWQ6IHRydWUpCiAgICAgICAgfQogICAgfQp9JycnCnM9c1s6c3RhcnRdK25hdGl2ZStzW2VuZDpdCnAud3JpdGVfdGV4dChzKQo=' | base64 --decode > /tmp/patch_gallery.py
+          python3 /tmp/patch_gallery.py
+      - name: Commit source patch
+        shell: bash
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add Liberons/ProtectedLibraryView.swift
           git diff --cached --quiet && exit 0
-          git commit -m 'Polish protected thumbnails and native photo zoom'
+          git commit -m 'Fix protected thumbnails and native photo zoom'
           git push origin HEAD:library-protected-media
