@@ -1,0 +1,99 @@
+name: Apply native protected grid
+
+on:
+  push:
+    paths:
+      - '.github/workflows/apply-native-protected-grid.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: library-protected-media
+          fetch-depth: 0
+      - name: Replace SwiftUI grid with native collection view
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('Liberons/ProtectedLibraryView.swift')
+          s = p.read_text()
+          old = '''                                LazyVGrid(columns: columns, spacing: 1.5) {
+                                    ForEach(displayItems) { item in
+                                        ProtectedLibraryTile(item: item).matchedTransitionSource(id: item.id, in: photoTransition)
+                                            .task {
+                                                let before = store.items.count
+                                                await store.loadMoreIfNeeded(currentItem: item)
+                                                if store.items.count != before { rebuildDisplayItems() }
+                                            }
+                                            .overlay(alignment: .topTrailing) { if isSelecting { Image(systemName: selectedIDs.contains(item.id) ? "checkmark.circle.fill" : "circle").font(.title2).foregroundStyle(.white).shadow(radius: 3).padding(7) } }
+                                            .contentShape(Rectangle()).onTapGesture { isSelecting ? toggle(item.id) : (viewerItem = item) }.onLongPressGesture(minimumDuration: 0.35) { if !isSelecting { isSelecting = true; selectedIDs = [item.id] } }
+                                    }
+                                }'''
+          new = '''                                ProtectedNativeLibraryGrid(
+                                    items: displayItems,
+                                    selectedIDs: selectedIDs,
+                                    isSelecting: isSelecting,
+                                    onTap: { item in
+                                        if isSelecting { toggle(item.id) }
+                                        else { viewerItem = item }
+                                    },
+                                    onLongPress: { item in
+                                        if !isSelecting {
+                                            isSelecting = true
+                                            selectedIDs = [item.id]
+                                        }
+                                    },
+                                    onNeedsMore: { item in
+                                        Task { @MainActor in
+                                            let before = store.items.count
+                                            await store.loadMoreIfNeeded(currentItem: item)
+                                            if store.items.count != before { rebuildDisplayItems() }
+                                        }
+                                    }
+                                )
+                                .frame(height: nativeGridHeight)'''
+          if old not in s:
+              raise SystemExit('Legacy LazyVGrid block not found; refusing unsafe edit')
+          s = s.replace(old, new, 1)
+          anchor = '''    private func isVideo(_ item: ProtectedCloudMedia) -> Bool { item.mediaType.lowercased().contains("video") }
+'''
+          addition = '''    private func isVideo(_ item: ProtectedCloudMedia) -> Bool { item.mediaType.lowercased().contains("video") }
+
+    private var nativeGridHeight: CGFloat {
+        let width = UIScreen.main.bounds.width
+        let cell = floor((width - 3.0) / 3.0)
+        let rows = max(1, Int(ceil(Double(displayItems.count) / 3.0)))
+        return CGFloat(rows) * cell + CGFloat(max(0, rows - 1)) * 1.5
+    }
+'''
+          if anchor not in s:
+              raise SystemExit('isVideo anchor not found; refusing unsafe edit')
+          s = s.replace(anchor, addition, 1)
+          p.write_text(s)
+          PY
+      - name: Verify protected library invariants
+        shell: bash
+        run: |
+          grep -q 'ProtectedNativeLibraryGrid(' Liberons/ProtectedLibraryView.swift
+          ! grep -q 'LazyVGrid(columns: columns' Liberons/ProtectedLibraryView.swift
+          grep -q 'ProtectedMediaCache.shared.clearFullResolution()' Liberons/ProtectedLibraryView.swift
+          grep -q 'private struct ProtectedZoomablePhoto: UIViewRepresentable' Liberons/ProtectedLibraryView.swift
+          grep -q 'thumbnailCache.countLimit=360' Liberons/ProtectedLibraryView.swift
+          grep -q 'UICollectionViewDiffableDataSource' Liberons/ProtectedNativeLibraryGrid.swift
+          grep -q 'UICollectionViewDataSourcePrefetching' Liberons/ProtectedNativeLibraryGrid.swift
+      - name: Commit migration
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add Liberons/ProtectedLibraryView.swift
+          git diff --cached --check
+          git commit -m 'Use native collection grid for protected library'
+          git push origin HEAD:library-protected-media
