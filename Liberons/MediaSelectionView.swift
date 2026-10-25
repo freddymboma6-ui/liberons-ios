@@ -134,6 +134,7 @@ private struct NativeMediaGrid: UIViewRepresentable {
     func updateUIView(_ uiView: UICollectionView, context: Context) { context.coordinator.update(parent: self) }
     static func dismantleUIView(_ uiView: UICollectionView, coordinator: Coordinator) { coordinator.captureAnchor(); coordinator.stopAllCaching() }
 
+    @MainActor
     final class Coordinator: NSObject, @preconcurrency UICollectionViewDelegateFlowLayout, @preconcurrency UICollectionViewDataSourcePrefetching {
         private enum Section { case main }
         private var parent: NativeMediaGrid
