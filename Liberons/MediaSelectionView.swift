@@ -50,10 +50,8 @@ struct MediaSelectionView: View {
                 .allowsHitTesting(!showingPreview)
 
                 if showingPreview {
-                    MediaPreviewGallery(assets: previewAssets, initialIndex: previewIndex, selected: $selected, language: language) {
-                        showingPreview = false
-                    }
-                    .zIndex(100).ignoresSafeArea()
+                    MediaPreviewGallery(assets: previewAssets, initialIndex: previewIndex, selected: $selected, language: language) { showingPreview = false }
+                        .zIndex(100).ignoresSafeArea()
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
@@ -64,16 +62,13 @@ struct MediaSelectionView: View {
     private var stableHeader: some View {
         HStack {
             Button(language.text("Cancel", "Annuler")) { dismiss() }.frame(minWidth: 64, alignment: .leading)
-            Spacer()
-            Text(language.text("Choose media", "Choisir les médias")).font(.headline).lineLimit(1)
-            Spacer()
+            Spacer(); Text(language.text("Choose media", "Choisir les médias")).font(.headline).lineLimit(1); Spacer()
             Menu {
                 if !selected.isEmpty { Button(showSelectedOnly ? language.text("Show all", "Tout voir") : language.text("Show selected", "Voir la sélection")) { showSelectedOnly.toggle() } }
                 Button(language.text("Select visible", "Tout sélectionner ici")) { selected.formUnion(filteredAssets.map(\.localIdentifier)); showSelectedOnly = false }
                 if !selected.isEmpty { Button(language.text("Clear selection", "Effacer la sélection"), role: .destructive) { selected.removeAll(); showSelectedOnly = false } }
             } label: { Image(systemName: "ellipsis.circle").font(.title3).frame(minWidth: 64, alignment: .trailing) }
-        }
-        .padding(.horizontal, 16).frame(height: 44).background(.ultraThinMaterial)
+        }.padding(.horizontal, 16).frame(height: 44).background(.ultraThinMaterial)
     }
 
     private var bottomBar: some View {
@@ -88,10 +83,8 @@ struct MediaSelectionView: View {
                 dismiss(); Task { await backup.backup(localIdentifiers: ids) }
             } label: {
                 Label(language.text("Protect selected media", "Protéger les médias sélectionnés"), systemImage: "icloud.and.arrow.up.fill").fontWeight(.semibold).frame(maxWidth: .infinity).frame(height: 48)
-            }
-            .buttonStyle(.borderedProminent).controlSize(.large).disabled(selected.isEmpty || backup.isRunning)
-        }
-        .padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 6).background(.ultraThinMaterial)
+            }.buttonStyle(.borderedProminent).controlSize(.large).disabled(selected.isEmpty || backup.isRunning)
+        }.padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 6).background(.ultraThinMaterial)
     }
 
     private var filterBar: some View {
@@ -136,13 +129,12 @@ private struct NativeMediaGrid: UIViewRepresentable {
         view.backgroundColor = .systemBackground; view.contentInset = UIEdgeInsets(top: 2, left: 2, bottom: 2, right: 2); view.alwaysBounceVertical = true
         view.delegate = context.coordinator; view.prefetchDataSource = context.coordinator; view.isPrefetchingEnabled = true
         view.register(MediaGridCell.self, forCellWithReuseIdentifier: MediaGridCell.reuseIdentifier)
-        context.coordinator.install(on: view)
-        return view
+        context.coordinator.install(on: view); return view
     }
     func updateUIView(_ uiView: UICollectionView, context: Context) { context.coordinator.update(parent: self) }
     static func dismantleUIView(_ uiView: UICollectionView, coordinator: Coordinator) { coordinator.captureAnchor(); coordinator.stopAllCaching() }
 
-    final class Coordinator: NSObject, UICollectionViewDelegateFlowLayout, UICollectionViewDataSourcePrefetching {
+    final class Coordinator: NSObject, @preconcurrency UICollectionViewDelegateFlowLayout, @preconcurrency UICollectionViewDataSourcePrefetching {
         private enum Section { case main }
         private var parent: NativeMediaGrid
         private weak var collectionView: UICollectionView?
@@ -165,8 +157,7 @@ private struct NativeMediaGrid: UIViewRepresentable {
             collectionView = view
             dataSource = UICollectionViewDiffableDataSource<Section, String>(collectionView: view) { [weak self] collectionView, indexPath, identifier in
                 guard let self, let asset = self.assetsByID[identifier], let cell = collectionView.dequeueReusableCell(withReuseIdentifier: MediaGridCell.reuseIdentifier, for: indexPath) as? MediaGridCell else { return UICollectionViewCell() }
-                self.configure(cell, asset: asset, identifier: identifier)
-                return cell
+                self.configure(cell, asset: asset, identifier: identifier); return cell
             }
             rebuildAssetMap(parent.assets)
             var snapshot = NSDiffableDataSourceSnapshot<Section, String>(); snapshot.appendSections([.main]); snapshot.appendItems(orderedIDs)
@@ -174,122 +165,48 @@ private struct NativeMediaGrid: UIViewRepresentable {
         }
 
         func update(parent: NativeMediaGrid) {
-            let newIDs = parent.assets.map(\.localIdentifier)
-            let oldSelection = selectedIDs
-            self.parent = parent
-            selectedIDs = parent.selected
-            if newIDs != orderedIDs {
-                captureAnchor()
-                rebuildAssetMap(parent.assets)
-                applyIdentifiers(newIDs)
-            } else if oldSelection != selectedIDs {
-                reconfigureSelection(changed: oldSelection.symmetricDifference(selectedIDs))
-            }
+            let newIDs = parent.assets.map(\.localIdentifier); let oldSelection = selectedIDs
+            self.parent = parent; selectedIDs = parent.selected
+            if newIDs != orderedIDs { captureAnchor(); rebuildAssetMap(parent.assets); applyIdentifiers(newIDs) }
+            else if oldSelection != selectedIDs { reconfigureSelection(changed: oldSelection.symmetricDifference(selectedIDs)) }
         }
 
-        private func rebuildAssetMap(_ assets: [PHAsset]) {
-            orderedIDs = assets.map(\.localIdentifier)
-            assetsByID = Dictionary(uniqueKeysWithValues: assets.map { ($0.localIdentifier, $0) })
-        }
-
+        private func rebuildAssetMap(_ assets: [PHAsset]) { orderedIDs = assets.map(\.localIdentifier); assetsByID = Dictionary(uniqueKeysWithValues: assets.map { ($0.localIdentifier, $0) }) }
         private func applyIdentifiers(_ ids: [String]) {
-            guard let dataSource else { return }
-            applyingSnapshot = true
-            stopAllCaching()
+            guard let dataSource else { return }; applyingSnapshot = true; stopAllCaching()
             var snapshot = NSDiffableDataSourceSnapshot<Section, String>(); snapshot.appendSections([.main]); snapshot.appendItems(ids)
-            dataSource.apply(snapshot, animatingDifferences: false) { [weak self] in
-                guard let self else { return }
-                self.applyingSnapshot = false
-                self.restoreAnchor()
-            }
+            dataSource.apply(snapshot, animatingDifferences: false) { [weak self] in guard let self else { return }; self.applyingSnapshot = false; self.restoreAnchor() }
         }
-
         private func reconfigureSelection(changed: Set<String>) {
-            guard let dataSource, !changed.isEmpty else { return }
-            var snapshot = dataSource.snapshot()
-            let existing = changed.filter { snapshot.indexOfItem($0) != nil }
-            guard !existing.isEmpty else { return }
-            snapshot.reconfigureItems(Array(existing))
-            dataSource.apply(snapshot, animatingDifferences: false)
+            guard let dataSource, !changed.isEmpty else { return }; var snapshot = dataSource.snapshot()
+            let existing = changed.filter { snapshot.indexOfItem($0) != nil }; guard !existing.isEmpty else { return }
+            snapshot.reconfigureItems(Array(existing)); dataSource.apply(snapshot, animatingDifferences: false)
         }
-
         private func configure(_ cell: MediaGridCell, asset: PHAsset, identifier: String) {
-            cell.configurePlaceholder(assetID: identifier, selected: selectedIDs.contains(identifier), duration: asset.mediaType == .video ? duration(asset.duration) : nil)
-            requestThumbnail(for: asset, cell: cell)
-            cell.onSelection = { [weak self, weak cell] in
-                guard let self else { return }
-                var next = self.parent.selected
-                if next.contains(identifier) { next.remove(identifier) } else { next.insert(identifier) }
-                self.selectedIDs = next; self.parent.selected = next; cell?.setSelected(next.contains(identifier))
-            }
+            cell.configurePlaceholder(assetID: identifier, selected: selectedIDs.contains(identifier), duration: asset.mediaType == .video ? duration(asset.duration) : nil); requestThumbnail(for: asset, cell: cell)
+            cell.onSelection = { [weak self, weak cell] in guard let self else { return }; var next = self.parent.selected; if next.contains(identifier) { next.remove(identifier) } else { next.insert(identifier) }; self.selectedIDs = next; self.parent.selected = next; cell?.setSelected(next.contains(identifier)) }
         }
-
-        func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-            guard let id = dataSource?.itemIdentifier(for: indexPath) else { return }
-            captureAnchor(); parent.onOpen(id)
-        }
-
-        func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, sizeForItemAt indexPath: IndexPath) -> CGSize {
-            let width = floor((collectionView.bounds.width - 8) / 3); let pixels = width * UIScreen.main.scale
-            thumbnailSize = CGSize(width: pixels, height: pixels); return CGSize(width: width, height: width)
-        }
-
-        func scrollViewDidScroll(_ scrollView: UIScrollView) {
-            guard !applyingSnapshot, scrollView.isDragging || scrollView.isDecelerating else { return }
-            captureAnchor()
-        }
+        func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) { guard let id = dataSource?.itemIdentifier(for: indexPath) else { return }; captureAnchor(); parent.onOpen(id) }
+        func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, sizeForItemAt indexPath: IndexPath) -> CGSize { let width = floor((collectionView.bounds.width - 8) / 3); let pixels = width * UIScreen.main.scale; thumbnailSize = CGSize(width: pixels, height: pixels); return CGSize(width: width, height: width) }
+        func scrollViewDidScroll(_ scrollView: UIScrollView) { guard !applyingSnapshot, scrollView.isDragging || scrollView.isDecelerating else { return }; captureAnchor() }
         func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) { if !decelerate { captureAnchor() } }
         func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) { captureAnchor() }
-
         func captureAnchor() {
-            guard let collectionView else { return }
-            absoluteOffset = collectionView.contentOffset
-            let visible = collectionView.indexPathsForVisibleItems.sorted()
-            guard let first = visible.first, let id = dataSource?.itemIdentifier(for: first), let attributes = collectionView.layoutAttributesForItem(at: first) else { return }
+            guard let collectionView else { return }; absoluteOffset = collectionView.contentOffset
+            let visible = collectionView.indexPathsForVisibleItems.sorted(); guard let first = visible.first, let id = dataSource?.itemIdentifier(for: first), let attributes = collectionView.layoutAttributesForItem(at: first) else { return }
             anchorID = id; anchorDelta = collectionView.contentOffset.y - attributes.frame.minY
         }
-
         private func restoreAnchor() {
-            guard let collectionView else { return }
-            collectionView.layoutIfNeeded()
-            if let anchorID, let indexPath = dataSource?.indexPath(for: anchorID) {
-                collectionView.scrollToItem(at: indexPath, at: .top, animated: false)
-                collectionView.layoutIfNeeded()
-                if let attributes = collectionView.layoutAttributesForItem(at: indexPath) {
-                    collectionView.setContentOffset(clamped(CGPoint(x: 0, y: attributes.frame.minY + anchorDelta), in: collectionView), animated: false)
-                    return
-                }
-            }
+            guard let collectionView else { return }; collectionView.layoutIfNeeded()
+            if let anchorID, let indexPath = dataSource?.indexPath(for: anchorID) { collectionView.scrollToItem(at: indexPath, at: .top, animated: false); collectionView.layoutIfNeeded(); if let attributes = collectionView.layoutAttributesForItem(at: indexPath) { collectionView.setContentOffset(clamped(CGPoint(x: 0, y: attributes.frame.minY + anchorDelta), in: collectionView), animated: false); return } }
             collectionView.setContentOffset(clamped(absoluteOffset, in: collectionView), animated: false)
         }
-
-        func collectionView(_ collectionView: UICollectionView, prefetchItemsAt indexPaths: [IndexPath]) {
-            let ids = indexPaths.compactMap { dataSource?.itemIdentifier(for: $0) }.filter { !cachedIDs.contains($0) }
-            let assets = ids.compactMap { assetsByID[$0] }; guard !assets.isEmpty else { return }
-            cachedIDs.formUnion(ids); imageManager.startCachingImages(for: assets, targetSize: effectiveThumbnailSize(collectionView), contentMode: .aspectFill, options: imageOptions)
-        }
-        func collectionView(_ collectionView: UICollectionView, cancelPrefetchingForItemsAt indexPaths: [IndexPath]) {
-            let ids = indexPaths.compactMap { dataSource?.itemIdentifier(for: $0) }.filter { cachedIDs.contains($0) }
-            let assets = ids.compactMap { assetsByID[$0] }; guard !assets.isEmpty else { return }
-            imageManager.stopCachingImages(for: assets, targetSize: effectiveThumbnailSize(collectionView), contentMode: .aspectFill, options: imageOptions); cachedIDs.subtract(ids)
-        }
+        func collectionView(_ collectionView: UICollectionView, prefetchItemsAt indexPaths: [IndexPath]) { let ids = indexPaths.compactMap { dataSource?.itemIdentifier(for: $0) }.filter { !cachedIDs.contains($0) }; let assets = ids.compactMap { assetsByID[$0] }; guard !assets.isEmpty else { return }; cachedIDs.formUnion(ids); imageManager.startCachingImages(for: assets, targetSize: effectiveThumbnailSize(collectionView), contentMode: .aspectFill, options: imageOptions) }
+        func collectionView(_ collectionView: UICollectionView, cancelPrefetchingForItemsAt indexPaths: [IndexPath]) { let ids = indexPaths.compactMap { dataSource?.itemIdentifier(for: $0) }.filter { cachedIDs.contains($0) }; let assets = ids.compactMap { assetsByID[$0] }; guard !assets.isEmpty else { return }; imageManager.stopCachingImages(for: assets, targetSize: effectiveThumbnailSize(collectionView), contentMode: .aspectFill, options: imageOptions); cachedIDs.subtract(ids) }
         func collectionView(_ collectionView: UICollectionView, didEndDisplaying cell: UICollectionViewCell, forItemAt indexPath: IndexPath) { (cell as? MediaGridCell)?.cancelImageRequest(using: imageManager) }
-
-        private func requestThumbnail(for asset: PHAsset, cell: MediaGridCell) {
-            cell.cancelImageRequest(using: imageManager); let id = asset.localIdentifier
-            cell.requestID = imageManager.requestImage(for: asset, targetSize: effectiveThumbnailSize(collectionView), contentMode: .aspectFill, options: imageOptions) { [weak cell] image, _ in
-                guard let cell, cell.representedAssetID == id, let image else { return }; cell.setImage(image)
-            }
-        }
-        private func effectiveThumbnailSize(_ view: UICollectionView?) -> CGSize {
-            if thumbnailSize.width > 0 { return thumbnailSize }
-            let width = max(120, ((view?.bounds.width ?? UIScreen.main.bounds.width) - 8) / 3); let pixels = width * UIScreen.main.scale
-            return CGSize(width: pixels, height: pixels)
-        }
-        private func clamped(_ offset: CGPoint, in view: UICollectionView) -> CGPoint {
-            let minY = -view.adjustedContentInset.top; let maxY = max(minY, view.contentSize.height - view.bounds.height + view.adjustedContentInset.bottom)
-            return CGPoint(x: 0, y: min(max(offset.y, minY), maxY))
-        }
+        private func requestThumbnail(for asset: PHAsset, cell: MediaGridCell) { cell.cancelImageRequest(using: imageManager); let id = asset.localIdentifier; cell.requestID = imageManager.requestImage(for: asset, targetSize: effectiveThumbnailSize(collectionView), contentMode: .aspectFill, options: imageOptions) { [weak cell] image, _ in guard let cell, cell.representedAssetID == id, let image else { return }; cell.setImage(image) } }
+        private func effectiveThumbnailSize(_ view: UICollectionView?) -> CGSize { if thumbnailSize.width > 0 { return thumbnailSize }; let width = max(120, ((view?.bounds.width ?? UIScreen.main.bounds.width) - 8) / 3); let pixels = width * UIScreen.main.scale; return CGSize(width: pixels, height: pixels) }
+        private func clamped(_ offset: CGPoint, in view: UICollectionView) -> CGPoint { let minY = -view.adjustedContentInset.top; let maxY = max(minY, view.contentSize.height - view.bounds.height + view.adjustedContentInset.bottom); return CGPoint(x: 0, y: min(max(offset.y, minY), maxY)) }
         private func duration(_ value: TimeInterval) -> String { let total = Int(value.rounded()); return total >= 3600 ? String(format: "%d:%02d:%02d", total / 3600, (total % 3600) / 60, total % 60) : String(format: "%d:%02d", total / 60, total % 60) }
         func stopAllCaching() { imageManager.stopCachingImagesForAllAssets(); cachedIDs.removeAll() }
     }
@@ -325,27 +242,20 @@ private final class MediaGridCell: UICollectionViewCell {
 private struct MediaPreviewGallery: View {
     let assets: [PHAsset]; @Binding var selected: Set<String>; @ObservedObject var language: LanguageStore; let onClose: () -> Void
     @State private var currentAssetID: String; @State private var verticalOffset: CGFloat = 0; @State private var pageIsZoomed = false
-    init(assets: [PHAsset], initialIndex: Int, selected: Binding<Set<String>>, language: LanguageStore, onClose: @escaping () -> Void) {
-        self.assets = assets; _selected = selected; self.language = language; self.onClose = onClose
-        let i = assets.indices.contains(initialIndex) ? initialIndex : 0; _currentAssetID = State(initialValue: assets.indices.contains(i) ? assets[i].localIdentifier : "")
-    }
+    init(assets: [PHAsset], initialIndex: Int, selected: Binding<Set<String>>, language: LanguageStore, onClose: @escaping () -> Void) { self.assets = assets; _selected = selected; self.language = language; self.onClose = onClose; let i = assets.indices.contains(initialIndex) ? initialIndex : 0; _currentAssetID = State(initialValue: assets.indices.contains(i) ? assets[i].localIdentifier : "") }
     private var currentAsset: PHAsset? { assets.first { $0.localIdentifier == currentAssetID } }
     private var backdropOpacity: Double { Swift.max(0.55, 1.0 - Double(abs(verticalOffset)) / 600.0) }
     var body: some View {
         ZStack {
             Color.black.opacity(backdropOpacity).ignoresSafeArea()
-            TabView(selection: $currentAssetID) {
-                ForEach(assets, id: \.localIdentifier) { asset in
-                    ZoomablePreviewPage(asset: asset, isActive: currentAssetID == asset.localIdentifier, isZoomed: $pageIsZoomed).tag(asset.localIdentifier)
-                }
-            }.tabViewStyle(.page(indexDisplayMode: .never)).scrollDisabled(pageIsZoomed).offset(y: pageIsZoomed ? 0 : verticalOffset)
+            TabView(selection: $currentAssetID) { ForEach(assets, id: \.localIdentifier) { asset in ZoomablePreviewPage(asset: asset, isActive: currentAssetID == asset.localIdentifier, isZoomed: $pageIsZoomed).tag(asset.localIdentifier) } }
+                .tabViewStyle(.page(indexDisplayMode: .never)).scrollDisabled(pageIsZoomed).offset(y: pageIsZoomed ? 0 : verticalOffset)
             VStack {
                 HStack {
                     Button { onClose() } label: { Image(systemName: "xmark").font(.headline).foregroundStyle(.white).frame(width: 42, height: 42).background(.black.opacity(0.48), in: Circle()) }
                     Spacer()
                     if let asset = currentAsset { let chosen = selected.contains(asset.localIdentifier); Button { if chosen { selected.remove(asset.localIdentifier) } else { selected.insert(asset.localIdentifier) } } label: { Label(chosen ? language.text("Selected", "Sélectionné") : language.text("Select", "Sélectionner"), systemImage: chosen ? "checkmark.circle.fill" : "circle").font(.subheadline.bold()).foregroundStyle(.white).padding(.horizontal, 14).frame(height: 42).background(chosen ? Color.accentColor : Color.black.opacity(0.48), in: Capsule()) } }
-                }.padding()
-                Spacer()
+                }.padding(); Spacer()
                 if let date = currentAsset?.creationDate { Text(date.formatted(date: .long, time: .shortened)).font(.caption).foregroundStyle(.white).padding(.horizontal, 12).padding(.vertical, 7).background(.black.opacity(0.5), in: Capsule()).padding(.bottom, 16) }
             }.opacity(pageIsZoomed ? 0 : 1).offset(y: verticalOffset)
         }
@@ -380,11 +290,7 @@ private struct ZoomablePreviewPage: View {
     private func cancelMedia() { if requestID != PHInvalidImageRequestID { PHImageManager.default().cancelImageRequest(requestID); requestID = PHInvalidImageRequestID }; player?.pause(); player = nil }
     private func requestMedia() {
         cancelMedia(); image = nil; degradedImage = nil
-        if asset.mediaType == .video {
-            let options = PHVideoRequestOptions(); options.deliveryMode = .automatic; options.isNetworkAccessAllowed = true
-            PHImageManager.default().requestPlayerItem(forVideo: asset, options: options) { item, _ in guard let item else { return }; Task { @MainActor in let newPlayer = AVPlayer(playerItem: item); player = newPlayer; if isActive { newPlayer.play() } } }
-            return
-        }
+        if asset.mediaType == .video { let options = PHVideoRequestOptions(); options.deliveryMode = .automatic; options.isNetworkAccessAllowed = true; PHImageManager.default().requestPlayerItem(forVideo: asset, options: options) { item, _ in guard let item else { return }; Task { @MainActor in let newPlayer = AVPlayer(playerItem: item); player = newPlayer; if isActive { newPlayer.play() } } }; return }
         let options = PHImageRequestOptions(); options.deliveryMode = .opportunistic; options.resizeMode = .fast; options.isNetworkAccessAllowed = true
         let screen = UIScreen.main.bounds.size; let screenScale = UIScreen.main.scale
         requestID = PHCachingImageManager.default().requestImage(for: asset, targetSize: CGSize(width: screen.width * screenScale, height: screen.height * screenScale), contentMode: .aspectFit, options: options) { value, info in guard let value else { return }; let degraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false; Task { @MainActor in if degraded { degradedImage = value } else { image = value } } }
