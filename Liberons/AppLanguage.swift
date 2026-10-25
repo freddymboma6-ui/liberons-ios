@@ -25,7 +25,15 @@ final class LanguageStore: ObservableObject {
         }
     }
 
-    func text(_ en: String, _ fr: String) -> String { language == .french ? fr : en }
+    func text(_ en: String, _ fr: String) -> String {
+        // `pending_bytes` represents storage reserved for media that has not yet
+        // reached the final protected state. It is not necessarily transferring
+        // over the network right now, so avoid implying an active upload.
+        if en == "Being protected" && fr == "En cours de protection" {
+            return language == .french ? "À protéger" : "To protect"
+        }
+        return language == .french ? fr : en
+    }
 }
 
 extension Notification.Name {
