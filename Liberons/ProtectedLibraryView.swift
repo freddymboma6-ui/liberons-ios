@@ -38,15 +38,9 @@ struct ProtectedLibraryView: View {
     @State private var filterCounts: [ProtectedLibraryFilter: Int] = [:]
     @Namespace private var photoTransition
     @Namespace private var filterTransition
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 1.5), count: 3)
 
     private func isVideo(_ item: ProtectedCloudMedia) -> Bool { item.mediaType.lowercased().contains("video") }
-
-    private var nativeGridHeight: CGFloat {
-        let width = UIScreen.main.bounds.width
-        let cell = floor((width - 3.0) / 3.0)
-        let rows = max(1, Int(ceil(Double(displayItems.count) / 3.0)))
-        return CGFloat(rows) * cell + CGFloat(max(0, rows - 1)) * 1.5
-    }
 
     var body: some View {
         NavigationStack {
@@ -56,70 +50,122 @@ struct ProtectedLibraryView: View {
                 else if store.items.isEmpty { ContentUnavailableView(language.text("Your cloud library", "Votre bibliothèque cloud"), systemImage: "photo.stack", description: Text(language.text("Protected memories will appear here.", "Vos souvenirs protégés apparaîtront ici."))) }
                 else {
                     ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 5, pinnedViews: [.sectionHeaders]) {
+                        LazyVStack(
+                            alignment: .leading,
+                            spacing: 5,
+                            pinnedViews: [.sectionHeaders]
+                        ) {
                             if billing.isPaymentGrace { BillingLibraryNotice(language: language, restricted: false, days: billing.graceDaysRemaining) }
                             else if billing.isPaymentRestricted { BillingLibraryNotice(language: language, restricted: true, days: 0) }
 
                             HStack(spacing: 9) {
-                                Image(systemName: "checkmark.shield.fill").font(.system(size: 13, weight: .semibold)).foregroundStyle(.green).frame(width: 26, height: 26).background(Color.green.opacity(0.09), in: Circle())
-                                Text("\(Int(store.totalCount).formatted()) \(language.text("protected memories", "souvenirs protégés"))").font(.subheadline.weight(.semibold)).lineLimit(1)
+                                Image(systemName: "checkmark.shield.fill")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(.green)
+                                    .frame(width: 26, height: 26)
+                                    .background(Color.green.opacity(0.09), in: Circle())
+
+                                Text("\(Int(store.totalCount).formatted()) \(language.text("protected memories", "souvenirs protégés"))")
+                                    .font(.subheadline.weight(.semibold))
+                                    .lineLimit(1)
+
                                 Spacer(minLength: 8)
+
                                 Menu {
-                                    Button { setSort(newestFirst: true) } label: { Label(language.text("Newest first", "Plus récents"), systemImage: sortNewestFirst ? "checkmark" : "arrow.down") }
-                                    Button { setSort(newestFirst: false) } label: { Label(language.text("Oldest first", "Plus anciens"), systemImage: !sortNewestFirst ? "checkmark" : "arrow.up") }
+                                    Button { setSort(newestFirst: true) } label: {
+                                        Label(language.text("Newest first", "Plus récents"), systemImage: sortNewestFirst ? "checkmark" : "arrow.down")
+                                    }
+                                    Button { setSort(newestFirst: false) } label: {
+                                        Label(language.text("Oldest first", "Plus anciens"), systemImage: !sortNewestFirst ? "checkmark" : "arrow.up")
+                                    }
                                 } label: {
                                     HStack(spacing: 4) {
-                                        Text(sortNewestFirst ? language.text("Recent", "Récents") : language.text("Oldest", "Anciens")).font(.caption.weight(.semibold))
-                                        Image(systemName: "chevron.down").font(.system(size: 9, weight: .bold))
-                                    }.foregroundStyle(.secondary).contentShape(Rectangle())
+                                        Text(sortNewestFirst ? language.text("Recent", "Récents") : language.text("Oldest", "Anciens"))
+                                            .font(.caption.weight(.semibold))
+                                        Image(systemName: "chevron.down")
+                                            .font(.system(size: 9, weight: .bold))
+                                    }
+                                    .foregroundStyle(.secondary)
+                                    .contentShape(Rectangle())
                                 }
-                            }.padding(.horizontal, 16).padding(.top, 0)
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.top, 0)
 
-                            Section { Color.clear.frame(height: 0) } header: {
+                            Section {
+                                Color.clear
+                                    .frame(height: 0)
+                            } header: {
                                 HStack(spacing: 4) {
                                     ForEach(ProtectedLibraryFilter.allCases) { filter in
                                         Button { selectFilter(filter) } label: {
                                             HStack(spacing: 6) {
-                                                Image(systemName: filter.icon).font(.caption.weight(.semibold))
-                                                Text(filter.title(language)).font(.subheadline.weight(.semibold))
+                                                Image(systemName: filter.icon)
+                                                    .font(.caption.weight(.semibold))
+                                                Text(filter.title(language))
+                                                    .font(.subheadline.weight(.semibold))
                                             }
                                             .foregroundStyle(mediaFilter == filter ? Color.primary : Color.secondary)
-                                            .frame(maxWidth: .infinity).padding(.vertical, 4)
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.vertical, 4)
                                             .background {
-                                                if mediaFilter == filter { Capsule().fill(Color(uiColor: .systemBackground)).shadow(color: .black.opacity(0.08), radius: 5, y: 2).matchedGeometryEffect(id: "activeFilter", in: filterTransition) }
+                                                if mediaFilter == filter {
+                                                    Capsule()
+                                                        .fill(Color(uiColor: .systemBackground))
+                                                        .shadow(color: .black.opacity(0.08), radius: 5, y: 2)
+                                                        .matchedGeometryEffect(id: "activeFilter", in: filterTransition)
+                                                }
                                             }
-                                        }.buttonStyle(.plain)
+                                        }
+                                        .buttonStyle(.plain)
                                     }
                                 }
-                                .padding(2).background(Color(uiColor: .secondarySystemBackground).opacity(0.62), in: Capsule()).padding(.horizontal, 16).padding(.vertical, 3).background(Color(uiColor: .systemBackground).opacity(0.82))
+                                .padding(2)
+                                .background(
+                                    Color(uiColor: .secondarySystemBackground)
+                                        .opacity(0.62),
+                                    in: Capsule()
+                                )
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 3)
+                                .background(
+                                    Color(uiColor: .systemBackground)
+                                        .opacity(0.82)
+                                )
                             }
 
-                            if isSelecting { Text("\(selectedIDs.count) \(language.text("selected", "sélectionné(s)"))").font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.horizontal, 16).padding(.top, 1) }
+                            if isSelecting {
+                                Text("\(selectedIDs.count) \(language.text("selected", "sélectionné(s)"))")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                    .padding(.horizontal, 16)
+                                    .padding(.top, 1)
+                            }
 
                             if displayItems.isEmpty && !store.items.isEmpty {
-                                VStack(spacing: 10) { ProgressView(); Text(language.text("Loading protected memories…", "Chargement des souvenirs protégés…")).font(.footnote).foregroundStyle(.secondary) }.frame(maxWidth: .infinity).padding(.vertical, 42)
+                                VStack(spacing: 10) {
+                                    ProgressView()
+                                    Text(language.text("Loading protected memories…", "Chargement des souvenirs protégés…"))
+                                        .font(.footnote)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 42)
                             } else if displayItems.isEmpty {
                                 ContentUnavailableView(language.text("Nothing here yet", "Rien ici pour le moment"), systemImage: mediaFilter.icon, description: Text(language.text("Protected media in this category will appear here.", "Les médias protégés de cette catégorie apparaîtront ici."))).frame(maxWidth: .infinity).padding(.vertical, 42)
                             } else {
-                                ProtectedNativeLibraryGrid(
-                                    items: displayItems,
-                                    selectedIDs: selectedIDs,
-                                    isSelecting: isSelecting,
-                                    onTap: { item in
-                                        if isSelecting { toggle(item.id) } else { viewerItem = item }
-                                    },
-                                    onLongPress: { item in
-                                        if !isSelecting { isSelecting = true; selectedIDs = [item.id] }
-                                    },
-                                    onNeedsMore: { item in
-                                        Task { @MainActor in
-                                            let before = store.items.count
-                                            await store.loadMoreIfNeeded(currentItem: item)
-                                            if store.items.count != before { rebuildDisplayItems() }
-                                        }
+                                LazyVGrid(columns: columns, spacing: 1.5) {
+                                    ForEach(displayItems) { item in
+                                        ProtectedLibraryTile(item: item).matchedTransitionSource(id: item.id, in: photoTransition)
+                                            .task {
+                                                let before = store.items.count
+                                                await store.loadMoreIfNeeded(currentItem: item)
+                                                if store.items.count != before { rebuildDisplayItems() }
+                                            }
+                                            .overlay(alignment: .topTrailing) { if isSelecting { Image(systemName: selectedIDs.contains(item.id) ? "checkmark.circle.fill" : "circle").font(.title2).foregroundStyle(.white).shadow(radius: 3).padding(7) } }
+                                            .contentShape(Rectangle()).onTapGesture { isSelecting ? toggle(item.id) : (viewerItem = item) }.onLongPressGesture(minimumDuration: 0.35) { if !isSelecting { isSelecting = true; selectedIDs = [item.id] } }
                                     }
-                                )
-                                .frame(height: nativeGridHeight)
+                                }
                             }
                         }.padding(.bottom, 132)
                     }
@@ -132,7 +178,13 @@ struct ProtectedLibraryView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     if !store.items.isEmpty {
-                        Button(isSelecting ? language.text("Done", "OK") : language.text("Select", "Sélectionner")) { isSelecting.toggle(); if !isSelecting { selectedIDs.removeAll() } }.font(.subheadline.weight(.semibold)).foregroundStyle(.primary).buttonStyle(.plain)
+                        Button(isSelecting ? language.text("Done", "OK") : language.text("Select", "Sélectionner")) {
+                            isSelecting.toggle()
+                            if !isSelecting { selectedIDs.removeAll() }
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -140,12 +192,16 @@ struct ProtectedLibraryView: View {
                 if isSelecting {
                     HStack(spacing: 12) {
                         Button {
-                            let visible = Set(displayItems.map(\.id)); if !visible.isEmpty && selectedIDs == visible { selectedIDs.removeAll() } else { selectedIDs = visible }
+                            let visible = Set(displayItems.map(\.id))
+                            if !visible.isEmpty && selectedIDs == visible { selectedIDs.removeAll() } else { selectedIDs = visible }
                         } label: {
-                            let visible = Set(displayItems.map(\.id)); Text(!visible.isEmpty && selectedIDs == visible ? language.text("Deselect all", "Tout désélectionner") : language.text("Select all", "Tout sélectionner")).font(.subheadline.weight(.semibold))
+                            let visible = Set(displayItems.map(\.id))
+                            Text(!visible.isEmpty && selectedIDs == visible ? language.text("Deselect all", "Tout désélectionner") : language.text("Select all", "Tout sélectionner")).font(.subheadline.weight(.semibold))
                         }
                         Spacer()
-                        Button(role: .destructive) { showBulkDelete = true } label: { if deletingSelection { ProgressView() } else { Label(language.text("Delete from Libérons", "Supprimer de Libérons"), systemImage: "trash").font(.subheadline.weight(.semibold)) } }.disabled(selectedIDs.isEmpty || deletingSelection)
+                        Button(role: .destructive) { showBulkDelete = true } label: {
+                            if deletingSelection { ProgressView() } else { Label(language.text("Delete from Libérons", "Supprimer de Libérons"), systemImage: "trash").font(.subheadline.weight(.semibold)) }
+                        }.disabled(selectedIDs.isEmpty || deletingSelection)
                     }.padding(.horizontal, 18).padding(.vertical, 12).background(.ultraThinMaterial)
                 }
             }
@@ -157,11 +213,60 @@ struct ProtectedLibraryView: View {
     }
 
     private func toggle(_ id: UUID) { if selectedIDs.contains(id) { selectedIDs.remove(id) } else { selectedIDs.insert(id) } }
-    @MainActor private func selectFilter(_ filter: ProtectedLibraryFilter) { guard mediaFilter != filter else { return }; withAnimation(.snappy(duration: 0.24)) { mediaFilter = filter }; selectedIDs.removeAll(); Task { await store.refresh(filter: filter.rawValue, newestFirst: sortNewestFirst); rebuildDisplayItems() } }
-    @MainActor private func setSort(newestFirst: Bool) { guard sortNewestFirst != newestFirst else { return }; sortNewestFirst = newestFirst; selectedIDs.removeAll(); Task { await store.refresh(filter: mediaFilter.rawValue, newestFirst: newestFirst); rebuildDisplayItems() } }
-    @MainActor private func rebuildDisplayItems() { var visible:[ProtectedCloudMedia]=[]; visible.reserveCapacity(store.items.count); for item in store.items { let video=isVideo(item); let include:Bool; switch mediaFilter { case .all: include=true; case .photos: include = !video; case .videos: include=video }; if include { visible.append(item) } }; visible.sort { let lhs=$0.capturedAt ?? $0.createdAt; let rhs=$1.capturedAt ?? $1.createdAt; return sortNewestFirst ? lhs > rhs : lhs < rhs }; filterCounts=[.all:Int(store.totalCount),.photos:Int(store.photoCount),.videos:Int(store.videoCount)]; displayItems=visible }
-    @MainActor private func refreshLibrary() async { async let a:Void=store.refresh(filter:mediaFilter.rawValue,newestFirst:sortNewestFirst); async let b:Void=billing.refresh(); _=await(a,b); rebuildDisplayItems() }
-    @MainActor private func deleteSelected() async { deletingSelection=true; for id in selectedIDs { try? await SupabaseService.deleteCloudMedia(assetID:id) }; selectedIDs.removeAll(); isSelecting=false; deletingSelection=false; await refreshLibrary() }
+
+    @MainActor private func selectFilter(_ filter: ProtectedLibraryFilter) {
+        guard mediaFilter != filter else { return }
+        withAnimation(.snappy(duration: 0.24)) { mediaFilter = filter }
+        selectedIDs.removeAll()
+        Task {
+            await store.refresh(filter: filter.rawValue, newestFirst: sortNewestFirst)
+            rebuildDisplayItems()
+        }
+    }
+
+    @MainActor private func setSort(newestFirst: Bool) {
+        guard sortNewestFirst != newestFirst else { return }
+        sortNewestFirst = newestFirst
+        selectedIDs.removeAll()
+        Task {
+            await store.refresh(filter: mediaFilter.rawValue, newestFirst: newestFirst)
+            rebuildDisplayItems()
+        }
+    }
+
+    @MainActor private func rebuildDisplayItems() {
+        var all = 0, photos = 0, videos = 0
+        var visible: [ProtectedCloudMedia] = []
+        visible.reserveCapacity(store.items.count)
+        for item in store.items {
+            all += 1
+            let video = isVideo(item)
+            if video { videos += 1 } else { photos += 1 }
+            let include: Bool
+            switch mediaFilter {
+            case .all: include = true
+            case .photos: include = !video
+            case .videos: include = video
+            }
+            if include { visible.append(item) }
+        }
+        visible.sort {
+            let lhs = $0.capturedAt ?? $0.createdAt
+            let rhs = $1.capturedAt ?? $1.createdAt
+            return sortNewestFirst ? lhs > rhs : lhs < rhs
+        }
+        filterCounts = [.all: Int(store.totalCount), .photos: Int(store.photoCount), .videos: Int(store.videoCount)]
+        displayItems = visible
+    }
+
+    @MainActor private func refreshLibrary() async {
+        async let a: Void = store.refresh(filter: mediaFilter.rawValue, newestFirst: sortNewestFirst)
+        async let b: Void = billing.refresh()
+        _ = await (a, b)
+        rebuildDisplayItems()
+    }
+
+    @MainActor private func deleteSelected() async { deletingSelection = true; for id in selectedIDs { try? await SupabaseService.deleteCloudMedia(assetID: id) }; selectedIDs.removeAll(); isSelecting = false; deletingSelection = false; await refreshLibrary() }
 }
 
 private struct BillingLibraryNotice: View {
@@ -170,41 +275,184 @@ private struct BillingLibraryNotice: View {
 }
 
 private struct ProtectedGalleryViewer: View {
-    let items:[ProtectedCloudMedia]; let initialID:UUID; @ObservedObject var language:LanguageStore; @ObservedObject var billing:CloudStorageSummary; @Environment(\.dismiss) private var dismiss; @State private var selection:UUID; @State private var showInfo=false; @State private var infoDetent:PresentationDetent = .fraction(0.64); @State private var dismissTranslation:CGSize = .zero; @State private var verticalDismissLocked=false; @State private var isDismissing=false; @State private var chromeVisible=true; private let indexByID:[UUID:Int]
-    init(items:[ProtectedCloudMedia],initialID:UUID,language:LanguageStore,billing:CloudStorageSummary){self.items=items;self.initialID=initialID;self.language=language;self.billing=billing;self.indexByID=Dictionary(uniqueKeysWithValues:items.enumerated().map{($0.element.id,$0.offset)});_selection=State(initialValue:initialID)}
-    private var currentIndex:Int?{indexByID[selection]}; private var current:ProtectedCloudMedia?{guard let i=currentIndex,items.indices.contains(i)else{return nil};return items[i]}; private var dismissProgress:CGFloat{min(max(dismissTranslation.height/360,0),1)}
-    var body:some View{ZStack{Color.black.opacity(Double(1-dismissProgress*0.96)).ignoresSafeArea();if !verticalDismissLocked{TabView(selection:$selection){ForEach(items){CloudPhotoPage(item:$0,language:language,billing:billing,chromeVisible:$chromeVisible).tag($0.id)}}.tabViewStyle(.page(indexDisplayMode:.never)).ignoresSafeArea().onChange(of:selection){_,newID in chromeVisible=true;prefetchNeighbors(around:newID)}.task{prefetchNeighbors(around:selection)}};if verticalDismissLocked,let current{ProtectedDismissMedia(item:current).scaleEffect(1-dismissProgress*0.085).offset(x:dismissTranslation.width*0.12,y:dismissTranslation.height).shadow(color:.black.opacity(Double(dismissProgress*0.18)),radius:18*dismissProgress,y:8*dismissProgress).allowsHitTesting(false)};VStack{HStack(alignment:.top){Button{dismiss()}label:{Image(systemName:"chevron.left").font(.title2.bold()).foregroundStyle(.white).frame(width:48,height:48).background(.black.opacity(0.45),in:Circle())}.buttonStyle(.plain);Spacer();Button{showInfo=true}label:{Image(systemName:"ellipsis").font(.system(size:20,weight:.bold)).foregroundStyle(.white).frame(width:48,height:48).background(.black.opacity(0.45),in:Circle())}.buttonStyle(.plain)}.padding(.horizontal,14).padding(.top,4);Spacer()}.opacity(verticalDismissLocked ? Double(max(0,1-dismissProgress*4)):(chromeVisible ? 1:0)).allowsHitTesting(!verticalDismissLocked&&chromeVisible).animation(.easeOut(duration:0.18),value:chromeVisible)}.contentShape(Rectangle()).onTapGesture{guard !verticalDismissLocked,!showInfo else{return};withAnimation(.easeOut(duration:0.18)){chromeVisible.toggle()}}.simultaneousGesture(DragGesture(minimumDistance:10,coordinateSpace:.global).onChanged{value in guard !isDismissing else{return};let x=value.translation.width,y=value.translation.height;if !verticalDismissLocked{guard y>12,abs(y)>abs(x)*1.65 else{return};verticalDismissLocked=true};dismissTranslation=CGSize(width:x,height:max(0,y))}.onEnded{value in guard verticalDismissLocked,!isDismissing else{return};let y=max(dismissTranslation.height,value.translation.height);let projected=max(y,value.predictedEndTranslation.height);if y>105||projected>210{isDismissing=true;withAnimation(.easeOut(duration:0.20)){dismissTranslation=CGSize(width:dismissTranslation.width*0.15,height:UIScreen.main.bounds.height*0.72)};Task{@MainActor in try? await Task.sleep(for:.milliseconds(150));dismiss()}}else{withAnimation(.interactiveSpring(response:0.34,dampingFraction:0.86,blendDuration:0.1)){dismissTranslation = .zero};Task{@MainActor in try? await Task.sleep(for:.milliseconds(280));verticalDismissLocked=false}}}).toolbarBackground(.hidden,for:.navigationBar).toolbarColorScheme(.dark,for:.navigationBar).sheet(isPresented:$showInfo){if let current{ProtectedMediaDetail(item:current,language:language,billing:billing,closeViewer:{showInfo=false;dismiss()}).presentationDetents([.fraction(0.32),.fraction(0.64),.large],selection:$infoDetent).presentationDragIndicator(.visible).presentationCornerRadius(34).presentationBackground(.regularMaterial).presentationContentInteraction(.resizes).presentationBackgroundInteraction(.enabled(upThrough:.fraction(0.32)))}}.onChange(of:showInfo){_,isPresented in if isPresented{infoDetent = .fraction(0.64)}}}
-    private func prefetchNeighbors(around id:UUID){guard let index=items.firstIndex(where:{$0.id==id})else{return};for neighborIndex in [index-1,index+1].filter({items.indices.contains($0)}){let neighbor=items[neighborIndex];guard !neighbor.mediaType.lowercased().contains("video")else{continue};Task(priority:.utility){await ProtectedMediaPrefetcher.prefetch(neighbor)}}}
+    let items: [ProtectedCloudMedia]
+    let initialID: UUID
+    @ObservedObject var language: LanguageStore
+    @ObservedObject var billing: CloudStorageSummary
+    @Environment(\.dismiss) private var dismiss
+    @State private var selection: UUID
+    @State private var showInfo = false
+    @State private var infoDetent: PresentationDetent = .fraction(0.64)
+    @State private var dismissTranslation: CGSize = .zero
+    @State private var verticalDismissLocked = false
+    @State private var isDismissing = false
+    @State private var chromeVisible = true
+    private let indexByID: [UUID: Int]
+
+    init(items: [ProtectedCloudMedia], initialID: UUID, language: LanguageStore, billing: CloudStorageSummary) {
+        self.items = items; self.initialID = initialID; self.language = language; self.billing = billing
+        self.indexByID = Dictionary(uniqueKeysWithValues: items.enumerated().map { ($0.element.id, $0.offset) })
+        _selection = State(initialValue: initialID)
+    }
+
+    private var currentIndex: Int? { indexByID[selection] }
+    private var current: ProtectedCloudMedia? { guard let i = currentIndex, items.indices.contains(i) else { return nil }; return items[i] }
+    private var dismissProgress: CGFloat { min(max(dismissTranslation.height / 360, 0), 1) }
+
+    var body: some View {
+        ZStack {
+  Color.black.opacity(Double(1 - dismissProgress * 0.96)).ignoresSafeArea()
+
+  if !verticalDismissLocked {
+      TabView(selection: $selection) {
+          ForEach(items) { CloudPhotoPage(item: $0, language: language, billing: billing, chromeVisible: $chromeVisible).tag($0.id) }
+      }
+      .tabViewStyle(.page(indexDisplayMode: .never))
+      .ignoresSafeArea()
+      .onChange(of: selection) { _, newID in
+          chromeVisible = true
+          prefetchNeighbors(around: newID)
+      }
+      .task {
+          prefetchNeighbors(around: selection)
+      }
+  }
+
+  if verticalDismissLocked, let current {
+      ProtectedDismissMedia(item: current)
+          .scaleEffect(1 - dismissProgress * 0.085)
+          .offset(x: dismissTranslation.width * 0.12, y: dismissTranslation.height)
+          .shadow(color: .black.opacity(Double(dismissProgress * 0.18)), radius: 18 * dismissProgress, y: 8 * dismissProgress)
+          .allowsHitTesting(false)
+  }
+
+  VStack {
+      HStack(alignment: .top) {
+          HStack(spacing: 10) {
+              Button { dismiss() } label: {
+                  Image(systemName: "chevron.left")
+                      .font(.title2.bold())
+                      .foregroundStyle(.white)
+                      .frame(width: 48, height: 48)
+                      .background(.black.opacity(0.45), in: Circle())
+              }
+              .buttonStyle(.plain)
+          }
+
+          Spacer()
+
+          Button { showInfo = true } label: {
+              Image(systemName: "ellipsis")
+                  .font(.system(size: 20, weight: .bold))
+                  .foregroundStyle(.white)
+                  .frame(width: 48, height: 48)
+                  .background(.black.opacity(0.45), in: Circle())
+          }
+          .buttonStyle(.plain)
+      }
+      .padding(.horizontal, 14)
+      .padding(.top, 4)
+      Spacer()
+  }
+  .opacity(verticalDismissLocked ? Double(max(0, 1 - dismissProgress * 4)) : (chromeVisible ? 1 : 0))
+  .allowsHitTesting(!verticalDismissLocked && chromeVisible)
+  .animation(.easeOut(duration: 0.18), value: chromeVisible)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard !verticalDismissLocked, !showInfo else { return }
+            withAnimation(.easeOut(duration: 0.18)) { chromeVisible.toggle() }
+        }
+        .simultaneousGesture(
+  DragGesture(minimumDistance: 10, coordinateSpace: .global)
+      .onChanged { value in
+          guard !isDismissing else { return }
+          let x = value.translation.width, y = value.translation.height
+          if !verticalDismissLocked {
+              guard y > 12, abs(y) > abs(x) * 1.65 else { return }
+              verticalDismissLocked = true
+          }
+          dismissTranslation = CGSize(width: x, height: max(0, y))
+      }
+      .onEnded { value in
+          guard verticalDismissLocked, !isDismissing else { return }
+          let y = max(dismissTranslation.height, value.translation.height)
+          let projected = max(y, value.predictedEndTranslation.height)
+          if y > 105 || projected > 210 {
+              isDismissing = true
+              withAnimation(.easeOut(duration: 0.20)) {
+                  dismissTranslation = CGSize(width: dismissTranslation.width * 0.15, height: UIScreen.main.bounds.height * 0.72)
+              }
+              Task { @MainActor in try? await Task.sleep(for: .milliseconds(150)); dismiss() }
+          } else {
+              withAnimation(.interactiveSpring(response: 0.34, dampingFraction: 0.86, blendDuration: 0.1)) { dismissTranslation = .zero }
+              Task { @MainActor in try? await Task.sleep(for: .milliseconds(280)); verticalDismissLocked = false }
+          }
+      }
+        )
+        .toolbarBackground(.hidden, for: .navigationBar)
+        .toolbarColorScheme(.dark, for: .navigationBar)
+        .simultaneousGesture(
+            TapGesture()
+                .onEnded {
+                    guard showInfo else { return }
+                    withAnimation(.easeOut(duration: 0.20)) {
+                        showInfo = false
+                    }
+                },
+            including: showInfo ? .all : .none
+        )
+        .sheet(isPresented: $showInfo) {
+  if let current { ProtectedMediaDetail(item: current, language: language, billing: billing, closeViewer: { showInfo = false; dismiss() }).presentationDetents([.fraction(0.32), .fraction(0.64), .large], selection: $infoDetent).presentationDragIndicator(.visible).presentationCornerRadius(34).presentationBackground(.regularMaterial).presentationContentInteraction(.resizes).presentationBackgroundInteraction(.enabled(upThrough: .fraction(0.32))) }
+        }
+        .onChange(of: showInfo) { _, isPresented in
+            if isPresented { infoDetent = .fraction(0.64) }
+        }
+    }
+
+    private func prefetchNeighbors(around id: UUID) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        let neighborIndexes = [index - 1, index + 1].filter { items.indices.contains($0) }
+        for neighborIndex in neighborIndexes {
+            let neighbor = items[neighborIndex]
+            guard !neighbor.mediaType.lowercased().contains("video") else { continue }
+            Task(priority: .utility) { await ProtectedMediaPrefetcher.prefetch(neighbor) }
+        }
+    }
 }
 
-private struct ProtectedDismissMedia:View{let item:ProtectedCloudMedia;@State private var image:UIImage?;private var isVideo:Bool{item.mediaType.lowercased().contains("video")};var body:some View{GeometryReader{proxy in ZStack{Color.clear;if let image{Image(uiImage:image).resizable().scaledToFit()}else{Image(systemName:isVideo ? "play.rectangle.fill":"photo.fill").font(.system(size:30)).foregroundStyle(.white.opacity(0.7))}}.frame(width:proxy.size.width,height:proxy.size.height)}.ignoresSafeArea().task(id:item.id){await load()}};@MainActor private func load()async{if let cached=ProtectedMediaCache.shared.fullResolutionImage(for:item.id){image=cached;return};if let id=item.iosLocalIdentifier,let asset=PHAsset.fetchAssets(withLocalIdentifiers:[id],options:nil).firstObject{let options=PHImageRequestOptions();options.isNetworkAccessAllowed=true;options.deliveryMode = .highQualityFormat;options.resizeMode = .fast;PHImageManager.default().requestImage(for:asset,targetSize:CGSize(width:1600,height:1600),contentMode:.aspectFit,options:options){value,_ in if let value{ProtectedMediaCache.shared.storeFullResolution(value,for:item.id);Task{@MainActor in image=value}}};return};if let preview=try? await SupabaseService.cloudPreviewURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:preview),((response as? HTTPURLResponse)?.statusCode ?? 500)<300,let decoded=UIImage(data:data){ProtectedMediaCache.shared.storeFullResolution(decoded,for:item.id);image=decoded}}}
+private struct ProtectedDismissMedia: View {
+    let item: ProtectedCloudMedia
+    @State private var image: UIImage?
+    private var isVideo: Bool { item.mediaType.lowercased().contains("video") }
+    var body: some View { GeometryReader { proxy in ZStack { Color.clear; if let image { Image(uiImage:image).resizable().scaledToFit() } else { Image(systemName:isVideo ? "play.rectangle.fill":"photo.fill").font(.system(size:30)).foregroundStyle(.white.opacity(0.7)) } }.frame(width:proxy.size.width,height:proxy.size.height) }.ignoresSafeArea().task(id:item.id){await load()} }
+    @MainActor private func load() async { if let cached=ProtectedMediaCache.shared.fullResolutionImage(for:item.id){image=cached;return};if let id=item.iosLocalIdentifier,let asset=PHAsset.fetchAssets(withLocalIdentifiers:[id],options:nil).firstObject{let options=PHImageRequestOptions();options.isNetworkAccessAllowed=true;options.deliveryMode = .highQualityFormat;options.resizeMode = .fast;PHImageManager.default().requestImage(for:asset,targetSize:CGSize(width:1600,height:1600),contentMode:.aspectFit,options:options){value,_ in if let value{ProtectedMediaCache.shared.storeFullResolution(value,for:item.id);Task{@MainActor in image=value}}};return};if let preview=try? await SupabaseService.cloudPreviewURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:preview),((response as? HTTPURLResponse)?.statusCode ?? 500)<300,let decoded=UIImage(data:data){ProtectedMediaCache.shared.storeFullResolution(decoded,for:item.id);image=decoded} }
+}
 
-private struct CloudPhotoPage:View{
-    let item:ProtectedCloudMedia;@ObservedObject var language:LanguageStore;@ObservedObject var billing:CloudStorageSummary;@Binding var chromeVisible:Bool;@State private var image:UIImage?;@State private var player:AVPlayer?;@State private var loading=true;@State private var loadFailed=false;@State private var playbackFile:URL?;@State private var videoProgress:Double=0;@State private var isVideoPlaying=false;@State private var videoCurrentTime:Double=0;@State private var videoDuration:Double=0;@State private var videoObserver:Any?;@State private var videoObserverPlayer:AVPlayer?;private var isVideo:Bool{item.mediaType.lowercased().contains("video")}
+private struct CloudPhotoPage: View {
+    let item: ProtectedCloudMedia; @ObservedObject var language: LanguageStore; @ObservedObject var billing: CloudStorageSummary; @Binding var chromeVisible: Bool
+    @State private var image:UIImage?;@State private var player:AVPlayer?;@State private var loading=true;@State private var loadFailed=false;@State private var playbackFile:URL?;@State private var videoProgress:Double=0;@State private var isVideoPlaying=false;@State private var videoCurrentTime:Double=0;@State private var videoDuration:Double=0;@State private var videoObserver:Any?;@State private var videoObserverPlayer:AVPlayer?
+    private var isVideo:Bool{item.mediaType.lowercased().contains("video")}
     var body:some View{ZStack{Color.black;if isVideo,let player{ZStack{ProtectedVideoSurface(player:player).contentShape(Rectangle()).onTapGesture{withAnimation(.easeOut(duration:0.18)){chromeVisible.toggle()}};HStack(spacing:54){Button{player.seek(to:CMTime(seconds:max(0,videoCurrentTime-10),preferredTimescale:600))}label:{Image(systemName:"gobackward.10").font(.system(size:31,weight:.medium)).foregroundStyle(.white)};Button{if player.rate>0{player.pause();isVideoPlaying=false}else{player.play();isVideoPlaying=true}}label:{Image(systemName:isVideoPlaying ? "pause.fill":"play.fill").font(.system(size:38,weight:.semibold)).foregroundStyle(.white).frame(width:82,height:82).background(.black.opacity(0.42),in:Circle())};Button{let duration=max(videoDuration,videoCurrentTime+10);player.seek(to:CMTime(seconds:min(duration,videoCurrentTime+10),preferredTimescale:600))}label:{Image(systemName:"goforward.10").font(.system(size:31,weight:.medium)).foregroundStyle(.white)}}.opacity(chromeVisible ? 1:0).allowsHitTesting(chromeVisible).animation(.easeOut(duration:0.18),value:chromeVisible);VStack{Spacer();HStack(spacing:10){Text(protectedVideoTime(videoCurrentTime)).font(.caption.monospacedDigit()).foregroundStyle(.white.opacity(0.75));Slider(value:Binding(get:{min(videoCurrentTime,max(videoDuration,0.01))},set:{value in videoCurrentTime=value;player.seek(to:CMTime(seconds:value,preferredTimescale:600))}),in:0...max(videoDuration,0.01)).tint(.white);Text("−"+protectedVideoTime(max(0,videoDuration-videoCurrentTime))).font(.caption.monospacedDigit()).foregroundStyle(.white.opacity(0.75))}.padding(.horizontal,18).padding(.vertical,12).background(.black.opacity(0.58),in:Capsule()).padding(.horizontal,14).padding(.bottom,14)}.opacity(chromeVisible ? 1:0).allowsHitTesting(chromeVisible).animation(.easeOut(duration:0.18),value:chromeVisible)}.onAppear{player.play();isVideoPlaying=true;installVideoProgressObserver(on:player)}.onDisappear{player.pause();isVideoPlaying=false;removeVideoProgressObserver()}}else if let image{ProtectedZoomablePhoto(image:image)}else if loading{VStack(spacing:14){ProgressView().tint(.white);if isVideo{Text(language.text("Preparing protected video…","Préparation de la vidéo protégée…")).font(.footnote).foregroundStyle(.white.opacity(0.75));if videoProgress>0{ProgressView(value:videoProgress).progressViewStyle(.linear).frame(width:180).tint(.white)}}}}else if loadFailed{VStack(spacing:10){Image(systemName:"exclamationmark.icloud").font(.title).foregroundStyle(.white);Text(language.text("Unable to load this video.","Impossible de charger cette vidéo.")).font(.footnote).foregroundStyle(.white.opacity(0.8))}}else{Image(systemName:"exclamationmark.icloud").foregroundStyle(.white)}}.task(id:item.id){await load()}.onDisappear{player?.pause();isVideoPlaying=false;removeVideoProgressObserver();player=nil}}
     private func protectedVideoTime(_ seconds:Double)->String{guard seconds.isFinite else{return "0:00"};let total=max(0,Int(seconds.rounded(.down)));return String(format:"%d:%02d",total/60,total%60)}
-    @MainActor private func load()async{loading=true;loadFailed=false;defer{loading=false};if isVideo{guard !billing.isPaymentRestricted else{loadFailed=true;return};do{try await loadProtectedVideo()}catch{print("[Libérons Video] Playback failed:",item.id,error.localizedDescription);loadFailed=true};return};if let cached=ProtectedMediaCache.shared.fullResolutionImage(for:item.id){image=cached;return};if let id=item.iosLocalIdentifier,let asset=PHAsset.fetchAssets(withLocalIdentifiers:[id],options:nil).firstObject{let options=PHImageRequestOptions();options.isNetworkAccessAllowed=true;options.deliveryMode = .highQualityFormat;options.resizeMode = .exact;PHImageManager.default().requestImage(for:asset,targetSize:CGSize(width:2560,height:2560),contentMode:.aspectFit,options:options){value,info in guard let value else{return};let degraded=(info?[PHImageResultIsDegradedKey] as? Bool) ?? false;if !degraded{ProtectedMediaCache.shared.storeFullResolution(value,for:self.item.id);Task{@MainActor in image=value}}};return};guard !billing.isPaymentRestricted else{return};if let original=try? await SupabaseService.cloudOriginalURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:original),(response as? HTTPURLResponse)?.statusCode ?? 500<300,let decoded=ProtectedImageDecoder.downsample(data,maxPixelSize:2560){ProtectedMediaCache.shared.storeFullResolution(decoded,for:item.id);image=decoded;return};if let preview=try? await SupabaseService.cloudPreviewURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:preview),(response as? HTTPURLResponse)?.statusCode ?? 500<300,let decoded=UIImage(data:data){image=decoded}}
+    @MainActor private func load()async{loading=true;loadFailed=false;defer{loading=false};if isVideo{guard !billing.isPaymentRestricted else{loadFailed=true;return};do{try await loadProtectedVideo()}catch{print("[Libérons Video] Playback failed:",item.id,error.localizedDescription);loadFailed=true};return};if let cached=ProtectedMediaCache.shared.fullResolutionImage(for:item.id){image=cached;return};if let id=item.iosLocalIdentifier,let asset=PHAsset.fetchAssets(withLocalIdentifiers:[id],options:nil).firstObject{let options=PHImageRequestOptions();options.isNetworkAccessAllowed=true;options.deliveryMode = .highQualityFormat;options.resizeMode = .exact;PHImageManager.default().requestImage(for:asset,targetSize:CGSize(width:2560,height:2560),contentMode:.aspectFit,options:options){value,info in guard let value else{return};let degraded=(info?[PHImageResultIsDegradedKey] as? Bool) ?? false;if !degraded{ProtectedMediaCache.shared.storeFullResolution(value,for:self.item.id);Task{@MainActor in image=value}}};return};guard !billing.isPaymentRestricted else{return};if let original=try? await SupabaseService.cloudOriginalURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:original),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300,let decoded=ProtectedImageDecoder.downsample(data,maxPixelSize:2560){ProtectedMediaCache.shared.storeFullResolution(decoded,for:item.id);image=decoded;return};if let preview=try? await SupabaseService.cloudPreviewURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:preview),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300,let decoded=UIImage(data:data){image=decoded}}
     @MainActor private func installVideoProgressObserver(on player:AVPlayer){removeVideoProgressObserver();let interval=CMTime(seconds:0.25,preferredTimescale:600);videoObserverPlayer=player;videoObserver=player.addPeriodicTimeObserver(forInterval:interval,queue:.main){time in let seconds=time.seconds;if seconds.isFinite{videoCurrentTime=max(0,seconds)};if let duration=player.currentItem?.duration.seconds,duration.isFinite,duration>0{videoDuration=duration};isVideoPlaying=player.rate>0}}
     @MainActor private func removeVideoProgressObserver(){guard let observer=videoObserver else{videoObserverPlayer=nil;return};videoObserverPlayer?.removeTimeObserver(observer);videoObserver=nil;videoObserverPlayer=nil}
-    @MainActor private func loadProtectedVideo()async throws{let fm=FileManager.default;let dir=fm.urls(for:.cachesDirectory,in:.userDomainMask)[0].appendingPathComponent("LiberonsPlayback",isDirectory:true);try fm.createDirectory(at:dir,withIntermediateDirectories:true);let filename=item.originalFilename ?? "protected-video.mov";var ext=URL(fileURLWithPath:filename).pathExtension.lowercased();if ext.isEmpty{ext="mov"};let local=dir.appendingPathComponent(item.id.uuidString).appendingPathExtension(ext);if fm.fileExists(atPath:local.path){playProtectedVideo(at:local);return};do{let request=try await SupabaseService.protectedStreamRequest(assetID:item.id);guard let url=request.url else{throw URLError(.badURL)};let options:[String:Any]=["AVURLAssetHTTPHeaderFieldsKey":request.allHTTPHeaderFields ?? [:]];let asset=AVURLAsset(url:url,options:options);let playable=try await asset.load(.isPlayable);guard playable else{throw URLError(.cannotDecodeContentData)};let playerItem=AVPlayerItem(asset:asset);playerItem.preferredForwardBufferDuration=3;let avPlayer=AVPlayer(playerItem:playerItem);avPlayer.automaticallyWaitsToMinimizeStalling=true;player=avPlayer;avPlayer.play();return}catch{print("[Libérons Video] Fast stream unavailable, using protected fallback:",item.id,error.localizedDescription)};let remote=try await SupabaseService.cloudStreamURL(assetID:item.id);let(downloaded,response)=try await URLSession.shared.download(from:remote);guard let http=response as? HTTPURLResponse,(200..<300).contains(http.statusCode)else{throw URLError(.badServerResponse)};let attrs=try fm.attributesOfItem(atPath:downloaded.path);let downloadedSize=(attrs[.size] as? NSNumber)?.int64Value ?? 0;guard downloadedSize>0 else{throw URLError(.zeroByteResource)};if item.sizeBytes>0&&downloadedSize != item.sizeBytes{throw NSError(domain:"LiberonsProtectedVideo",code:1001,userInfo:[NSLocalizedDescriptionKey:"Protected video download is incomplete."])};try? fm.removeItem(at:local);try fm.moveItem(at:downloaded,to:local);playProtectedVideo(at:local)}
+    @MainActor private func loadProtectedVideo()async throws{let fm=FileManager.default;let dir=fm.urls(for:.cachesDirectory,in:.userDomainMask)[0].appendingPathComponent("LiberonsPlayback",isDirectory:true);try fm.createDirectory(at:dir,withIntermediateDirectories:true);let filename=item.originalFilename ?? "protected-video.mov";var ext=URL(fileURLWithPath:filename).pathExtension.lowercased();if ext.isEmpty{ext="mov"};let local=dir.appendingPathComponent(item.id.uuidString).appendingPathExtension(ext);if fm.fileExists(atPath:local.path){playProtectedVideo(at:local);return};do{let request=try await SupabaseService.protectedStreamRequest(assetID:item.id);guard let url=request.url else{throw URLError(.badURL)};let options:[String:Any]=["AVURLAssetHTTPHeaderFieldsKey":request.allHTTPHeaderFields ?? [:]];let asset=AVURLAsset(url:url,options:options);let playable=try await asset.load(.isPlayable);guard playable else{throw URLError(.cannotDecodeContentData)};let playerItem=AVPlayerItem(asset:asset);playerItem.preferredForwardBufferDuration=3;let avPlayer=AVPlayer(playerItem:playerItem);avPlayer.automaticallyWaitsToMinimizeStalling=true;player=avPlayer;avPlayer.play();return}catch{print("[Libérons Video] Fast stream unavailable, using protected fallback:",item.id,error.localizedDescription)};let remote=try await SupabaseService.cloudStreamURL(assetID:item.id);let(downloaded,response)=try await URLSession.shared.download(from:remote);guard let http=response as? HTTPURLResponse,(200..<300).contains(http.statusCode)else{throw URLError(.badServerResponse)};let attrs=try fm.attributesOfItem(atPath:downloaded.path);let downloadedSize=(attrs[.size] as? NSNumber)?.int64Value ?? 0;guard downloadedSize>0 else{throw URLError(.zeroByteResource)};if item.sizeBytes>0 && downloadedSize != item.sizeBytes{throw NSError(domain:"LiberonsProtectedVideo",code:1001,userInfo:[NSLocalizedDescriptionKey:"Protected video download is incomplete."])};try? fm.removeItem(at:local);try fm.moveItem(at:downloaded,to:local);playProtectedVideo(at:local)}
     @MainActor private func playProtectedVideo(at url:URL){playbackFile=url;let playerItem=AVPlayerItem(url:url);let avPlayer=AVPlayer(playerItem:playerItem);avPlayer.automaticallyWaitsToMinimizeStalling=true;player=avPlayer;avPlayer.play()}
 }
 
 private struct ProtectedVideoSurface:UIViewRepresentable{let player:AVPlayer;func makeUIView(context:Context)->ProtectedPlayerLayerView{let view=ProtectedPlayerLayerView();view.playerLayer.player=player;return view};func updateUIView(_ uiView:ProtectedPlayerLayerView,context:Context){uiView.playerLayer.player=player}}
 private final class ProtectedPlayerLayerView:UIView{override class var layerClass:AnyClass{AVPlayerLayer.self};var playerLayer:AVPlayerLayer{layer as! AVPlayerLayer};override init(frame:CGRect){super.init(frame:frame);playerLayer.videoGravity = .resizeAspect;backgroundColor = .black};required init?(coder:NSCoder){super.init(coder:coder);playerLayer.videoGravity = .resizeAspect;backgroundColor = .black}}
-
-private struct ProtectedZoomablePhoto:UIViewRepresentable{
-    let image:UIImage;func makeCoordinator()->Coordinator{Coordinator()};func makeUIView(context:Context)->UIScrollView{let scrollView=UIScrollView();scrollView.delegate=context.coordinator;scrollView.minimumZoomScale=1;scrollView.maximumZoomScale=5;scrollView.bouncesZoom=true;scrollView.showsVerticalScrollIndicator=false;scrollView.showsHorizontalScrollIndicator=false;scrollView.contentInsetAdjustmentBehavior = .never;scrollView.decelerationRate = .fast;scrollView.backgroundColor = .black;let imageView=context.coordinator.imageView;imageView.image=image;imageView.contentMode = .scaleAspectFit;imageView.isUserInteractionEnabled=true;scrollView.addSubview(imageView);let doubleTap=UITapGestureRecognizer(target:context.coordinator,action:#selector(Coordinator.handleDoubleTap(_:)));doubleTap.numberOfTapsRequired=2;scrollView.addGestureRecognizer(doubleTap);context.coordinator.scrollView=scrollView;return scrollView};func updateUIView(_ scrollView:UIScrollView,context:Context){context.coordinator.imageView.image=image;context.coordinator.layoutImage(in:scrollView)}
-    @MainActor final class Coordinator:NSObject,UIScrollViewDelegate{let imageView=UIImageView();weak var scrollView:UIScrollView?;func viewForZooming(in scrollView:UIScrollView)->UIView?{imageView};func scrollViewDidZoom(_ scrollView:UIScrollView){centerImage(in:scrollView)};func scrollViewDidEndZooming(_ scrollView:UIScrollView,with view:UIView?,atScale scale:CGFloat){centerImage(in:scrollView)};func layoutImage(in scrollView:UIScrollView){guard scrollView.bounds.width>0,scrollView.bounds.height>0 else{return};let size=scrollView.bounds.size;if imageView.bounds.size != size{imageView.frame=CGRect(origin:.zero,size:size);scrollView.contentSize=size};centerImage(in:scrollView)};private func centerImage(in scrollView:UIScrollView){let scaledWidth=imageView.bounds.width*scrollView.zoomScale;let scaledHeight=imageView.bounds.height*scrollView.zoomScale;let horizontal=max(0,(scrollView.bounds.width-scaledWidth)/2);let vertical=max(0,(scrollView.bounds.height-scaledHeight)/2);scrollView.contentInset=UIEdgeInsets(top:vertical,left:horizontal,bottom:vertical,right:horizontal)};@objc func handleDoubleTap(_ gesture:UITapGestureRecognizer){guard let scrollView else{return};if scrollView.zoomScale>scrollView.minimumZoomScale+0.01{scrollView.setZoomScale(scrollView.minimumZoomScale,animated:true);return};let targetScale=min(CGFloat(2.5),scrollView.maximumZoomScale);let point=gesture.location(in:imageView);let width=scrollView.bounds.width/targetScale;let height=scrollView.bounds.height/targetScale;scrollView.zoom(to:CGRect(x:point.x-width/2,y:point.y-height/2,width:width,height:height),animated:true)}}
-}
-
+private struct ProtectedZoomablePhoto:UIViewRepresentable{let image:UIImage;func makeCoordinator()->Coordinator{Coordinator()};func makeUIView(context:Context)->UIScrollView{let scrollView=UIScrollView();scrollView.delegate=context.coordinator;scrollView.minimumZoomScale=1;scrollView.maximumZoomScale=5;scrollView.bouncesZoom=true;scrollView.showsVerticalScrollIndicator=false;scrollView.showsHorizontalScrollIndicator=false;scrollView.contentInsetAdjustmentBehavior = .never;scrollView.decelerationRate = .fast;scrollView.backgroundColor = .black;let imageView=context.coordinator.imageView;imageView.image=image;imageView.contentMode = .scaleAspectFit;imageView.isUserInteractionEnabled=true;scrollView.addSubview(imageView);let doubleTap=UITapGestureRecognizer(target:context.coordinator,action:#selector(Coordinator.handleDoubleTap(_:)));doubleTap.numberOfTapsRequired=2;scrollView.addGestureRecognizer(doubleTap);context.coordinator.scrollView=scrollView;return scrollView};func updateUIView(_ scrollView:UIScrollView,context:Context){context.coordinator.imageView.image=image;context.coordinator.layoutImage(in:scrollView)};@MainActor final class Coordinator:NSObject,UIScrollViewDelegate{let imageView=UIImageView();weak var scrollView:UIScrollView?;func viewForZooming(in scrollView:UIScrollView)->UIView?{imageView};func scrollViewDidZoom(_ scrollView:UIScrollView){centerImage(in:scrollView)};func scrollViewDidEndZooming(_ scrollView:UIScrollView,with view:UIView?,atScale scale:CGFloat){centerImage(in:scrollView)};func layoutImage(in scrollView:UIScrollView){guard scrollView.bounds.width>0,scrollView.bounds.height>0 else{return};let size=scrollView.bounds.size;if imageView.bounds.size != size{imageView.frame=CGRect(origin:.zero,size:size);scrollView.contentSize=size};centerImage(in:scrollView)};private func centerImage(in scrollView:UIScrollView){let scaledWidth=imageView.bounds.width*scrollView.zoomScale;let scaledHeight=imageView.bounds.height*scrollView.zoomScale;let horizontal=max(0,(scrollView.bounds.width-scaledWidth)/2);let vertical=max(0,(scrollView.bounds.height-scaledHeight)/2);scrollView.contentInset=UIEdgeInsets(top:vertical,left:horizontal,bottom:vertical,right:horizontal)};@objc func handleDoubleTap(_ gesture:UITapGestureRecognizer){guard let scrollView else{return};if scrollView.zoomScale>scrollView.minimumZoomScale+0.01{scrollView.setZoomScale(scrollView.minimumZoomScale,animated:true);return};let targetScale=min(CGFloat(2.5),scrollView.maximumZoomScale);let point=gesture.location(in:imageView);let width=scrollView.bounds.width/targetScale;let height=scrollView.bounds.height/targetScale;scrollView.zoom(to:CGRect(x:point.x-width/2,y:point.y-height/2,width:width,height:height),animated:true)}}}
 private enum ProtectedMediaPrefetcher{@MainActor static func prefetch(_ item:ProtectedCloudMedia)async{if ProtectedMediaCache.shared.fullResolutionImage(for:item.id) != nil{return};if let localIdentifier=item.iosLocalIdentifier,let asset=PHAsset.fetchAssets(withLocalIdentifiers:[localIdentifier],options:nil).firstObject{let options=PHImageRequestOptions();options.isNetworkAccessAllowed=true;options.deliveryMode = .opportunistic;options.resizeMode = .fast;PHImageManager.default().requestImage(for:asset,targetSize:CGSize(width:1600,height:1600),contentMode:.aspectFit,options:options){image,_ in guard let image else{return};ProtectedMediaCache.shared.storeFullResolution(image,for:item.id)};return};guard let original=try? await SupabaseService.cloudOriginalURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:original),((response as? HTTPURLResponse)?.statusCode ?? 500)<300,let image=ProtectedImageDecoder.downsample(data,maxPixelSize:2048)else{return};ProtectedMediaCache.shared.storeFullResolution(image,for:item.id)}}
 private enum ProtectedImageDecoder{static func downsample(_ data:Data,maxPixelSize:CGFloat)->UIImage?{let sourceOptions=[kCGImageSourceShouldCache:false] as CFDictionary;guard let source=CGImageSourceCreateWithData(data as CFData,sourceOptions)else{return nil};let options:[CFString:Any]=[kCGImageSourceCreateThumbnailFromImageAlways:true,kCGImageSourceCreateThumbnailWithTransform:true,kCGImageSourceThumbnailMaxPixelSize:maxPixelSize,kCGImageSourceShouldCacheImmediately:true];guard let cgImage=CGImageSourceCreateThumbnailAtIndex(source,0,options as CFDictionary)else{return nil};return UIImage(cgImage:cgImage)}}
 private final class ProtectedMediaCache:@unchecked Sendable{static let shared=ProtectedMediaCache();private let thumbnailCache=NSCache<NSString,UIImage>();private let fullResolutionCache=NSCache<NSString,UIImage>();private init(){thumbnailCache.countLimit=360;thumbnailCache.totalCostLimit=72*1024*1024;fullResolutionCache.countLimit=4;fullResolutionCache.totalCostLimit=96*1024*1024};func thumbnail(for id:UUID)->UIImage?{thumbnailCache.object(forKey:id.uuidString as NSString)};func storeThumbnail(_ image:UIImage,for id:UUID){let cost=Int(image.size.width*image.size.height*4);thumbnailCache.setObject(image,forKey:id.uuidString as NSString,cost:cost)};func fullResolutionImage(for id:UUID)->UIImage?{fullResolutionCache.object(forKey:id.uuidString as NSString)};func storeFullResolution(_ image:UIImage,for id:UUID){let cost=Int(image.size.width*image.scale*image.size.height*image.scale*4);fullResolutionCache.setObject(image,forKey:id.uuidString as NSString,cost:cost)};func clearFullResolution(){fullResolutionCache.removeAllObjects()};func removeAll(){thumbnailCache.removeAllObjects();fullResolutionCache.removeAllObjects()}}
 private enum ProtectedAction:Hashable{case restore,removeDevice,deleteCloud}
 private struct ProtectedMediaDetail:View{
     let item:ProtectedCloudMedia;@ObservedObject var language:LanguageStore;@ObservedObject var billing:CloudStorageSummary;var closeViewer:(()->Void)?=nil
-    @Environment(\.dismiss) private var dismiss;@State private var operationError:String?;@State private var deleting=false;@State private var restoring=false;@State private var localExists=false;@State private var currentLocalIdentifier:String?;@State private var restoredSuccessfully=false;@State private var pendingAction:ProtectedAction?;private var isVideo:Bool{item.mediaType.lowercased().contains("video")}
+    @Environment(\.dismiss) private var dismiss;@State private var operationError:String?;@State private var deleting=false;@State private var restoring=false;@State private var localExists=false;@State private var currentLocalIdentifier:String?;@State private var restoredSuccessfully=false;@State private var pendingAction:ProtectedAction?
+    private var isVideo:Bool{item.mediaType.lowercased().contains("video")}
     var body:some View{NavigationStack{ScrollView{VStack(alignment:.leading,spacing:18){HStack{VStack(alignment:.leading,spacing:4){Text(item.originalFilename ?? (isVideo ? "Video":"Photo")).font(.title3.bold());Text(isVideo ? language.text("Video","Vidéo"):"Photo").foregroundStyle(.secondary)};Spacer();Label(language.text("Protected","Protégé"),systemImage:"checkmark.shield.fill").font(.caption.bold()).foregroundStyle(.green)};if billing.isPaymentGrace{BillingLibraryNotice(language:language,restricted:false,days:billing.graceDaysRemaining).padding(.horizontal,-16)}else if billing.isPaymentRestricted{BillingLibraryNotice(language:language,restricted:true,days:0).padding(.horizontal,-16)};Divider();MetadataRow(icon:"calendar",title:isVideo ? language.text("Video taken","Vidéo prise le"):language.text("Photo taken","Photo prise le"),value:format(item.capturedAt));MetadataRow(icon:"icloud.and.arrow.up",title:language.text("Added to Libérons","Ajouté à Libérons le"),value:format(item.createdAt));MetadataRow(icon:"checkmark.shield",title:language.text("Cloud protection verified","Protection cloud vérifiée le"),value:format(item.protectedAt));MetadataRow(icon:"externaldrive",title:language.text("Original size","Taille originale"),value:ByteCountFormatter.string(fromByteCount:item.sizeBytes,countStyle:.file));MetadataRow(icon:"iphone",title:language.text("On this iPhone","Sur cet iPhone"),value:localExists ? language.text("Available on this iPhone","Disponible sur cet iPhone"):language.text("Not currently on this iPhone","Pas actuellement sur cet iPhone"));Label(language.text("Stored securely in Libérons Cloud.","Stocké de manière sécurisée dans Libérons Cloud."),systemImage:"icloud.fill").font(.footnote).foregroundStyle(.secondary);if restoredSuccessfully{Label(language.text("Restored to Photos","Restauré dans Photos"),systemImage:"checkmark.circle.fill").font(.subheadline.bold()).foregroundStyle(.green)};Divider();Text(language.text("Manage this memory","Gérer ce souvenir")).font(.headline);if !localExists{actionButton(billing.isPaymentRestricted ? language.text("Restore unavailable — payment required","Restauration indisponible — paiement requis"):language.text("Restore to Photos","Restaurer dans Photos"),icon:billing.isPaymentRestricted ? "lock.fill":"square.and.arrow.down",color:billing.isPaymentRestricted ? .secondary:.blue){if !billing.isPaymentRestricted{pendingAction = .restore}}.disabled(restoring||deleting||billing.isPaymentRestricted)};if localExists{actionButton(language.text("Remove from this iPhone","Supprimer de cet iPhone"),icon:"iphone.slash",color:.red){pendingAction = .removeDevice}.disabled(restoring||deleting)};actionButton(language.text("Delete permanently from Libérons","Supprimer définitivement de Libérons"),icon:"trash",color:.red){pendingAction = .deleteCloud}.disabled(deleting||restoring);if let operationError{Text(operationError).font(.footnote).foregroundStyle(.red)}}.padding(.horizontal,20).padding(.top,10).padding(.bottom,28)}}.navigationTitle(language.text("Memory details","Détails du souvenir")).navigationBarTitleDisplayMode(.inline).toolbar{ToolbarItem(placement:.topBarTrailing){Button(language.text("Done","Fermer")){dismiss()}.fontWeight(.semibold)}}.task{currentLocalIdentifier=item.iosLocalIdentifier;refreshLocalState();await billing.refresh()}.sheet(item:Binding(get:{pendingAction.map(ActionSheetItem.init)},set:{if $0==nil{pendingAction=nil}})){wrapper in premiumSheet(for:wrapper.action)}}
     private struct ActionSheetItem:Identifiable{let action:ProtectedAction;var id:ProtectedAction{action};init(_ action:ProtectedAction){self.action=action}}
     @ViewBuilder private func premiumSheet(for action:ProtectedAction)->some View{VStack(spacing:0){Capsule().fill(.secondary.opacity(0.35)).frame(width:38,height:5).padding(.top,10);VStack(spacing:18){Image(systemName:actionIcon(action)).font(.system(size:28,weight:.semibold)).foregroundStyle(action == .restore ? .blue:.red).frame(width:62,height:62).background((action == .restore ? Color.blue:Color.red).opacity(0.10),in:Circle());VStack(spacing:8){Text(actionTitle(action)).font(.title2.bold()).multilineTextAlignment(.center);Text(actionMessage(action)).font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center).fixedSize(horizontal:false,vertical:true)};if action == .removeDevice{Label(language.text("Your protected cloud copy will remain in Libérons.","Votre copie protégée restera dans Libérons Cloud."),systemImage:"checkmark.shield.fill").font(.footnote.bold()).foregroundStyle(.green).padding(12).frame(maxWidth:.infinity).background(Color.green.opacity(0.08),in:RoundedRectangle(cornerRadius:14))};if action == .deleteCloud{Label(language.text("This cannot be undone.","Cette action est irréversible."),systemImage:"exclamationmark.triangle.fill").font(.footnote.bold()).foregroundStyle(.red).padding(12).frame(maxWidth:.infinity).background(Color.red.opacity(0.08),in:RoundedRectangle(cornerRadius:14))};Button{confirm(action)}label:{Text(actionButtonTitle(action)).font(.headline).frame(maxWidth:.infinity).padding(.vertical,15).foregroundStyle(.white).background(action == .restore ? Color.blue:Color.red,in:RoundedRectangle(cornerRadius:16))}.buttonStyle(.plain);Button(language.text("Cancel","Annuler")){pendingAction=nil}.font(.headline).foregroundStyle(.primary).padding(.bottom,4)}.padding(24)}.presentationDetents([.height(action == .restore ? 350:410)]).presentationDragIndicator(.hidden).presentationCornerRadius(30)}
@@ -217,8 +465,9 @@ private struct ProtectedMediaDetail:View{
     private func format(_ date:Date?)->String{guard let date else{return language.text("Unknown","Inconnue")};return date.formatted(date:.long,time:.shortened)}
     private func matchingLocalAsset()->PHAsset?{if let id=currentLocalIdentifier,let asset=PHAsset.fetchAssets(withLocalIdentifiers:[id],options:nil).firstObject{return asset};let options=PHFetchOptions();if let date=item.capturedAt{options.predicate=NSPredicate(format:"creationDate >= %@ AND creationDate <= %@",date.addingTimeInterval(-2) as NSDate,date.addingTimeInterval(2) as NSDate)};let result=PHAsset.fetchAssets(with:isVideo ? .video:.image,options:options);guard result.count>0 else{return nil};if let filename=item.originalFilename{var match:PHAsset?;result.enumerateObjects{asset,_,stop in if PHAssetResource.assetResources(for:asset).contains(where:{$0.originalFilename.caseInsensitiveCompare(filename) == .orderedSame}){match=asset;stop.pointee=true}};if let match{return match}};return result.firstObject}
     private func refreshLocalState(){if let asset=matchingLocalAsset(){currentLocalIdentifier=asset.localIdentifier;localExists=true}else{localExists=false}}
-    @MainActor private func restoreToPhotos()async{guard !billing.isPaymentRestricted else{operationError=language.text("Payment must be regularized before restoring originals to Photos.","Le paiement doit être régularisé avant de restaurer des originaux dans Photos.");return};restoring=true;operationError=nil;restoredSuccessfully=false;let assetID=item.id;let filename=item.originalFilename;let captured=item.capturedAt;let video=isVideo;Task.detached(priority:.userInitiated){do{let remote=try await SupabaseService.cloudOriginalURL(assetID:assetID);let ext=filename.flatMap{let e=URL(fileURLWithPath:$0).pathExtension;return e.isEmpty ? nil:e} ?? (video ? "mov":"jpg");let dir=FileManager.default.urls(for:.cachesDirectory,in:.userDomainMask)[0].appendingPathComponent("LiberonsRecovery",isDirectory:true);try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true);let local=dir.appendingPathComponent("\(assetID.uuidString).\(ext)");if !FileManager.default.fileExists(atPath:local.path){let(downloaded,response)=try await URLSession.shared.download(from:remote);guard let http=response as? HTTPURLResponse,(200..<300).contains(http.statusCode)else{throw URLError(.badServerResponse)};try? FileManager.default.removeItem(at:local);try FileManager.default.moveItem(at:downloaded,to:local)};var newIdentifier:String?;try await PHPhotoLibrary.shared().performChanges{let request=PHAssetCreationRequest.forAsset();request.creationDate=captured;let options=PHAssetResourceCreationOptions();options.originalFilename=filename;request.addResource(with:video ? .video:.photo,fileURL:local,options:options);newIdentifier=request.placeholderForCreatedAsset?.localIdentifier};guard let newIdentifier else{throw NSError(domain:"LiberonsRestore",code:2)};try? await SupabaseService.updateLocalIdentifier(assetID:assetID,localIdentifier:newIdentifier);try? FileManager.default.removeItem(at:local);await MainActor.run{currentLocalIdentifier=newIdentifier;localExists=true;restoredSuccessfully=true;restoring=false}}catch{await MainActor.run{restoring=false;operationError=language.text(video ? "Unable to restore this video.":"Unable to restore this photo.",video ? "Impossible de restaurer cette vidéo.":"Impossible de restaurer cette photo.");refreshLocalState()}}}}
-    @MainActor private func removeFromDevice()async{operationError=nil;refreshLocalState();guard let asset=matchingLocalAsset()else{localExists=false;operationError=language.text("This memory is no longer in Photos on this iPhone.","Ce souvenir n’est plus présent dans Photos sur cet iPhone.");return};do{try await PHPhotoLibrary.shared().performChanges{PHAssetChangeRequest.deleteAssets([asset] as NSArray)};localExists=false;restoredSuccessfully=false;currentLocalIdentifier=nil}catch let error as NSError{if error.domain=="PHPhotosErrorDomain"&&error.code==3072{return};operationError=error.localizedDescription}}
+    @MainActor private func restoreToPhotos()async{guard !billing.isPaymentRestricted else{operationError=language.text("Payment must be regularized before restoring originals to Photos.","Le paiement doit être régularisé avant de restaurer des originaux dans Photos.");return};restoring=true;operationError=nil;restoredSuccessfully=false;let assetID=item.id;let filename=item.originalFilename;let captured=item.capturedAt;let video=isVideo;Task.detached(priority:.userInitiated){do{let remote=try await SupabaseService.cloudOriginalURL(assetID:assetID);let ext=filename.flatMap{let e=URL(fileURLWithPath:$0).pathExtension;return e.isEmpty ? nil:e} ?? (video ? "mov":"jpg");let dir=FileManager.default.urls(for:.cachesDirectory,in:.userDomainMask)[0].appendingPathComponent("LiberonsRecovery",isDirectory:true);try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true);let local=dir.appendingPathComponent("\(assetID.uuidString).\(ext)");if !FileManager.default.fileExists(atPath:local.path){let(downloaded,response)=try await URLSession.shared.download(from:remote);guard let http=response as? HTTPURLResponse,(200..<300).contains(http.statusCode) else{throw URLError(.badServerResponse)};try? FileManager.default.removeItem(at:local);try FileManager.default.moveItem(at:downloaded,to:local)};var newIdentifier:String?;try await PHPhotoLibrary.shared().performChanges{let request=PHAssetCreationRequest.forAsset();request.creationDate=captured;let options=PHAssetResourceCreationOptions();options.originalFilename=filename;request.addResource(with:video ? .video:.photo,fileURL:local,options:options);newIdentifier=request.placeholderForCreatedAsset?.localIdentifier};guard let newIdentifier else{throw NSError(domain:"LiberonsRestore",code:2)};try? await SupabaseService.updateLocalIdentifier(assetID:assetID,localIdentifier:newIdentifier);try? FileManager.default.removeItem(at:local);await MainActor.run{currentLocalIdentifier=newIdentifier;localExists=true;restoredSuccessfully=true;restoring=false}}catch{await MainActor.run{restoring=false;operationError=language.text(video ? "Unable to restore this video.":"Unable to restore this photo.",video ? "Impossible de restaurer cette vidéo.":"Impossible de restaurer cette photo.");refreshLocalState()}}}}
+    @MainActor private func removeFromDevice()async{operationError=nil;refreshLocalState();guard let asset=matchingLocalAsset() else{localExists=false;operationError=language.text("This memory is no longer in Photos on this iPhone.","Ce souvenir n’est plus présent dans Photos sur cet iPhone.");return};do{try await PHPhotoLibrary.shared().performChanges{PHAssetChangeRequest.deleteAssets([asset] as NSArray)};localExists=false;restoredSuccessfully=false;currentLocalIdentifier=nil}catch let error as NSError{if error.domain=="PHPhotosErrorDomain" && error.code==3072{return};operationError=error.localizedDescription}}
     @MainActor private func deleteFromCloud()async{deleting=true;operationError=nil;do{_=try await SupabaseService.deleteCloudMedia(assetID:item.id);deleting=false;dismiss();closeViewer?()}catch{deleting=false;operationError=error.localizedDescription}}
 }
 private struct MetadataRow:View{let icon:String;let title:String;let value:String;var body:some View{HStack(alignment:.top,spacing:13){Image(systemName:icon).frame(width:24).foregroundStyle(.blue);VStack(alignment:.leading,spacing:3){Text(title).font(.caption).foregroundStyle(.secondary);Text(value).font(.subheadline.bold())};Spacer()}}}
+private struct ProtectedLibraryTile:View{let item:ProtectedCloudMedia;@State private var image:UIImage?;private var isVideo:Bool{item.mediaType.lowercased().contains("video")};var body:some View{ZStack{GeometryReader{proxy in ZStack{Rectangle().fill(Color.secondary.opacity(0.08));if let image{Image(uiImage:image).resizable().scaledToFill().frame(width:proxy.size.width,height:proxy.size.height).clipped()}else{Image(systemName:isVideo ? "video.fill":"photo.fill").font(.system(size:18,weight:.medium)).foregroundStyle(.tertiary)}}}.aspectRatio(1,contentMode:.fit);if isVideo{VStack{Spacer();HStack{Image(systemName:"play.fill").font(.system(size:10,weight:.bold)).foregroundStyle(.white).frame(width:25,height:25).background(.black.opacity(0.52),in:Circle()).padding(6);Spacer()}}}}.task(id:item.id){await loadThumbnail()}};@MainActor private func loadThumbnail()async{if let cached=ProtectedMediaCache.shared.thumbnail(for:item.id){image=cached;return};if let id=item.iosLocalIdentifier,let asset=PHAsset.fetchAssets(withLocalIdentifiers:[id],options:nil).firstObject{let options=PHImageRequestOptions();options.isNetworkAccessAllowed=true;options.deliveryMode = .opportunistic;options.resizeMode = .fast;PHImageManager.default().requestImage(for:asset,targetSize:CGSize(width:900,height:900),contentMode:.aspectFill,options:options){value,_ in if let value{ProtectedMediaCache.shared.storeThumbnail(value,for:self.item.id);Task{@MainActor in image=value}}};return};if let preview=try? await SupabaseService.cloudPreviewURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:preview),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300,let decoded=ProtectedImageDecoder.downsample(data,maxPixelSize:900){ProtectedMediaCache.shared.storeThumbnail(decoded,for:item.id);image=decoded;return};if !isVideo,let original=try? await SupabaseService.cloudOriginalURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:original),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300,let decoded=ProtectedImageDecoder.downsample(data,maxPixelSize:900){ProtectedMediaCache.shared.storeThumbnail(decoded,for:item.id);image=decoded;return};if isVideo{if let url=try? await SupabaseService.cloudOriginalURL(assetID:item.id){let asset=AVURLAsset(url:url);let generator=AVAssetImageGenerator(asset:asset);generator.appliesPreferredTrackTransform=true;if let cg=try? await generator.image(at:.zero).image{image=UIImage(cgImage:cg)}};return};if let url=try? await SupabaseService.cloudOriginalURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:url),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300{image=UIImage(data:data)}}}
