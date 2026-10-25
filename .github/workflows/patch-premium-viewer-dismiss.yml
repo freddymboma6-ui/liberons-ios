@@ -1,4 +1,4 @@
-name: Premium viewer dismissal patch
+name: Protected gallery continuity patch
 
 on:
   push:
@@ -17,47 +17,54 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: library-protected-media
-      - name: Patch protected gallery dismissal
+          fetch-depth: 0
+      - name: Patch protected gallery continuity
         shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          p = Path('Liberons/ProtectedLibraryView.swift')
-          s = p.read_text()
-          old_state = '@Environment(\\.dismiss) private var dismiss; @State private var selection:UUID; @State private var showInfo=false; @State private var verticalOffset:CGFloat=0'
-          new_state = '@Environment(\\.dismiss) private var dismiss; @State private var selection:UUID; @State private var showInfo=false; @State private var verticalOffset:CGFloat=0; @State private var isDismissing=false'
-          if old_state not in s:
-              raise SystemExit('viewer state anchor not found')
-          s = s.replace(old_state, new_state, 1)
-          old_gesture = '.simultaneousGesture(DragGesture(minimumDistance:10).onChanged{v in guard v.translation.height>0,abs(v.translation.height)>abs(v.translation.width) else{return};verticalOffset=v.translation.height}.onEnded{v in guard v.translation.height>0,abs(v.translation.height)>abs(v.translation.width) else{withAnimation(.snappy){verticalOffset=0};return};if verticalOffset>110 || v.predictedEndTranslation.height>220{dismiss()}else{withAnimation(.snappy){verticalOffset=0}}})'
-          new_gesture = '''.simultaneousGesture(DragGesture(minimumDistance:14,coordinateSpace:.global).onChanged{v in
-            guard !isDismissing else{return}
-            let y=v.translation.height
-            guard y>0,abs(y)>abs(v.translation.width)*1.15 else{return}
-            verticalOffset=y
-          }.onEnded{v in
-            guard !isDismissing else{return}
-            let y=max(verticalOffset,v.translation.height)
-            let predicted=max(y,v.predictedEndTranslation.height)
-            guard y>0,abs(v.translation.height)>abs(v.translation.width)*1.05 else{withAnimation(.spring(response:0.30,dampingFraction:0.88)){verticalOffset=0};return}
-            if y>92 || predicted>185{
-              isDismissing=true
-              withAnimation(.easeOut(duration:0.18)){verticalOffset=max(y,UIScreen.main.bounds.height*0.22)}
-              Task{@MainActor in try? await Task.sleep(for:.milliseconds(120));dismiss()}
-            }else{
-              withAnimation(.spring(response:0.30,dampingFraction:0.88)){verticalOffset=0}
-            }
-          })'''
-          if old_gesture not in s:
-              raise SystemExit('viewer gesture anchor not found')
-          s = s.replace(old_gesture, new_gesture, 1)
-          p.write_text(s)
+
+          view = Path('Liberons/ProtectedLibraryView.swift')
+          s = view.read_text()
+
+          # Closing the viewer must NEVER refetch/rebuild the grid. That rebuild was
+          # invalidating SwiftUI's scroll position and sending the user back upward.
+          old = '.onDisappear { ProtectedMediaCache.shared.clearFullResolution(); Task { await refreshLibrary() } }'
+          new = '.onDisappear { ProtectedMediaCache.shared.clearFullResolution() }'
+          if old not in s:
+              raise SystemExit('viewer refresh anchor not found')
+          s = s.replace(old, new, 1)
+
+          # PhotoKit thumbnails should paint a fast/degraded frame immediately and
+          # refine afterwards, instead of holding an empty placeholder for HQ/exact.
+          old = 'options.deliveryMode = .highQualityFormat;options.resizeMode = .exact;PHImageManager.default().requestImage(for:asset,targetSize:CGSize(width:600,height:600),contentMode:.aspectFill'
+          new = 'options.deliveryMode = .opportunistic;options.resizeMode = .fast;PHImageManager.default().requestImage(for:asset,targetSize:CGSize(width:360,height:360),contentMode:.aspectFill'
+          if old not in s:
+              raise SystemExit('thumbnail PhotoKit anchor not found')
+          s = s.replace(old, new, 1)
+
+          # Keep more already-decoded grid thumbnails warm while browsing back/forth.
+          old = 'thumbnailCache.countLimit=120;thumbnailCache.totalCostLimit=48*1024*1024'
+          new = 'thumbnailCache.countLimit=360;thumbnailCache.totalCostLimit=72*1024*1024'
+          if old not in s:
+              raise SystemExit('thumbnail cache anchor not found')
+          s = s.replace(old, new, 1)
+          view.write_text(s)
+
+          store = Path('Liberons/ProtectedMediaStore.swift')
+          t = store.read_text()
+          if 'private let pageSize = 24' not in t:
+              raise SystemExit('page size anchor not found')
+          t = t.replace('private let pageSize = 24', 'private let pageSize = 120', 1)
+          t = t.replace('let threshold = max(items.count - 8, 0)', 'let threshold = max(items.count - 30, 0)', 1)
+          t = t.replace('// decoding work in the grid/viewer, so 24 gives us a much safer ceiling while\n    // cursor pagination keeps the complete cloud library accessible.', '// Grid cells are lazy, so keeping a larger metadata page avoids constant network\n    // pagination while scrolling without decoding every asset into memory.', 1)
+          store.write_text(t)
           PY
-      - name: Commit patch
+      - name: Commit continuity fix
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add Liberons/ProtectedLibraryView.swift
+          git add Liberons/ProtectedLibraryView.swift Liberons/ProtectedMediaStore.swift
           git diff --cached --quiet && exit 0
-          git commit -m 'Polish protected viewer swipe dismissal'
+          git commit -m 'Keep protected gallery position and load thumbnails faster'
           git push origin HEAD:library-protected-media
