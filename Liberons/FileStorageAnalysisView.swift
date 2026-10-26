@@ -1,6 +1,7 @@
 import SwiftUI
 import UniformTypeIdentifiers
 import QuickLook
+import Combine
 
 struct AnalyzedLocalFile: Identifiable, Hashable {
     let url: URL
@@ -28,14 +29,13 @@ final class FileStorageAnalysisStore: ObservableObject {
         defer { if granted { folder.stopAccessingSecurityScopedResource() } }
         do {
             let keys: Set<URLResourceKey> = [.isRegularFileKey, .isHiddenKey, .fileSizeKey, .nameKey, .contentTypeKey]
-            guard let enumerator = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: Array(keys), options: [.skipsHiddenFiles, .skipsPackageDescendants]) else {
-                throw CocoaError(.fileReadNoSuchFile)
-            }
+            guard let enumerator = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: Array(keys), options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { throw CocoaError(.fileReadNoSuchFile) }
             var result: [AnalyzedLocalFile] = []
             while let value = enumerator.nextObject() as? URL {
                 let values = try? value.resourceValues(forKeys: keys)
                 guard values?.isRegularFile == true, values?.isHidden != true else { continue }
                 let bytes = Int64(values?.fileSize ?? 0)
+                guard bytes > 0 else { continue }
                 result.append(.init(url: value, name: values?.name ?? value.lastPathComponent, sizeBytes: bytes, contentType: values?.contentType))
             }
             files = result.sorted { $0.sizeBytes > $1.sizeBytes }
@@ -46,14 +46,17 @@ final class FileStorageAnalysisStore: ObservableObject {
     }
 
     func delete(_ selected: [AnalyzedLocalFile]) -> Int {
-        var deleted = 0
+        var deletedIDs = Set<String>()
         for file in selected {
-            do { try FileManager.default.removeItem(at: file.url); deleted += 1 }
-            catch { }
+            let granted = file.url.startAccessingSecurityScopedResource()
+            defer { if granted { file.url.stopAccessingSecurityScopedResource() } }
+            do {
+                try FileManager.default.removeItem(at: file.url)
+                deletedIDs.insert(file.id)
+            } catch { }
         }
-        let removed = Set(selected.map(\.id))
-        files.removeAll { removed.contains($0.id) && !FileManager.default.fileExists(atPath: $0.url.path) }
-        return deleted
+        files.removeAll { deletedIDs.contains($0.id) || !FileManager.default.fileExists(atPath: $0.url.path) }
+        return deletedIDs.count
     }
 }
 
@@ -78,7 +81,7 @@ struct FileStorageAnalysisView: View {
                 ContentUnavailableView {
                     Label(language.text("Analyze files", "Analyser les fichiers"), systemImage: "folder.badge.gearshape")
                 } description: {
-                    Text(language.text("Choose a folder to calculate the size of the files it contains. Libérons only analyzes the folder you authorize.", "Choisissez un dossier pour calculer la taille des fichiers qu’il contient. Libérons analyse uniquement le dossier que vous autorisez."))
+                    Text(language.text("Choose a folder to calculate the actual storage used by its files. Libérons only analyzes locations you explicitly authorize.", "Choisissez un dossier pour calculer l’espace réellement utilisé par ses fichiers. Libérons analyse uniquement les emplacements que vous autorisez explicitement."))
                 } actions: {
                     Button(language.text("Choose a folder", "Choisir un dossier")) { showFolderPicker = true }.buttonStyle(.borderedProminent)
                 }
@@ -88,7 +91,7 @@ struct FileStorageAnalysisView: View {
                 List {
                     Section {
                         HStack { Label(analysis.folderName ?? language.text("Authorized folder", "Dossier autorisé"), systemImage: "folder.fill"); Spacer(); Button(language.text("Change", "Modifier")) { showFolderPicker = true } }
-                        HStack { Text(language.text("Files", "Fichiers")); Spacer(); Text(analysis.files.count.formatted()).fontWeight(.semibold) }
+                        HStack { Text(language.text("Files analyzed", "Fichiers analysés")); Spacer(); Text(analysis.files.count.formatted()).fontWeight(.semibold) }
                         HStack { Text(language.text("Total size", "Taille totale")); Spacer(); Text(size(analysis.totalBytes)).fontWeight(.semibold) }
                     }
                     if let operationMessage { Section { Text(operationMessage).font(.footnote).foregroundStyle(.secondary) } }
@@ -120,37 +123,55 @@ struct FileStorageAnalysisView: View {
             }
         }
         .safeAreaInset(edge: .bottom) {
-            if !selectedIDs.isEmpty {
+            if !selectedIDs.isEmpty || protectedFiles.isUploading {
                 VStack(spacing: 10) {
-                    HStack { Text("\(selectedIDs.count) \(language.text("selected", "sélectionné(s)"))"); Spacer(); Text(size(selectedBytes)).fontWeight(.semibold) }
-                    Button {
-                        let files = selectedFiles
-                        Task {
-                            await protectedFiles.protect(files.map(\.url), removeOriginals: false, language: language)
-                            protectedSelection = files
-                            showProtectedRemoval = true
-                        }
-                    } label: { Label(language.text("Protect with Libérons", "Protéger avec Libérons"), systemImage: "checkmark.shield.fill").frame(maxWidth: .infinity).frame(height: 44).fontWeight(.semibold) }.buttonStyle(.borderedProminent).disabled(protectedFiles.isUploading)
-                    Button(role: .destructive) { showDeleteConfirmation = true } label: { Label(language.text("Delete without protecting", "Supprimer sans protéger"), systemImage: "trash").frame(maxWidth: .infinity).frame(height: 44).fontWeight(.semibold) }.buttonStyle(.bordered).tint(.red).disabled(protectedFiles.isUploading)
+                    if protectedFiles.isUploading {
+                        ProgressView(value: Double(protectedFiles.uploadCompleted), total: Double(max(protectedFiles.uploadTotal, 1)))
+                        Text(language.text("Protecting \(protectedFiles.uploadCompleted) of \(protectedFiles.uploadTotal) files", "Protection de \(protectedFiles.uploadCompleted) sur \(protectedFiles.uploadTotal) fichiers")).font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        HStack { Text("\(selectedIDs.count) \(language.text("selected", "sélectionné(s)"))"); Spacer(); Text(size(selectedBytes)).fontWeight(.semibold) }
+                        Button {
+                            let files = selectedFiles
+                            Task {
+                                await protectedFiles.protect(files.map(\.url), removeOriginals: false, language: language)
+                                // Only offer removal after the protection operation has completed.
+                                // Existing files remain visible; failed cloud uploads are never deleted automatically.
+                                protectedSelection = files.filter { FileManager.default.fileExists(atPath: $0.url.path) }
+                                if protectedFiles.message?.contains(language.text("Files protected successfully", "Fichiers protégés avec succès")) == true {
+                                    showProtectedRemoval = !protectedSelection.isEmpty
+                                } else {
+                                    operationMessage = protectedFiles.message
+                                }
+                            }
+                        } label: { Label(language.text("Protect with Libérons", "Protéger avec Libérons"), systemImage: "checkmark.shield.fill").frame(maxWidth: .infinity).frame(height: 44).fontWeight(.semibold) }.buttonStyle(.borderedProminent)
+                        Button(role: .destructive) { showDeleteConfirmation = true } label: { Label(language.text("Delete without protecting", "Supprimer sans protéger"), systemImage: "trash").frame(maxWidth: .infinity).frame(height: 44).fontWeight(.semibold) }.buttonStyle(.bordered).tint(.red)
+                    }
                 }.padding(16).background(.bar)
             }
         }
         .fileImporter(isPresented: $showFolderPicker, allowedContentTypes: [.folder], allowsMultipleSelection: false) { result in
-            if case .success(let urls) = result, let folder = urls.first { selectedIDs.removeAll(); Task { await analysis.analyze(folder: folder) } }
+            if case .success(let urls) = result, let folder = urls.first { selectedIDs.removeAll(); operationMessage = nil; Task { await analysis.analyze(folder: folder) } }
         }
         .quickLookPreview($previewURL)
         .confirmationDialog(language.text("Delete selected files?", "Supprimer les fichiers sélectionnés ?"), isPresented: $showDeleteConfirmation, titleVisibility: .visible) {
             Button(language.text("Delete permanently", "Supprimer définitivement"), role: .destructive) {
-                let files = selectedFiles; let deleted = analysis.delete(files); selectedIDs.subtract(files.map(\.id)); operationMessage = language.text("\(deleted) file(s) deleted from the authorized location.", "\(deleted) fichier(s) supprimé(s) de l’emplacement autorisé.")
+                let files = selectedFiles
+                let deleted = analysis.delete(files)
+                selectedIDs.subtract(files.map(\.id))
+                operationMessage = language.text("\(deleted) file(s) were deleted from the authorized location.", "\(deleted) fichier(s) ont été supprimés de l’emplacement autorisé.")
             }
             Button(language.text("Cancel", "Annuler"), role: .cancel) { }
-        } message: { Text(language.text("These files will be deleted from their current location without being copied to Libérons Cloud.", "Ces fichiers seront supprimés de leur emplacement actuel sans être copiés dans Libérons Cloud.")) }
-        .confirmationDialog(language.text("Files protected", "Fichiers protégés"), isPresented: $showProtectedRemoval, titleVisibility: .visible) {
+        } message: { Text(language.text("These files have not been protected with Libérons. Deleting them may be permanent and cannot be undone.", "Ces fichiers n’ont pas été protégés avec Libérons. Leur suppression peut être définitive et irréversible.")) }
+        .confirmationDialog(language.text("Protection complete", "Protection terminée"), isPresented: $showProtectedRemoval, titleVisibility: .visible) {
             Button(language.text("Remove protected originals", "Supprimer les originaux protégés"), role: .destructive) {
-                let files = protectedSelection; let deleted = analysis.delete(files); selectedIDs.subtract(files.map(\.id)); protectedSelection = []; operationMessage = language.text("Cloud protection is complete. \(deleted) original file(s) were removed from the authorized location.", "La protection cloud est terminée. \(deleted) fichier(s) original(aux) ont été supprimé(s) de l’emplacement autorisé.")
+                let files = protectedSelection
+                let deleted = analysis.delete(files)
+                selectedIDs.subtract(files.map(\.id))
+                protectedSelection = []
+                operationMessage = language.text("The cloud copies are protected. \(deleted) original file(s) were removed from the authorized location.", "Les copies cloud sont protégées. \(deleted) fichier(s) original(aux) ont été supprimés de l’emplacement autorisé.")
             }
             Button(language.text("Keep originals", "Conserver les originaux")) { selectedIDs.removeAll(); protectedSelection = [] }
-        } message: { Text(language.text("The selected files have been copied to Libérons Cloud. You can now remove the originals to free space, or keep them in their current location.", "Les fichiers sélectionnés ont été copiés dans Libérons Cloud. Vous pouvez maintenant supprimer les originaux pour libérer de l’espace ou les conserver dans leur emplacement actuel.")) }
+        } message: { Text(language.text("The selected files are protected in Libérons Cloud. You can now remove the originals to free storage, or keep them in their current location.", "Les fichiers sélectionnés sont protégés dans Libérons Cloud. Vous pouvez maintenant supprimer les originaux pour libérer de l’espace ou les conserver dans leur emplacement actuel.")) }
     }
 
     private func toggle(_ id: String) { if selectedIDs.contains(id) { selectedIDs.remove(id) } else { selectedIDs.insert(id) } }
