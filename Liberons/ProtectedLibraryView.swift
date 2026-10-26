@@ -23,6 +23,76 @@ private enum ProtectedLibraryFilter: String, CaseIterable, Identifiable {
     }
 }
 
+private struct ProtectedLibraryBulkRestoreResult {
+    let restored: Int
+    let alreadyAvailable: Int
+    let failed: Int
+}
+
+private enum ProtectedLibraryBulkRestoreService {
+    private static func isVideo(_ item: ProtectedCloudMedia) -> Bool { item.mediaType.lowercased().contains("video") }
+
+    @MainActor private static func matchingLocalAsset(for item: ProtectedCloudMedia) -> PHAsset? {
+        if let identifier = item.iosLocalIdentifier,
+           let asset = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).firstObject { return asset }
+        let options = PHFetchOptions()
+        if let date = item.capturedAt {
+            options.predicate = NSPredicate(format: "creationDate >= %@ AND creationDate <= %@", date.addingTimeInterval(-2) as NSDate, date.addingTimeInterval(2) as NSDate)
+        }
+        let result = PHAsset.fetchAssets(with: isVideo(item) ? .video : .image, options: options)
+        guard result.count > 0 else { return nil }
+        if let filename = item.originalFilename {
+            var match: PHAsset?
+            result.enumerateObjects { asset, _, stop in
+                if PHAssetResource.assetResources(for: asset).contains(where: { $0.originalFilename.caseInsensitiveCompare(filename) == .orderedSame }) {
+                    match = asset
+                    stop.pointee = true
+                }
+            }
+            if let match { return match }
+        }
+        return result.firstObject
+    }
+
+    static func restoreMissing(_ items: [ProtectedCloudMedia]) async -> ProtectedLibraryBulkRestoreResult {
+        var restored = 0, alreadyAvailable = 0, failed = 0
+        for item in items {
+            if await MainActor.run(body: { matchingLocalAsset(for: item) != nil }) {
+                alreadyAvailable += 1
+                continue
+            }
+            do {
+                let video = isVideo(item)
+                let remote = try await SupabaseService.cloudOriginalURL(assetID: item.id)
+                let ext = item.originalFilename.flatMap { let value = URL(fileURLWithPath: $0).pathExtension; return value.isEmpty ? nil : value } ?? (video ? "mov" : "jpg")
+                let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("LiberonsBulkRecovery", isDirectory: true)
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                let local = directory.appendingPathComponent(item.id.uuidString).appendingPathExtension(ext)
+                if !FileManager.default.fileExists(atPath: local.path) {
+                    let (downloaded, response) = try await URLSession.shared.download(from: remote)
+                    guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
+                    try? FileManager.default.removeItem(at: local)
+                    try FileManager.default.moveItem(at: downloaded, to: local)
+                }
+                var newIdentifier: String?
+                try await PHPhotoLibrary.shared().performChanges {
+                    let request = PHAssetCreationRequest.forAsset()
+                    request.creationDate = item.capturedAt
+                    let options = PHAssetResourceCreationOptions()
+                    options.originalFilename = item.originalFilename
+                    request.addResource(with: video ? .video : .photo, fileURL: local, options: options)
+                    newIdentifier = request.placeholderForCreatedAsset?.localIdentifier
+                }
+                guard let newIdentifier else { throw NSError(domain: "LiberonsBulkRestore", code: 2) }
+                try? await SupabaseService.updateLocalIdentifier(assetID: item.id, localIdentifier: newIdentifier)
+                try? FileManager.default.removeItem(at: local)
+                restored += 1
+            } catch { failed += 1 }
+        }
+        return .init(restored: restored, alreadyAvailable: alreadyAvailable, failed: failed)
+    }
+}
+
 struct ProtectedLibraryView: View {
     @ObservedObject var language: LanguageStore
     @StateObject private var store = ProtectedMediaStore()
@@ -32,6 +102,9 @@ struct ProtectedLibraryView: View {
     @State private var isSelecting = false
     @State private var showBulkDelete = false
     @State private var deletingSelection = false
+    @State private var showBulkRestore = false
+    @State private var restoringSelection = false
+    @State private var bulkRestoreResult: ProtectedLibraryBulkRestoreResult?
     @State private var mediaFilter: ProtectedLibraryFilter = .all
     @State private var sortNewestFirst = true
     @State private var displayItems: [ProtectedCloudMedia] = []
@@ -50,158 +123,66 @@ struct ProtectedLibraryView: View {
                 else if store.items.isEmpty { ContentUnavailableView(language.text("Your cloud library", "Votre bibliothèque cloud"), systemImage: "photo.stack", description: Text(language.text("Protected memories will appear here.", "Vos souvenirs protégés apparaîtront ici."))) }
                 else {
                     ScrollView {
-                        LazyVStack(
-                            alignment: .leading,
-                            spacing: 5,
-                            pinnedViews: [.sectionHeaders]
-                        ) {
+                        LazyVStack(alignment: .leading, spacing: 5, pinnedViews: [.sectionHeaders]) {
                             if billing.isPaymentGrace { BillingLibraryNotice(language: language, restricted: false, days: billing.graceDaysRemaining) }
                             else if billing.isPaymentRestricted { BillingLibraryNotice(language: language, restricted: true, days: 0) }
-
                             HStack(spacing: 9) {
-                                Image(systemName: "checkmark.shield.fill")
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundStyle(.green)
-                                    .frame(width: 26, height: 26)
-                                    .background(Color.green.opacity(0.09), in: Circle())
-
-                                Text("\(Int(store.totalCount).formatted()) \(language.text("protected memories", "souvenirs protégés"))")
-                                    .font(.subheadline.weight(.semibold))
-                                    .lineLimit(1)
-
+                                Image(systemName: "checkmark.shield.fill").font(.system(size: 13, weight: .semibold)).foregroundStyle(.green).frame(width: 26, height: 26).background(Color.green.opacity(0.09), in: Circle())
+                                Text("\(Int(store.totalCount).formatted()) \(language.text("protected memories", "souvenirs protégés"))").font(.subheadline.weight(.semibold)).lineLimit(1)
                                 Spacer(minLength: 8)
-
                                 Menu {
-                                    Button { setSort(newestFirst: true) } label: {
-                                        Label(language.text("Newest first", "Plus récents"), systemImage: sortNewestFirst ? "checkmark" : "arrow.down")
-                                    }
-                                    Button { setSort(newestFirst: false) } label: {
-                                        Label(language.text("Oldest first", "Plus anciens"), systemImage: !sortNewestFirst ? "checkmark" : "arrow.up")
-                                    }
+                                    Button { setSort(newestFirst: true) } label: { Label(language.text("Newest first", "Plus récents"), systemImage: sortNewestFirst ? "checkmark" : "arrow.down") }
+                                    Button { setSort(newestFirst: false) } label: { Label(language.text("Oldest first", "Plus anciens"), systemImage: !sortNewestFirst ? "checkmark" : "arrow.up") }
                                 } label: {
-                                    HStack(spacing: 4) {
-                                        Text(sortNewestFirst ? language.text("Recent", "Récents") : language.text("Oldest", "Anciens"))
-                                            .font(.caption.weight(.semibold))
-                                        Image(systemName: "chevron.down")
-                                            .font(.system(size: 9, weight: .bold))
-                                    }
-                                    .foregroundStyle(.secondary)
-                                    .contentShape(Rectangle())
+                                    HStack(spacing: 4) { Text(sortNewestFirst ? language.text("Recent", "Récents") : language.text("Oldest", "Anciens")).font(.caption.weight(.semibold)); Image(systemName: "chevron.down").font(.system(size: 9, weight: .bold)) }.foregroundStyle(.secondary).contentShape(Rectangle())
                                 }
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.top, 0)
-
-                            Section {
-                                Color.clear
-                                    .frame(height: 0)
-                            } header: {
+                            }.padding(.horizontal, 16).padding(.top, 0)
+                            Section { Color.clear.frame(height: 0) } header: {
                                 HStack(spacing: 4) {
                                     ForEach(ProtectedLibraryFilter.allCases) { filter in
                                         Button { selectFilter(filter) } label: {
-                                            HStack(spacing: 6) {
-                                                Image(systemName: filter.icon)
-                                                    .font(.caption.weight(.semibold))
-                                                Text(filter.title(language))
-                                                    .font(.subheadline.weight(.semibold))
-                                            }
-                                            .foregroundStyle(mediaFilter == filter ? Color.primary : Color.secondary)
-                                            .frame(maxWidth: .infinity)
-                                            .padding(.vertical, 4)
-                                            .background {
-                                                if mediaFilter == filter {
-                                                    Capsule()
-                                                        .fill(Color(uiColor: .systemBackground))
-                                                        .shadow(color: .black.opacity(0.08), radius: 5, y: 2)
-                                                        .matchedGeometryEffect(id: "activeFilter", in: filterTransition)
-                                                }
-                                            }
-                                        }
-                                        .buttonStyle(.plain)
+                                            HStack(spacing: 6) { Image(systemName: filter.icon).font(.caption.weight(.semibold)); Text(filter.title(language)).font(.subheadline.weight(.semibold)) }
+                                                .foregroundStyle(mediaFilter == filter ? Color.primary : Color.secondary).frame(maxWidth: .infinity).padding(.vertical, 4)
+                                                .background { if mediaFilter == filter { Capsule().fill(Color(uiColor: .systemBackground)).shadow(color: .black.opacity(0.08), radius: 5, y: 2).matchedGeometryEffect(id: "activeFilter", in: filterTransition) } }
+                                        }.buttonStyle(.plain)
                                     }
-                                }
-                                .padding(2)
-                                .background(
-                                    Color(uiColor: .secondarySystemBackground)
-                                        .opacity(0.62),
-                                    in: Capsule()
-                                )
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 3)
-                                .background(
-                                    Color(uiColor: .systemBackground)
-                                        .opacity(0.82)
-                                )
+                                }.padding(2).background(Color(uiColor: .secondarySystemBackground).opacity(0.62), in: Capsule()).padding(.horizontal, 16).padding(.vertical, 3).background(Color(uiColor: .systemBackground).opacity(0.82))
                             }
-
-                            if isSelecting {
-                                Text("\(selectedIDs.count) \(language.text("selected", "sélectionné(s)"))")
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.secondary)
-                                    .padding(.horizontal, 16)
-                                    .padding(.top, 1)
-                            }
-
+                            if isSelecting { Text("\(selectedIDs.count) \(language.text("selected", "sélectionné(s)"))").font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.horizontal, 16).padding(.top, 1) }
                             if displayItems.isEmpty && !store.items.isEmpty {
-                                VStack(spacing: 10) {
-                                    ProgressView()
-                                    Text(language.text("Loading protected memories…", "Chargement des souvenirs protégés…"))
-                                        .font(.footnote)
-                                        .foregroundStyle(.secondary)
-                                }
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 42)
+                                VStack(spacing: 10) { ProgressView(); Text(language.text("Loading protected memories…", "Chargement des souvenirs protégés…")).font(.footnote).foregroundStyle(.secondary) }.frame(maxWidth: .infinity).padding(.vertical, 42)
                             } else if displayItems.isEmpty {
                                 ContentUnavailableView(language.text("Nothing here yet", "Rien ici pour le moment"), systemImage: mediaFilter.icon, description: Text(language.text("Protected media in this category will appear here.", "Les médias protégés de cette catégorie apparaîtront ici."))).frame(maxWidth: .infinity).padding(.vertical, 42)
                             } else {
                                 LazyVGrid(columns: columns, spacing: 1.5) {
                                     ForEach(displayItems) { item in
                                         ProtectedLibraryTile(item: item).matchedTransitionSource(id: item.id, in: photoTransition)
-                                            .task {
-                                                let before = store.items.count
-                                                await store.loadMoreIfNeeded(currentItem: item)
-                                                if store.items.count != before { rebuildDisplayItems() }
-                                            }
+                                            .task { let before = store.items.count; await store.loadMoreIfNeeded(currentItem: item); if store.items.count != before { rebuildDisplayItems() } }
                                             .overlay(alignment: .topTrailing) { if isSelecting { Image(systemName: selectedIDs.contains(item.id) ? "checkmark.circle.fill" : "circle").font(.title2).foregroundStyle(.white).shadow(radius: 3).padding(7) } }
                                             .contentShape(Rectangle()).onTapGesture { isSelecting ? toggle(item.id) : (viewerItem = item) }.onLongPressGesture(minimumDuration: 0.35) { if !isSelecting { isSelecting = true; selectedIDs = [item.id] } }
                                     }
                                 }
                             }
                         }.padding(.bottom, 132)
-                    }
-                    .scrollBounceBehavior(.basedOnSize)
-                    .refreshable { await refreshLibrary() }
+                    }.scrollBounceBehavior(.basedOnSize).refreshable { await refreshLibrary() }
                 }
             }
             .navigationTitle(isSelecting ? language.text("Select", "Sélection") : language.text("Library", "Bibliothèque"))
             .navigationBarTitleDisplayMode(.large)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    if !store.items.isEmpty {
-                        Button(isSelecting ? language.text("Done", "OK") : language.text("Select", "Sélectionner")) {
-                            isSelecting.toggle()
-                            if !isSelecting { selectedIDs.removeAll() }
-                        }
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.primary)
-                        .buttonStyle(.plain)
-                    }
-                }
-            }
+            .toolbar { ToolbarItem(placement: .topBarTrailing) { if !store.items.isEmpty { Button(isSelecting ? language.text("Done", "OK") : language.text("Select", "Sélectionner")) { isSelecting.toggle(); if !isSelecting { selectedIDs.removeAll() } }.font(.subheadline.weight(.semibold)).foregroundStyle(.primary).buttonStyle(.plain) } } }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if isSelecting {
-                    HStack(spacing: 12) {
-                        Button {
-                            let visible = Set(displayItems.map(\.id))
-                            if !visible.isEmpty && selectedIDs == visible { selectedIDs.removeAll() } else { selectedIDs = visible }
-                        } label: {
-                            let visible = Set(displayItems.map(\.id))
-                            Text(!visible.isEmpty && selectedIDs == visible ? language.text("Deselect all", "Tout désélectionner") : language.text("Select all", "Tout sélectionner")).font(.subheadline.weight(.semibold))
+                    HStack(spacing: 10) {
+                        Button { let visible = Set(displayItems.map(\.id)); if !visible.isEmpty && selectedIDs == visible { selectedIDs.removeAll() } else { selectedIDs = visible } } label: {
+                            let visible = Set(displayItems.map(\.id)); Text(!visible.isEmpty && selectedIDs == visible ? language.text("Deselect all", "Tout désélectionner") : language.text("Select all", "Tout sélectionner")).font(.subheadline.weight(.semibold))
                         }
-                        Spacer()
+                        Spacer(minLength: 4)
+                        Button { showBulkRestore = true } label: {
+                            if restoringSelection { ProgressView() } else { Label(language.text("Restore", "Remettre"), systemImage: "square.and.arrow.down").font(.subheadline.weight(.semibold)) }
+                        }.disabled(selectedIDs.isEmpty || restoringSelection || deletingSelection || billing.isPaymentRestricted)
                         Button(role: .destructive) { showBulkDelete = true } label: {
                             if deletingSelection { ProgressView() } else { Label(language.text("Delete from Libérons", "Supprimer de Libérons"), systemImage: "trash").font(.subheadline.weight(.semibold)) }
-                        }.disabled(selectedIDs.isEmpty || deletingSelection)
+                        }.disabled(selectedIDs.isEmpty || deletingSelection || restoringSelection)
                     }.padding(.horizontal, 18).padding(.vertical, 12).background(.ultraThinMaterial)
                 }
             }
@@ -209,64 +190,49 @@ struct ProtectedLibraryView: View {
             .fullScreenCover(item: $viewerItem) { item in ProtectedGalleryViewer(items: displayItems, initialID: item.id, language: language, billing: billing).navigationTransition(.zoom(sourceID: item.id, in: photoTransition)).onDisappear { ProtectedMediaCache.shared.clearFullResolution() } }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in ProtectedMediaCache.shared.removeAll() }
             .sheet(isPresented:$showBulkDelete){VStack(spacing:0){Capsule().fill(.secondary.opacity(0.35)).frame(width:38,height:5).padding(.top,10);VStack(spacing:18){Image(systemName:"trash.fill").font(.system(size:28,weight:.semibold)).foregroundStyle(.red).frame(width:62,height:62).background(Color.red.opacity(0.10),in:Circle());VStack(spacing:8){Text(language.text("Delete from Libérons?","Supprimer de Libérons ?")).font(.title2.bold()).multilineTextAlignment(.center);Text(language.text("The selected protected memories will be permanently removed from Libérons Cloud.","Les souvenirs protégés sélectionnés seront supprimés définitivement de Libérons Cloud.")).font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)};Label(language.text("This cannot be undone.","Cette action est irréversible."),systemImage:"exclamationmark.triangle.fill").font(.footnote.bold()).foregroundStyle(.red).padding(12).frame(maxWidth:.infinity).background(Color.red.opacity(0.08),in:RoundedRectangle(cornerRadius:14));Button{showBulkDelete=false;Task{await deleteSelected()}}label:{Text(language.text("Delete permanently","Supprimer définitivement")).font(.headline).frame(maxWidth:.infinity).padding(.vertical,15).foregroundStyle(.white).background(Color.red,in:RoundedRectangle(cornerRadius:16))}.buttonStyle(.plain);Button(language.text("Cancel","Annuler")){showBulkDelete=false}.font(.headline).foregroundStyle(.primary).padding(.bottom,4)}.padding(24)}.presentationDetents([.height(410)]).presentationDragIndicator(.hidden).presentationCornerRadius(30)}
-        }
-    }
-
-    private func toggle(_ id: UUID) { if selectedIDs.contains(id) { selectedIDs.remove(id) } else { selectedIDs.insert(id) } }
-
-    @MainActor private func selectFilter(_ filter: ProtectedLibraryFilter) {
-        guard mediaFilter != filter else { return }
-        withAnimation(.snappy(duration: 0.24)) { mediaFilter = filter }
-        selectedIDs.removeAll()
-        Task {
-            await store.refresh(filter: filter.rawValue, newestFirst: sortNewestFirst)
-            rebuildDisplayItems()
-        }
-    }
-
-    @MainActor private func setSort(newestFirst: Bool) {
-        guard sortNewestFirst != newestFirst else { return }
-        sortNewestFirst = newestFirst
-        selectedIDs.removeAll()
-        Task {
-            await store.refresh(filter: mediaFilter.rawValue, newestFirst: newestFirst)
-            rebuildDisplayItems()
-        }
-    }
-
-    @MainActor private func rebuildDisplayItems() {
-        var all = 0, photos = 0, videos = 0
-        var visible: [ProtectedCloudMedia] = []
-        visible.reserveCapacity(store.items.count)
-        for item in store.items {
-            all += 1
-            let video = isVideo(item)
-            if video { videos += 1 } else { photos += 1 }
-            let include: Bool
-            switch mediaFilter {
-            case .all: include = true
-            case .photos: include = !video
-            case .videos: include = video
+            .sheet(isPresented: $showBulkRestore) {
+                VStack(spacing: 0) {
+                    Capsule().fill(.secondary.opacity(0.35)).frame(width:38,height:5).padding(.top,10)
+                    VStack(spacing:18) {
+                        Image(systemName:"square.and.arrow.down.fill").font(.system(size:28,weight:.semibold)).foregroundStyle(.blue).frame(width:62,height:62).background(Color.blue.opacity(0.10),in:Circle())
+                        VStack(spacing:8) {
+                            Text(language.text("Restore selected memories?", "Remettre la sélection dans Photos ?")).font(.title2.bold()).multilineTextAlignment(.center)
+                            Text(language.text("Libérons will restore only selected memories that are no longer in Photos. Memories already available on this iPhone will not be duplicated.", "Libérons remettra uniquement les souvenirs sélectionnés qui ne sont plus dans Photos. Ceux déjà présents sur cet iPhone ne seront pas dupliqués.")).font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                        }
+                        Label("\(selectedIDs.count) \(language.text("selected", "sélectionné(s)"))", systemImage:"checkmark.circle.fill").font(.footnote.bold()).foregroundStyle(.blue).padding(12).frame(maxWidth:.infinity).background(Color.blue.opacity(0.08),in:RoundedRectangle(cornerRadius:14))
+                        Button { showBulkRestore = false; Task { await restoreSelected() } } label: { Text(language.text("Restore missing items", "Remettre les éléments manquants")).font(.headline).frame(maxWidth:.infinity).padding(.vertical,15).foregroundStyle(.white).background(Color.blue,in:RoundedRectangle(cornerRadius:16)) }.buttonStyle(.plain)
+                        Button(language.text("Cancel", "Annuler")) { showBulkRestore = false }.font(.headline).foregroundStyle(.primary).padding(.bottom,4)
+                    }.padding(24)
+                }.presentationDetents([.height(430)]).presentationDragIndicator(.hidden).presentationCornerRadius(30)
             }
-            if include { visible.append(item) }
+            .sheet(isPresented: Binding(get: { bulkRestoreResult != nil }, set: { if !$0 { bulkRestoreResult = nil } })) {
+                if let result = bulkRestoreResult {
+                    VStack(spacing:0) {
+                        Capsule().fill(.secondary.opacity(0.35)).frame(width:38,height:5).padding(.top,10)
+                        VStack(spacing:18) {
+                            Image(systemName:"checkmark.circle.fill").font(.system(size:30,weight:.semibold)).foregroundStyle(.green).frame(width:62,height:62).background(Color.green.opacity(0.10),in:Circle())
+                            Text(language.text("Restoration complete", "Restauration terminée")).font(.title2.bold())
+                            VStack(spacing:10) {
+                                resultRow(icon:"square.and.arrow.down.fill", value: result.restored, text: language.text("restored to Photos", "remis dans Photos"), color:.green)
+                                resultRow(icon:"photo.fill", value: result.alreadyAvailable, text: language.text("already available in Photos", "déjà présents dans Photos"), color:.blue)
+                                if result.failed > 0 { resultRow(icon:"exclamationmark.triangle.fill", value: result.failed, text: language.text("could not be restored", "n’ont pas pu être restaurés"), color:.orange) }
+                            }
+                            Button { bulkRestoreResult = nil } label: { Text(language.text("Done", "OK")).font(.headline).frame(maxWidth:.infinity).padding(.vertical,15).foregroundStyle(.white).background(Color.blue,in:RoundedRectangle(cornerRadius:16)) }.buttonStyle(.plain)
+                        }.padding(24)
+                    }.presentationDetents([.height(result.failed > 0 ? 410 : 360)]).presentationDragIndicator(.hidden).presentationCornerRadius(30)
+                }
+            }
         }
-        visible.sort {
-            let lhs = $0.capturedAt ?? $0.createdAt
-            let rhs = $1.capturedAt ?? $1.createdAt
-            return sortNewestFirst ? lhs > rhs : lhs < rhs
-        }
-        filterCounts = [.all: Int(store.totalCount), .photos: Int(store.photoCount), .videos: Int(store.videoCount)]
-        displayItems = visible
     }
 
-    @MainActor private func refreshLibrary() async {
-        async let a: Void = store.refresh(filter: mediaFilter.rawValue, newestFirst: sortNewestFirst)
-        async let b: Void = billing.refresh()
-        _ = await (a, b)
-        rebuildDisplayItems()
-    }
-
-    @MainActor private func deleteSelected() async { deletingSelection = true; for id in selectedIDs { try? await SupabaseService.deleteCloudMedia(assetID: id) }; selectedIDs.removeAll(); isSelecting = false; deletingSelection = false; await refreshLibrary() }
+    private func resultRow(icon:String,value:Int,text:String,color:Color)->some View { HStack(spacing:12){Image(systemName:icon).foregroundStyle(color).frame(width:24);Text("\(value)").font(.headline.monospacedDigit());Text(text).font(.subheadline);Spacer()}.padding(12).background(color.opacity(0.07),in:RoundedRectangle(cornerRadius:14)) }
+    private func toggle(_ id: UUID) { if selectedIDs.contains(id) { selectedIDs.remove(id) } else { selectedIDs.insert(id) } }
+    @MainActor private func selectFilter(_ filter: ProtectedLibraryFilter) { guard mediaFilter != filter else { return }; withAnimation(.snappy(duration: 0.24)) { mediaFilter = filter }; selectedIDs.removeAll(); Task { await store.refresh(filter: filter.rawValue, newestFirst: sortNewestFirst); rebuildDisplayItems() } }
+    @MainActor private func setSort(newestFirst: Bool) { guard sortNewestFirst != newestFirst else { return }; sortNewestFirst = newestFirst; selectedIDs.removeAll(); Task { await store.refresh(filter: mediaFilter.rawValue, newestFirst: newestFirst); rebuildDisplayItems() } }
+    @MainActor private func rebuildDisplayItems() { var visible:[ProtectedCloudMedia]=[]; visible.reserveCapacity(store.items.count); for item in store.items { let include:Bool; switch mediaFilter { case .all: include=true; case .photos: include = !isVideo(item); case .videos: include=isVideo(item) }; if include { visible.append(item) } }; visible.sort { let lhs=$0.capturedAt ?? $0.createdAt; let rhs=$1.capturedAt ?? $1.createdAt; return sortNewestFirst ? lhs > rhs : lhs < rhs }; filterCounts=[.all:Int(store.totalCount),.photos:Int(store.photoCount),.videos:Int(store.videoCount)]; displayItems=visible }
+    @MainActor private func refreshLibrary() async { async let a:Void=store.refresh(filter:mediaFilter.rawValue,newestFirst:sortNewestFirst); async let b:Void=billing.refresh(); _=await(a,b); rebuildDisplayItems() }
+    @MainActor private func deleteSelected() async { deletingSelection=true; for id in selectedIDs { try? await SupabaseService.deleteCloudMedia(assetID:id) }; selectedIDs.removeAll(); isSelecting=false; deletingSelection=false; await refreshLibrary() }
+    @MainActor private func restoreSelected() async { guard !billing.isPaymentRestricted else { return }; let ids=selectedIDs; let items=store.items.filter{ids.contains($0.id)}; guard !items.isEmpty else{return}; restoringSelection=true; let result=await ProtectedLibraryBulkRestoreService.restoreMissing(items); restoringSelection=false; bulkRestoreResult=result; await refreshLibrary() }
 }
 
 private struct BillingLibraryNotice: View {
@@ -294,140 +260,26 @@ private struct ProtectedGalleryViewer: View {
         self.indexByID = Dictionary(uniqueKeysWithValues: items.enumerated().map { ($0.element.id, $0.offset) })
         _selection = State(initialValue: initialID)
     }
-
     private var currentIndex: Int? { indexByID[selection] }
     private var current: ProtectedCloudMedia? { guard let i = currentIndex, items.indices.contains(i) else { return nil }; return items[i] }
     private var dismissProgress: CGFloat { min(max(dismissTranslation.height / 360, 0), 1) }
-
     var body: some View {
         ZStack {
-  Color.black.opacity(Double(1 - dismissProgress * 0.96)).ignoresSafeArea()
-
-  if !verticalDismissLocked {
-      TabView(selection: $selection) {
-          ForEach(items) { CloudPhotoPage(item: $0, language: language, billing: billing, chromeVisible: $chromeVisible).tag($0.id) }
-      }
-      .tabViewStyle(.page(indexDisplayMode: .never))
-      .ignoresSafeArea()
-      .onChange(of: selection) { _, newID in
-          chromeVisible = true
-          prefetchNeighbors(around: newID)
-      }
-      .task {
-          prefetchNeighbors(around: selection)
-      }
-  }
-
-  if verticalDismissLocked, let current {
-      ProtectedDismissMedia(item: current)
-          .scaleEffect(1 - dismissProgress * 0.085)
-          .offset(x: dismissTranslation.width * 0.12, y: dismissTranslation.height)
-          .shadow(color: .black.opacity(Double(dismissProgress * 0.18)), radius: 18 * dismissProgress, y: 8 * dismissProgress)
-          .allowsHitTesting(false)
-  }
-
-  VStack {
-      HStack(alignment: .top) {
-          HStack(spacing: 10) {
-              Button { dismiss() } label: {
-                  Image(systemName: "chevron.left")
-                      .font(.title2.bold())
-                      .foregroundStyle(.white)
-                      .frame(width: 48, height: 48)
-                      .background(.black.opacity(0.45), in: Circle())
-              }
-              .buttonStyle(.plain)
-          }
-
-          Spacer()
-
-          Button { showInfo = true } label: {
-              Image(systemName: "ellipsis")
-                  .font(.system(size: 20, weight: .bold))
-                  .foregroundStyle(.white)
-                  .frame(width: 48, height: 48)
-                  .background(.black.opacity(0.45), in: Circle())
-          }
-          .buttonStyle(.plain)
-      }
-      .padding(.horizontal, 14)
-      .padding(.top, 4)
-      Spacer()
-  }
-  .opacity(verticalDismissLocked ? Double(max(0, 1 - dismissProgress * 4)) : (chromeVisible ? 1 : 0))
-  .allowsHitTesting(!verticalDismissLocked && chromeVisible)
-  .animation(.easeOut(duration: 0.18), value: chromeVisible)
-        }
-        .contentShape(Rectangle())
-        .onTapGesture {
-            guard !verticalDismissLocked, !showInfo else { return }
-            withAnimation(.easeOut(duration: 0.18)) { chromeVisible.toggle() }
-        }
-        .simultaneousGesture(
-  DragGesture(minimumDistance: 10, coordinateSpace: .global)
-      .onChanged { value in
-          guard !isDismissing else { return }
-          let x = value.translation.width, y = value.translation.height
-          if !verticalDismissLocked {
-              guard y > 12, abs(y) > abs(x) * 1.65 else { return }
-              verticalDismissLocked = true
-          }
-          dismissTranslation = CGSize(width: x, height: max(0, y))
-      }
-      .onEnded { value in
-          guard verticalDismissLocked, !isDismissing else { return }
-          let y = max(dismissTranslation.height, value.translation.height)
-          let projected = max(y, value.predictedEndTranslation.height)
-          if y > 105 || projected > 210 {
-              isDismissing = true
-              withAnimation(.easeOut(duration: 0.20)) {
-                  dismissTranslation = CGSize(width: dismissTranslation.width * 0.15, height: UIScreen.main.bounds.height * 0.72)
-              }
-              Task { @MainActor in try? await Task.sleep(for: .milliseconds(150)); dismiss() }
-          } else {
-              withAnimation(.interactiveSpring(response: 0.34, dampingFraction: 0.86, blendDuration: 0.1)) { dismissTranslation = .zero }
-              Task { @MainActor in try? await Task.sleep(for: .milliseconds(280)); verticalDismissLocked = false }
-          }
-      }
-        )
-        .toolbarBackground(.hidden, for: .navigationBar)
-        .toolbarColorScheme(.dark, for: .navigationBar)
-        .simultaneousGesture(
-            TapGesture()
-                .onEnded {
-                    guard showInfo else { return }
-                    withAnimation(.easeOut(duration: 0.20)) {
-                        showInfo = false
-                    }
-                },
-            including: showInfo ? .all : .none
-        )
-        .sheet(isPresented: $showInfo) {
-  if let current { ProtectedMediaDetail(item: current, language: language, billing: billing, closeViewer: { showInfo = false; dismiss() }).presentationDetents([.fraction(0.32), .fraction(0.64), .large], selection: $infoDetent).presentationDragIndicator(.visible).presentationCornerRadius(34).presentationBackground(.regularMaterial).presentationContentInteraction(.resizes).presentationBackgroundInteraction(.enabled(upThrough: .fraction(0.32))) }
-        }
-        .onChange(of: showInfo) { _, isPresented in
-            if isPresented { infoDetent = .fraction(0.64) }
-        }
+            Color.black.opacity(Double(1 - dismissProgress * 0.96)).ignoresSafeArea()
+            if !verticalDismissLocked { TabView(selection:$selection){ForEach(items){CloudPhotoPage(item:$0,language:language,billing:billing,chromeVisible:$chromeVisible).tag($0.id)}}.tabViewStyle(.page(indexDisplayMode:.never)).ignoresSafeArea().onChange(of:selection){_,newID in chromeVisible=true;prefetchNeighbors(around:newID)}.task{prefetchNeighbors(around:selection)} }
+            if verticalDismissLocked,let current{ProtectedDismissMedia(item:current).scaleEffect(1-dismissProgress*0.085).offset(x:dismissTranslation.width*0.12,y:dismissTranslation.height).shadow(color:.black.opacity(Double(dismissProgress*0.18)),radius:18*dismissProgress,y:8*dismissProgress).allowsHitTesting(false)}
+            VStack{HStack(alignment:.top){HStack(spacing:10){Button{dismiss()}label:{Image(systemName:"chevron.left").font(.title2.bold()).foregroundStyle(.white).frame(width:48,height:48).background(.black.opacity(0.45),in:Circle())}.buttonStyle(.plain)};Spacer();Button{showInfo=true}label:{Image(systemName:"ellipsis").font(.system(size:20,weight:.bold)).foregroundStyle(.white).frame(width:48,height:48).background(.black.opacity(0.45),in:Circle())}.buttonStyle(.plain)}.padding(.horizontal,14).padding(.top,4);Spacer()}.opacity(verticalDismissLocked ? Double(max(0,1-dismissProgress*4)):(chromeVisible ? 1:0)).allowsHitTesting(!verticalDismissLocked && chromeVisible).animation(.easeOut(duration:0.18),value:chromeVisible)
+        }.contentShape(Rectangle()).onTapGesture{guard !verticalDismissLocked,!showInfo else{return};withAnimation(.easeOut(duration:0.18)){chromeVisible.toggle()}}
+        .simultaneousGesture(DragGesture(minimumDistance:10,coordinateSpace:.global).onChanged{value in guard !isDismissing else{return};let x=value.translation.width,y=value.translation.height;if !verticalDismissLocked{guard y>12,abs(y)>abs(x)*1.65 else{return};verticalDismissLocked=true};dismissTranslation=CGSize(width:x,height:max(0,y))}.onEnded{value in guard verticalDismissLocked,!isDismissing else{return};let y=max(dismissTranslation.height,value.translation.height);let projected=max(y,value.predictedEndTranslation.height);if y>105 || projected>210{isDismissing=true;withAnimation(.easeOut(duration:0.20)){dismissTranslation=CGSize(width:dismissTranslation.width*0.15,height:UIScreen.main.bounds.height*0.72)};Task{@MainActor in try? await Task.sleep(for:.milliseconds(150));dismiss()}}else{withAnimation(.interactiveSpring(response:0.34,dampingFraction:0.86,blendDuration:0.1)){dismissTranslation = .zero};Task{@MainActor in try? await Task.sleep(for:.milliseconds(280));verticalDismissLocked=false}}})
+        .toolbarBackground(.hidden,for:.navigationBar).toolbarColorScheme(.dark,for:.navigationBar)
+        .simultaneousGesture(TapGesture().onEnded{guard showInfo else{return};withAnimation(.easeOut(duration:0.20)){showInfo=false}},including:showInfo ? .all:.none)
+        .sheet(isPresented:$showInfo){if let current{ProtectedMediaDetail(item:current,language:language,billing:billing,closeViewer:{showInfo=false;dismiss()}).presentationDetents([.fraction(0.32),.fraction(0.64),.large],selection:$infoDetent).presentationDragIndicator(.visible).presentationCornerRadius(34).presentationBackground(.regularMaterial).presentationContentInteraction(.resizes).presentationBackgroundInteraction(.enabled(upThrough:.fraction(0.32)))}}
+        .onChange(of:showInfo){_,isPresented in if isPresented{infoDetent = .fraction(0.64)}}
     }
-
-    private func prefetchNeighbors(around id: UUID) {
-        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
-        let neighborIndexes = [index - 1, index + 1].filter { items.indices.contains($0) }
-        for neighborIndex in neighborIndexes {
-            let neighbor = items[neighborIndex]
-            guard !neighbor.mediaType.lowercased().contains("video") else { continue }
-            Task(priority: .utility) { await ProtectedMediaPrefetcher.prefetch(neighbor) }
-        }
-    }
+    private func prefetchNeighbors(around id:UUID){guard let index=items.firstIndex(where:{$0.id==id})else{return};for neighborIndex in [index-1,index+1].filter({items.indices.contains($0)}){let neighbor=items[neighborIndex];guard !neighbor.mediaType.lowercased().contains("video")else{continue};Task(priority:.utility){await ProtectedMediaPrefetcher.prefetch(neighbor)}}}
 }
 
-private struct ProtectedDismissMedia: View {
-    let item: ProtectedCloudMedia
-    @State private var image: UIImage?
-    private var isVideo: Bool { item.mediaType.lowercased().contains("video") }
-    var body: some View { GeometryReader { proxy in ZStack { Color.clear; if let image { Image(uiImage:image).resizable().scaledToFit() } else { Image(systemName:isVideo ? "play.rectangle.fill":"photo.fill").font(.system(size:30)).foregroundStyle(.white.opacity(0.7)) } }.frame(width:proxy.size.width,height:proxy.size.height) }.ignoresSafeArea().task(id:item.id){await load()} }
-    @MainActor private func load() async { if let cached=ProtectedMediaCache.shared.fullResolutionImage(for:item.id){image=cached;return};if let id=item.iosLocalIdentifier,let asset=PHAsset.fetchAssets(withLocalIdentifiers:[id],options:nil).firstObject{let options=PHImageRequestOptions();options.isNetworkAccessAllowed=true;options.deliveryMode = .highQualityFormat;options.resizeMode = .fast;PHImageManager.default().requestImage(for:asset,targetSize:CGSize(width:1600,height:1600),contentMode:.aspectFit,options:options){value,_ in if let value{ProtectedMediaCache.shared.storeFullResolution(value,for:item.id);Task{@MainActor in image=value}}};return};if let preview=try? await SupabaseService.cloudPreviewURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:preview),((response as? HTTPURLResponse)?.statusCode ?? 500)<300,let decoded=UIImage(data:data){ProtectedMediaCache.shared.storeFullResolution(decoded,for:item.id);image=decoded} }
-}
+private struct ProtectedDismissMedia: View { let item:ProtectedCloudMedia;@State private var image:UIImage?;private var isVideo:Bool{item.mediaType.lowercased().contains("video")};var body:some View{GeometryReader{proxy in ZStack{Color.clear;if let image{Image(uiImage:image).resizable().scaledToFit()}else{Image(systemName:isVideo ? "play.rectangle.fill":"photo.fill").font(.system(size:30)).foregroundStyle(.white.opacity(0.7))}}.frame(width:proxy.size.width,height:proxy.size.height)}.ignoresSafeArea().task(id:item.id){await load()}};@MainActor private func load()async{if let cached=ProtectedMediaCache.shared.fullResolutionImage(for:item.id){image=cached;return};if let id=item.iosLocalIdentifier,let asset=PHAsset.fetchAssets(withLocalIdentifiers:[id],options:nil).firstObject{let options=PHImageRequestOptions();options.isNetworkAccessAllowed=true;options.deliveryMode = .highQualityFormat;options.resizeMode = .fast;PHImageManager.default().requestImage(for:asset,targetSize:CGSize(width:1600,height:1600),contentMode:.aspectFit,options:options){value,_ in if let value{ProtectedMediaCache.shared.storeFullResolution(value,for:item.id);Task{@MainActor in image=value}}};return};if let preview=try? await SupabaseService.cloudPreviewURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:preview),((response as? HTTPURLResponse)?.statusCode ?? 500)<300,let decoded=UIImage(data:data){ProtectedMediaCache.shared.storeFullResolution(decoded,for:item.id);image=decoded}}}
 
 private struct CloudPhotoPage: View {
     let item: ProtectedCloudMedia; @ObservedObject var language: LanguageStore; @ObservedObject var billing: CloudStorageSummary; @Binding var chromeVisible: Bool
@@ -446,129 +298,12 @@ private struct ProtectedVideoSurface:UIViewRepresentable{let player:AVPlayer;fun
 private final class ProtectedPlayerLayerView:UIView{override class var layerClass:AnyClass{AVPlayerLayer.self};var playerLayer:AVPlayerLayer{layer as! AVPlayerLayer};override init(frame:CGRect){super.init(frame:frame);playerLayer.videoGravity = .resizeAspect;backgroundColor = .black};required init?(coder:NSCoder){super.init(coder:coder);playerLayer.videoGravity = .resizeAspect;backgroundColor = .black}}
 private struct ProtectedZoomablePhoto: UIViewRepresentable {
     let image: UIImage
-
     func makeCoordinator() -> Coordinator { Coordinator() }
-
-    func makeUIView(context: Context) -> ProtectedPhotoScrollView {
-        let scrollView = ProtectedPhotoScrollView()
-        scrollView.delegate = context.coordinator
-        scrollView.minimumZoomScale = 1
-        scrollView.maximumZoomScale = 5
-        scrollView.bouncesZoom = true
-        scrollView.alwaysBounceVertical = false
-        scrollView.alwaysBounceHorizontal = false
-        scrollView.showsVerticalScrollIndicator = false
-        scrollView.showsHorizontalScrollIndicator = false
-        scrollView.contentInsetAdjustmentBehavior = .never
-        scrollView.decelerationRate = .fast
-        scrollView.backgroundColor = .black
-
-        let imageView = context.coordinator.imageView
-        imageView.image = image
-        imageView.contentMode = .scaleAspectFit
-        imageView.isUserInteractionEnabled = true
-        scrollView.addSubview(imageView)
-
-        let doubleTap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleDoubleTap(_:)))
-        doubleTap.numberOfTapsRequired = 2
-        scrollView.addGestureRecognizer(doubleTap)
-
-        context.coordinator.scrollView = scrollView
-        let coordinator = context.coordinator
-        scrollView.onLayout = { [weak scrollView, weak coordinator] in
-            guard let scrollView, let coordinator else { return }
-            coordinator.layoutImage(in: scrollView)
-        }
-        return scrollView
-    }
-
-    func updateUIView(_ scrollView: ProtectedPhotoScrollView, context: Context) {
-        if context.coordinator.imageView.image !== image {
-            context.coordinator.imageView.image = image
-            context.coordinator.lastViewportSize = .zero
-        }
-        context.coordinator.layoutImage(in: scrollView)
-    }
-
-    final class Coordinator: NSObject, UIScrollViewDelegate {
-        let imageView = UIImageView()
-        weak var scrollView: UIScrollView?
-        var lastViewportSize: CGSize = .zero
-
-        func viewForZooming(in scrollView: UIScrollView) -> UIView? { imageView }
-
-        func scrollViewDidZoom(_ scrollView: UIScrollView) {
-            centerImage(in: scrollView)
-        }
-
-        func layoutImage(in scrollView: UIScrollView) {
-            let viewport = scrollView.bounds.size
-            guard viewport.width > 0, viewport.height > 0,
-                  let image = imageView.image,
-                  image.size.width > 0, image.size.height > 0 else { return }
-
-            // layoutSubviews is also called continuously while UIScrollView is zooming.
-            // Never rewrite the image frame during a pinch: doing so fights the native
-            // zoom transform and makes the photo collapse into a tiny thumbnail.
-            guard viewport != lastViewportSize || imageView.bounds.size == .zero else {
-                centerImage(in: scrollView)
-                return
-            }
-
-            lastViewportSize = viewport
-            scrollView.setZoomScale(1, animated: false)
-
-            let fitScale = min(viewport.width / image.size.width, viewport.height / image.size.height)
-            let fittedSize = CGSize(
-                width: max(1, image.size.width * fitScale),
-                height: max(1, image.size.height * fitScale)
-            )
-
-            imageView.transform = .identity
-            imageView.frame = CGRect(origin: .zero, size: fittedSize)
-            scrollView.contentSize = fittedSize
-            centerImage(in: scrollView)
-        }
-
-        private func centerImage(in scrollView: UIScrollView) {
-            let contentWidth = imageView.frame.width
-            let contentHeight = imageView.frame.height
-            let horizontal = max(0, (scrollView.bounds.width - contentWidth) * 0.5)
-            let vertical = max(0, (scrollView.bounds.height - contentHeight) * 0.5)
-            scrollView.contentInset = UIEdgeInsets(top: vertical, left: horizontal, bottom: vertical, right: horizontal)
-        }
-
-        @objc func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
-            guard let scrollView else { return }
-
-            if scrollView.zoomScale > scrollView.minimumZoomScale + 0.01 {
-                scrollView.setZoomScale(scrollView.minimumZoomScale, animated: true)
-                return
-            }
-
-            let targetScale = min(CGFloat(2.5), scrollView.maximumZoomScale)
-            let point = gesture.location(in: imageView)
-            let width = imageView.bounds.width / targetScale
-            let height = imageView.bounds.height / targetScale
-            let zoomRect = CGRect(
-                x: point.x - width * 0.5,
-                y: point.y - height * 0.5,
-                width: width,
-                height: height
-            )
-            scrollView.zoom(to: zoomRect, animated: true)
-        }
-    }
+    func makeUIView(context: Context) -> ProtectedPhotoScrollView { let scrollView=ProtectedPhotoScrollView();scrollView.delegate=context.coordinator;scrollView.minimumZoomScale=1;scrollView.maximumZoomScale=5;scrollView.bouncesZoom=true;scrollView.alwaysBounceVertical=false;scrollView.alwaysBounceHorizontal=false;scrollView.showsVerticalScrollIndicator=false;scrollView.showsHorizontalScrollIndicator=false;scrollView.contentInsetAdjustmentBehavior = .never;scrollView.decelerationRate = .fast;scrollView.backgroundColor = .black;let imageView=context.coordinator.imageView;imageView.image=image;imageView.contentMode = .scaleAspectFit;imageView.isUserInteractionEnabled=true;scrollView.addSubview(imageView);let doubleTap=UITapGestureRecognizer(target:context.coordinator,action:#selector(Coordinator.handleDoubleTap(_:)));doubleTap.numberOfTapsRequired=2;scrollView.addGestureRecognizer(doubleTap);context.coordinator.scrollView=scrollView;let coordinator=context.coordinator;scrollView.onLayout={[weak scrollView,weak coordinator] in guard let scrollView,let coordinator else{return};coordinator.layoutImage(in:scrollView)};return scrollView }
+    func updateUIView(_ scrollView:ProtectedPhotoScrollView,context:Context){if context.coordinator.imageView.image !== image{context.coordinator.imageView.image=image;context.coordinator.lastViewportSize = .zero};context.coordinator.layoutImage(in:scrollView)}
+    final class Coordinator:NSObject,UIScrollViewDelegate{let imageView=UIImageView();weak var scrollView:UIScrollView?;var lastViewportSize:CGSize = .zero;func viewForZooming(in scrollView:UIScrollView)->UIView?{imageView};func scrollViewDidZoom(_ scrollView:UIScrollView){centerImage(in:scrollView)};func layoutImage(in scrollView:UIScrollView){let viewport=scrollView.bounds.size;guard viewport.width>0,viewport.height>0,let image=imageView.image,image.size.width>0,image.size.height>0 else{return};guard viewport != lastViewportSize || imageView.bounds.size == .zero else{centerImage(in:scrollView);return};lastViewportSize=viewport;scrollView.setZoomScale(1,animated:false);let fitScale=min(viewport.width/image.size.width,viewport.height/image.size.height);let fittedSize=CGSize(width:max(1,image.size.width*fitScale),height:max(1,image.size.height*fitScale));imageView.transform = .identity;imageView.frame=CGRect(origin:.zero,size:fittedSize);scrollView.contentSize=fittedSize;centerImage(in:scrollView)};private func centerImage(in scrollView:UIScrollView){let horizontal=max(0,(scrollView.bounds.width-imageView.frame.width)*0.5);let vertical=max(0,(scrollView.bounds.height-imageView.frame.height)*0.5);scrollView.contentInset=UIEdgeInsets(top:vertical,left:horizontal,bottom:vertical,right:horizontal)};@objc func handleDoubleTap(_ gesture:UITapGestureRecognizer){guard let scrollView else{return};if scrollView.zoomScale>scrollView.minimumZoomScale+0.01{scrollView.setZoomScale(scrollView.minimumZoomScale,animated:true);return};let targetScale=min(CGFloat(2.5),scrollView.maximumZoomScale);let point=gesture.location(in:imageView);let width=imageView.bounds.width/targetScale;let height=imageView.bounds.height/targetScale;scrollView.zoom(to:CGRect(x:point.x-width*0.5,y:point.y-height*0.5,width:width,height:height),animated:true)}}
 }
-
-private final class ProtectedPhotoScrollView: UIScrollView {
-    var onLayout: (() -> Void)?
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        onLayout?()
-    }
-}
+private final class ProtectedPhotoScrollView:UIScrollView{var onLayout:(()->Void)?;override func layoutSubviews(){super.layoutSubviews();onLayout?()}}
 private enum ProtectedMediaPrefetcher{@MainActor static func prefetch(_ item:ProtectedCloudMedia)async{if ProtectedMediaCache.shared.fullResolutionImage(for:item.id) != nil{return};if let localIdentifier=item.iosLocalIdentifier,let asset=PHAsset.fetchAssets(withLocalIdentifiers:[localIdentifier],options:nil).firstObject{let options=PHImageRequestOptions();options.isNetworkAccessAllowed=true;options.deliveryMode = .opportunistic;options.resizeMode = .fast;PHImageManager.default().requestImage(for:asset,targetSize:CGSize(width:1600,height:1600),contentMode:.aspectFit,options:options){image,_ in guard let image else{return};ProtectedMediaCache.shared.storeFullResolution(image,for:item.id)};return};guard let original=try? await SupabaseService.cloudOriginalURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:original),((response as? HTTPURLResponse)?.statusCode ?? 500)<300,let image=ProtectedImageDecoder.downsample(data,maxPixelSize:2048)else{return};ProtectedMediaCache.shared.storeFullResolution(image,for:item.id)}}
 private enum ProtectedImageDecoder{static func downsample(_ data:Data,maxPixelSize:CGFloat)->UIImage?{let sourceOptions=[kCGImageSourceShouldCache:false] as CFDictionary;guard let source=CGImageSourceCreateWithData(data as CFData,sourceOptions)else{return nil};let options:[CFString:Any]=[kCGImageSourceCreateThumbnailFromImageAlways:true,kCGImageSourceCreateThumbnailWithTransform:true,kCGImageSourceThumbnailMaxPixelSize:maxPixelSize,kCGImageSourceShouldCacheImmediately:true];guard let cgImage=CGImageSourceCreateThumbnailAtIndex(source,0,options as CFDictionary)else{return nil};return UIImage(cgImage:cgImage)}}
 private final class ProtectedMediaCache:@unchecked Sendable{static let shared=ProtectedMediaCache();private let thumbnailCache=NSCache<NSString,UIImage>();private let fullResolutionCache=NSCache<NSString,UIImage>();private init(){thumbnailCache.countLimit=360;thumbnailCache.totalCostLimit=72*1024*1024;fullResolutionCache.countLimit=4;fullResolutionCache.totalCostLimit=96*1024*1024};func thumbnail(for id:UUID)->UIImage?{thumbnailCache.object(forKey:id.uuidString as NSString)};func storeThumbnail(_ image:UIImage,for id:UUID){let cost=Int(image.size.width*image.size.height*4);thumbnailCache.setObject(image,forKey:id.uuidString as NSString,cost:cost)};func fullResolutionImage(for id:UUID)->UIImage?{fullResolutionCache.object(forKey:id.uuidString as NSString)};func storeFullResolution(_ image:UIImage,for id:UUID){let cost=Int(image.size.width*image.scale*image.size.height*image.scale*4);fullResolutionCache.setObject(image,forKey:id.uuidString as NSString,cost:cost)};func clearFullResolution(){fullResolutionCache.removeAllObjects()};func removeAll(){thumbnailCache.removeAllObjects();fullResolutionCache.removeAllObjects()}}
