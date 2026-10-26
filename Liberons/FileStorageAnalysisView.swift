@@ -133,12 +133,30 @@ struct FileStorageAnalysisView: View {
     private func successMetric(icon:String,value:String,label:String)->some View { VStack(alignment:.leading,spacing:8) { Image(systemName:icon).foregroundStyle(.blue); Text(value).font(.title3.bold()).monospacedDigit(); Text(label).font(.caption).foregroundStyle(.secondary) }.padding(16).frame(maxWidth:.infinity,alignment:.leading).background(Color.secondary.opacity(0.07),in:RoundedRectangle(cornerRadius:18,style:.continuous)) }
 
     private var successDescription: String {
-        let count=protectedSelection.count
-        if language.language == .french { return count == 1 ? "Votre fichier est maintenant conservé en toute sécurité dans Libérons Cloud." : "Vos \(count) fichiers sont maintenant conservés en toute sécurité dans Libérons Cloud." }
-        return count == 1 ? "Your file is now securely stored in Libérons Cloud." : "Your \(count) files are now securely stored in Libérons Cloud."
+        let photos=protectedSelection.filter{isPhoto($0)}.count
+        let videos=protectedSelection.filter{isVideo($0)}.count
+        let other=protectedSelection.count-photos-videos
+        if language.language == .french {
+            if protectedSelection.count==1,photos==1 { return "Votre photo est maintenant protégée dans Libérons Cloud. Vous la retrouverez dans Bibliothèque, section Photos." }
+            if protectedSelection.count==1,videos==1 { return "Votre vidéo est maintenant protégée dans Libérons Cloud. Vous la retrouverez dans Bibliothèque, section Vidéos." }
+            if protectedSelection.count==1 { return "Votre fichier est maintenant protégé dans Libérons Cloud. Vous le retrouverez dans Fichiers protégés." }
+            var destinations:[String]=[]
+            if photos>0 { destinations.append("\(photos) photo(s) dans Photos") }
+            if videos>0 { destinations.append("\(videos) vidéo(s) dans Vidéos") }
+            if other>0 { destinations.append("\(other) fichier(s) dans Fichiers protégés") }
+            return "Vos \(protectedSelection.count) éléments sont maintenant protégés dans Libérons Cloud. Vous les retrouverez dans Bibliothèque : \(destinations.joined(separator: ", "))."
+        }
+        if protectedSelection.count==1,photos==1 { return "Your photo is now protected in Libérons Cloud. You’ll find it in Library, under Photos." }
+        if protectedSelection.count==1,videos==1 { return "Your video is now protected in Libérons Cloud. You’ll find it in Library, under Videos." }
+        if protectedSelection.count==1 { return "Your file is now protected in Libérons Cloud. You’ll find it in Protected Files." }
+        var destinations:[String]=[]
+        if photos>0 { destinations.append("\(photos) photo(s) in Photos") }
+        if videos>0 { destinations.append("\(videos) video(s) in Videos") }
+        if other>0 { destinations.append("\(other) file(s) in Protected Files") }
+        return "Your \(protectedSelection.count) items are now protected in Libérons Cloud. You’ll find them in Library: \(destinations.joined(separator: ", "))."
     }
 
-    private func keepProtectedOriginals() { showProtectionSuccess=false;protectedSelection=[];protectedSelectionBytes=0;operationIsError=false;operationMessage=language.text("Protection complete. Your protected files are available in Libérons Cloud.","Protection terminée. Vos fichiers protégés sont disponibles dans Libérons Cloud.") }
+    private func keepProtectedOriginals() { showProtectionSuccess=false;protectedSelection=[];protectedSelectionBytes=0;operationIsError=false;operationMessage=language.text("Protection complete. Your protected items are available in their Library sections.","Protection terminée. Vos éléments protégés sont disponibles dans leurs sections de la Bibliothèque.") }
 
     private func removeProtectedOriginals() {
         let files=protectedSelection
@@ -172,5 +190,7 @@ struct FileStorageAnalysisView: View {
     private func selectionLabel(_ count:Int)->String { if language.language == .french { return count == 1 ? "1 sélectionné" : "\(count) sélectionnés" }; return count == 1 ? "1 selected" : "\(count) selected" }
     private func toggle(_ id:String){if selectedIDs.contains(id){selectedIDs.remove(id)}else{selectedIDs.insert(id)}}
     private func size(_ bytes:Int64)->String{ByteCountFormatter.string(fromByteCount:bytes,countStyle:.file)}
-    private func icon(_ file:AnalyzedLocalFile)->String{if file.contentType?.conforms(to:.pdf)==true{return "doc.richtext.fill"};if file.contentType?.conforms(to:.image)==true{return "photo.fill"};if file.contentType?.conforms(to:.movie)==true{return "video.fill"};if file.contentType?.conforms(to:.audio)==true{return "waveform"};if file.contentType?.conforms(to:.archive)==true{return "doc.zipper"};return "doc.fill"}
+    private func isPhoto(_ file:AnalyzedLocalFile)->Bool{if file.contentType?.conforms(to:.image)==true{return true};let ext=file.url.pathExtension.lowercased();return ["jpg","jpeg","png","heic","heif","gif","webp","tiff","tif","bmp"].contains(ext)}
+    private func isVideo(_ file:AnalyzedLocalFile)->Bool{if file.contentType?.conforms(to:.movie)==true{return true};let ext=file.url.pathExtension.lowercased();return ["mov","mp4","m4v","avi","mkv","webm"].contains(ext)}
+    private func icon(_ file:AnalyzedLocalFile)->String{if file.contentType?.conforms(to:.pdf)==true{return "doc.richtext.fill"};if isPhoto(file){return "photo.fill"};if isVideo(file){return "video.fill"};if file.contentType?.conforms(to:.audio)==true{return "waveform"};if file.contentType?.conforms(to:.archive)==true{return "doc.zipper"};return "doc.fill"}
 }
