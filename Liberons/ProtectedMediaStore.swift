@@ -13,9 +13,11 @@ final class ProtectedMediaStore: ObservableObject {
     @Published private(set) var photoCount: Int64 = 0
     @Published private(set) var videoCount: Int64 = 0
 
-    // Keep the complete protected-media metadata window in memory. Thumbnails and
-    // originals remain lazy, so switching All / Photos / Videos is purely local.
-    private let pageSize = 20_000
+    // Supabase/PostgREST caps a single RPC response at 1,000 rows. Requesting
+    // 20,000 therefore still returned only 1,000 and made Select all incomplete.
+    // We deliberately page at the API cap and drain every page during refresh.
+    // Only metadata is kept in memory; thumbnails and originals remain lazy.
+    private let pageSize = 1_000
     private var activeRefresh: Task<Void, Never>?
     private var activeLoadMore: Task<Void, Never>?
     private var cursor: Cursor?
@@ -28,9 +30,8 @@ final class ProtectedMediaStore: ObservableObject {
     private struct CountsRow: Decodable { let all_count: Int64; let photo_count: Int64; let video_count: Int64 }
 
     func refresh(filter: String = "all", newestFirst: Bool = true) async {
-        // The view already filters/sorts store.items locally. Once the complete
-        // metadata set is loaded, a category/sort tap must never make a network
-        // round-trip. This is what makes the segmented control instant.
+        // Category changes are local once metadata has been loaded. Never refetch
+        // 11k+ rows just because the user taps All / Photos / Videos.
         if !items.isEmpty && (filter != currentFilter || newestFirst != currentNewestFirst) {
             currentFilter = filter
             currentNewestFirst = newestFirst
@@ -48,6 +49,8 @@ final class ProtectedMediaStore: ObservableObject {
     }
 
     func loadMoreIfNeeded(currentItem item: ProtectedCloudMedia) async {
+        // performRefresh drains the complete metadata set. This remains as a safe
+        // fallback if a future backend chooses to stop a refresh early.
         guard hasMore, !isLoading, !isLoadingMore else { return }
         let threshold = max(items.count - 30, 0)
         guard let index = items.firstIndex(where: { $0.id == item.id }), index >= threshold else { return }
@@ -78,19 +81,34 @@ final class ProtectedMediaStore: ObservableObject {
             hasMore = true
             seenLocalIdentifiers.removeAll(keepingCapacity: true)
 
-            // Always fetch ALL photo/video metadata. Filtering is local afterwards.
-            // This also means "Select all" can select the real complete category,
-            // instead of only the server's first page.
-            async let pageTask = fetchPage(after: nil, newestFirst: newestFirst)
             async let countsTask = fetchCounts()
-            let (page, counts) = try await (pageTask, countsTask)
 
-            items = normalize(page)
+            var allItems: [ProtectedCloudMedia] = []
+            allItems.reserveCapacity(Int(max(totalCount, 1_000)))
+            var pageCursor: Cursor? = nil
+
+            while true {
+                try Task.checkCancellation()
+                let page = try await fetchPage(after: pageCursor, newestFirst: newestFirst)
+                guard !page.isEmpty else { break }
+
+                allItems.append(contentsOf: normalize(page))
+
+                guard page.count == pageSize, let last = page.last else { break }
+                let nextCursor = Cursor(sortDate: last.capturedAt ?? last.createdAt, id: last.id)
+                guard nextCursor != pageCursor else { break }
+                pageCursor = nextCursor
+            }
+
+            let counts = try await countsTask
+            items = allItems
             totalCount = counts.all_count
             photoCount = counts.photo_count
             videoCount = counts.video_count
-            updateCursor(from: page)
-            hasMore = page.count == pageSize
+            cursor = pageCursor
+            hasMore = Int64(allItems.count) < counts.all_count
+        } catch is CancellationError {
+            // A cancelled refresh should not replace the current library with an error.
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -180,8 +198,9 @@ final class ProtectedMediaStore: ObservableObject {
     }
 
     func refreshAfterProtection() {
-        // A real data change must bypass the filter fast path. Re-fetching with the
-        // same state does that while still loading the complete "all" dataset.
+        // Force a real reload after cloud data changes while preserving the user's
+        // current local filter/sort state.
+        items.removeAll(keepingCapacity: true)
         Task { await refresh(filter: currentFilter, newestFirst: currentNewestFirst) }
     }
 }
