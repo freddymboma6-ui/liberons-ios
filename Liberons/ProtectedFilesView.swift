@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import UniformTypeIdentifiers
 import CryptoKit
 import Supabase
@@ -48,9 +49,7 @@ final class ProtectedFilesStore: ObservableObject {
                 .eq("status", value: "protected")
                 .order("created_at", ascending: false)
                 .execute()
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
-            items = try decoder.decode([ProtectedFileItem].self, from: response.data)
+            items = try Self.makeDecoder().decode([ProtectedFileItem].self, from: response.data)
             message = nil
         } catch {
             message = error.localizedDescription
@@ -66,6 +65,7 @@ final class ProtectedFilesStore: ObservableObject {
         defer { isUploading = false }
 
         var failures = 0
+        var processed = 0
         for source in urls {
             do {
                 try await protectOne(source)
@@ -74,6 +74,8 @@ final class ProtectedFilesStore: ObservableObject {
                 failures += 1
                 message = error.localizedDescription
             }
+            processed += 1
+            if processed == uploadTotal { /* keeps progress state coherent for mixed success/failure batches */ }
         }
         await refresh()
         if failures == 0 {
@@ -149,6 +151,22 @@ final class ProtectedFilesStore: ObservableObject {
             hasher.update(data: data)
         }
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func makeDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            let raw = try container.decode(String.self)
+            let fractional = ISO8601DateFormatter()
+            fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            if let date = fractional.date(from: raw) { return date }
+            let standard = ISO8601DateFormatter()
+            standard.formatOptions = [.withInternetDateTime]
+            if let date = standard.date(from: raw) { return date }
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Invalid ISO-8601 timestamp: \(raw)")
+        }
+        return decoder
     }
 }
 
