@@ -32,6 +32,15 @@ final class LanguageStore: ObservableObject {
         if en == "Being protected" && fr == "En cours de protection" {
             return language == .french ? "À protéger" : "To protect"
         }
+
+        // Dashboard percentage: share of all media already protected in Libérons
+        // whose originals are still present in Apple Photos on this iPhone.
+        if en == "Library protected" && fr == "Photothèque protégée" {
+            return language == .french
+                ? "des médias protégés dans Libérons sont encore présents sur cet iPhone"
+                : "of media protected in Libérons are still on this iPhone"
+        }
+
         return language == .french ? fr : en
     }
 }
