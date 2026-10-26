@@ -36,7 +36,7 @@ final class CloudStorageSummary: ObservableObject {
     private var changeRefreshTask: Task<Void, Never>?
     private let cachePrefix = "liberons.cloud-summary.v2."
     private struct Subscription: Decodable { let status:String?;let grace_period_end:Date?;let last_payment_failed_at:Date? }
-    private struct ServerPlan: Decodable { let user_id:String;let quota_bytes:Int64;let protected_bytes:Int64;let pending_bytes:Int64;let role:String;let source:String;let subscription:Subscription? }
+    private struct ServerPlan: Decodable { let user_id:String;let quota_bytes:Int64;let protected_bytes:Int64;let pending_bytes:Int64;let protected_count:Int?;let role:String;let source:String;let subscription:Subscription? }
     private struct UserSubscription: Decodable { let plan_code:String?;let status:String? }
     private struct PublicPlan: Decodable { let code:String;let quota_bytes:Int64;let monthly_price_cents:Int;let currency:String }
     private struct Asset: Decodable { let protected_at:Date?;let size_bytes:Int64? }
@@ -101,6 +101,7 @@ final class CloudStorageSummary: ObservableObject {
         var nextProtectedBytes=protectedBytes
         var nextPendingBytes=pendingBytes
         var receivedPlan=false
+        var receivedServerCount=false
 
         do {
             let plan:ServerPlan=try await SupabaseService.client.functions.invoke("account-storage-plan",options:FunctionInvokeOptions(headers:["Authorization":"Bearer \(session.accessToken)"]),decode:{data,_ in try decoder.decode(ServerPlan.self,from:data)})
@@ -108,7 +109,9 @@ final class CloudStorageSummary: ObservableObject {
             nextQuotaBytes=max(0,plan.quota_bytes); nextAccountRole=plan.role.lowercased()
             nextSubscriptionStatus=plan.subscription?.status?.lowercased() ?? "free"
             nextGracePeriodEnd=plan.subscription?.grace_period_end; nextLastPaymentFailedAt=plan.subscription?.last_payment_failed_at
-            nextProtectedBytes=max(0,plan.protected_bytes); nextPendingBytes=max(0,plan.pending_bytes); receivedPlan=true
+            nextProtectedBytes=max(0,plan.protected_bytes); nextPendingBytes=max(0,plan.pending_bytes)
+            if let count=plan.protected_count { nextProtectedCount=max(0,count);receivedServerCount=true }
+            receivedPlan=true
         } catch {}
 
         do {
@@ -131,7 +134,8 @@ final class CloudStorageSummary: ObservableObject {
                 if !receivedPlan { fallbackBytes += page.reduce(Int64(0)){$0+max(0,$1.size_bytes ?? 0)} }
                 if page.count<pageSize{break};offset+=pageSize
             }
-            nextProtectedCount=count;nextLastProtectedAt=newest
+            if !receivedServerCount { nextProtectedCount=count }
+            nextLastProtectedAt=newest
             if !receivedPlan{nextProtectedBytes=fallbackBytes}
         } catch {}
 
