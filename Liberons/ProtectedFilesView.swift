@@ -28,12 +28,31 @@ final class ProtectedFilesStore: ObservableObject {
     @Published private(set) var lastBatchFailed=0
 
     private struct InitiateResponse:Decodable { struct Upload:Decodable{let url:String;let headers:[String:String]};let asset_id:String;let upload_session_id:String;let upload:Upload }
+    private let pageSize=1_000
 
     func refresh() async {
         isLoading=true; defer{isLoading=false}
         do {
-            let response=try await SupabaseService.client.from("media_assets").select("id,original_filename,mime_type,size_bytes,protected_at,created_at").eq("media_type",value:"other").eq("status",value:"protected").order("created_at",ascending:false).limit(5000).execute()
-            items=try Self.makeDecoder().decode([ProtectedFileItem].self,from:response.data)
+            var loaded:[ProtectedFileItem]=[]
+            var offset=0
+            let decoder=Self.makeDecoder()
+            while true {
+                try Task.checkCancellation()
+                let response=try await SupabaseService.client.from("media_assets")
+                    .select("id,original_filename,mime_type,size_bytes,protected_at,created_at")
+                    .eq("media_type",value:"other")
+                    .eq("status",value:"protected")
+                    .order("created_at",ascending:false)
+                    .range(from:offset,to:offset+pageSize-1)
+                    .execute()
+                let page=try decoder.decode([ProtectedFileItem].self,from:response.data)
+                loaded.append(contentsOf:page)
+                guard page.count==pageSize else{break}
+                offset += pageSize
+                await Task.yield()
+            }
+            items=loaded
+        } catch is CancellationError {
         } catch { message=error.localizedDescription }
     }
 
