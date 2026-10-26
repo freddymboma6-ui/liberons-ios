@@ -64,7 +64,7 @@ struct StorageAnalysisView: View {
             }
             HStack(spacing:10){
                 Button{backup.isPaused ? backup.resume():backup.pause()}label:{Label(backup.isPaused ? language.text("Resume","Reprendre"):language.text("Pause","Pause"),systemImage:backup.isPaused ? "play.fill":"pause.fill").fontWeight(.semibold).frame(maxWidth:.infinity).frame(height:40)}.buttonStyle(.bordered).disabled(backup.isStopping)
-                Button(role:.destructive){backup.stop()}label:{Label(language.text("Stop","Arrêter"),systemImage:"stop.fill").fontWeight(.semibold).frame(maxWidth:.infinity).frame(height:40)}.buttonStyle(.bordered).tint(.red).disabled(backup.isStopping)
+                Button(role:.destructive){backup.stop();Task{while backup.isRunning{try? await Task.sleep(for:.milliseconds(100))};let protected=backup.newlyProtectedLocalIdentifiers;selectedIDs.subtract(protected);guard !protected.isEmpty else{return};await cleaner.prepareExact(localIdentifiers:protected);if !cleaner.selectedLocalIdentifiers.isEmpty{showFreeOffer=true}}}label:{Label(language.text("Stop","Arrêter"),systemImage:"stop.fill").fontWeight(.semibold).frame(maxWidth:.infinity).frame(height:40)}.buttonStyle(.bordered).tint(.red).disabled(backup.isStopping)
             }
         }.padding(14).background(Color.blue.opacity(0.055),in:RoundedRectangle(cornerRadius:20,style:.continuous)).overlay(RoundedRectangle(cornerRadius:20,style:.continuous).stroke(Color.blue.opacity(0.10),lineWidth:1))
     }
@@ -77,7 +77,7 @@ struct StorageAnalysisView: View {
         if bytes >= 1_000_000_000_000 { return String(format: "%.2f %@", Double(bytes) / 1_000_000_000_000, language.text("TB", "To")) }
         if bytes >= 1_000_000_000 { return String(format: "%.2f %@", Double(bytes) / 1_000_000_000, language.text("GB", "Go")) }
         let formatted = ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
-        return language.language == .french ? formatted.replacingOccurrences(of: "KB", with: "Ko").replacingOccurrences(of: "MB", with: "Mo") : formatted
+        return language.language == .french ? formatted.replacingOccurrences(of: "KB", with:"Ko").replacingOccurrences(of:"MB",with:"Mo") : formatted
     }
     private func duration(_ seconds:TimeInterval)->String{let v=max(0,Int(seconds.rounded()));return v>=3600 ? String(format:"%d:%02d:%02d",v/3600,(v%3600)/60,v%60):String(format:"%d:%02d",v/60,v%60)}
     private func itemLabel(_ item:StorageInsightItem)->String{item.duration>0 ? language.text("Video","Vidéo"):item.kind == .screenshot ? language.text("Screenshot","Capture d’écran"):language.text("Photo","Photo")}
