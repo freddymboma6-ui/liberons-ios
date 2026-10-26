@@ -13,10 +13,10 @@ final class ProtectedMediaStore: ObservableObject {
     @Published private(set) var photoCount: Int64 = 0
     @Published private(set) var videoCount: Int64 = 0
 
-    // Keep the viewer working set deliberately small. Each item can create image
-    // Grid cells are lazy, so keeping a larger metadata page avoids constant network
-    // pagination while scrolling without decoding every asset into memory.
-    private let pageSize = 120
+    // Metadata is cheap compared with media payloads. Keep enough protected-item
+    // metadata in memory for bulk selection while thumbnails/full media remain lazy.
+    // Cursor paging still remains available beyond this window.
+    private let pageSize = 20_000
     private var activeRefresh: Task<Void, Never>?
     private var activeLoadMore: Task<Void, Never>?
     private var cursor: Cursor?
