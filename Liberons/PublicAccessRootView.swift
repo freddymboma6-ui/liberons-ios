@@ -24,7 +24,7 @@ struct PublicAccessRootView: View {
                             Button {
                                 showProtectedFiles = true
                             } label: {
-                                Image(systemName: "folder.fill.badge.plus")
+                                Image(systemName: "folder.badge.plus")
                                     .font(.system(size: 18, weight: .semibold))
                                     .foregroundStyle(.white)
                                     .frame(width: 50, height: 50)
