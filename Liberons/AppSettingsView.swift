@@ -7,6 +7,16 @@ struct AppSettingsView: View {
         List {
             Section {
                 NavigationLink {
+                    ProtectedFilesView(language: language)
+                } label: {
+                    settingsRow(
+                        icon: "doc.fill",
+                        title: language.text("Protected files", "Fichiers protégés"),
+                        subtitle: language.text("Protect documents and files in Libérons Cloud", "Protégez vos documents et fichiers dans Libérons Cloud")
+                    )
+                }
+
+                NavigationLink {
                     LiberonsNotificationSettingsView(language: language)
                 } label: {
                     settingsRow(
