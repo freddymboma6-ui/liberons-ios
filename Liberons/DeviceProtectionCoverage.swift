@@ -9,6 +9,16 @@ final class DeviceProtectionCoverage: ObservableObject {
     @Published private(set) var protectedMediaCount = 0
     @Published private(set) var deviceMediaCount = 0
     @Published private(set) var isLoading = false
+    @Published private(set) var hasLoadedCoverage = false
+    @Published private(set) var refreshFailed = false
+
+    private let cachePrefix = "liberons.device-protection-coverage.v1."
+
+    private struct CachedCoverage: Codable {
+        let protectedOnDeviceCount: Int
+        let protectedMediaCount: Int
+        let deviceMediaCount: Int
+    }
 
     /// Share of all media protected in Libérons whose originals are still present
     /// in Apple Photos on this iPhone.
@@ -17,24 +27,49 @@ final class DeviceProtectionCoverage: ObservableObject {
         return min(100, Int((Double(protectedOnDeviceCount) / Double(protectedMediaCount)) * 100.0))
     }
 
+    private func restoreCachedCoverage(for userID: String) {
+        guard !hasLoadedCoverage,
+              let data = UserDefaults.standard.data(forKey: cachePrefix + userID.lowercased()),
+              let cached = try? JSONDecoder().decode(CachedCoverage.self, from: data) else { return }
+        protectedOnDeviceCount = max(0, cached.protectedOnDeviceCount)
+        protectedMediaCount = max(0, cached.protectedMediaCount)
+        deviceMediaCount = max(0, cached.deviceMediaCount)
+        hasLoadedCoverage = true
+    }
+
+    private func saveCoverage(for userID: String) {
+        let snapshot = CachedCoverage(
+            protectedOnDeviceCount: protectedOnDeviceCount,
+            protectedMediaCount: protectedMediaCount,
+            deviceMediaCount: deviceMediaCount
+        )
+        if let data = try? JSONEncoder().encode(snapshot) {
+            UserDefaults.standard.set(data, forKey: cachePrefix + userID.lowercased())
+        }
+    }
+
     func refresh() async {
         guard !isLoading else { return }
         isLoading = true
         defer { isLoading = false }
 
+        guard let session = try? await SupabaseService.client.auth.session else {
+            refreshFailed = true
+            return
+        }
+        let userID = session.user.id.uuidString
+        restoreCachedCoverage(for: userID)
+
         let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
         guard status == .authorized || status == .limited else {
-            protectedOnDeviceCount = 0
-            protectedMediaCount = 0
-            deviceMediaCount = 0
+            // No Photos access means coverage cannot be measured. Do not turn an
+            // unavailable measurement into a real-looking 0% value.
+            refreshFailed = true
             return
         }
 
         let assets = PHAsset.fetchAssets(with: nil)
-        deviceMediaCount = assets.count
-
-        guard let session = try? await SupabaseService.client.auth.session else { return }
-        let userID = session.user.id.uuidString
+        let nextDeviceMediaCount = assets.count
 
         struct ProtectedIdentifier: Decodable {
             let ios_local_identifier: String?
@@ -43,6 +78,7 @@ final class DeviceProtectionCoverage: ObservableObject {
         do {
             // Fetch every protected media row with pagination so the denominator is
             // the complete Libérons protected library, not Supabase's default page.
+            // Build the new snapshot locally and publish only after every page succeeds.
             let pageSize = 1_000
             var offset = 0
             var protectedIdentifiers = Set<String>()
@@ -69,27 +105,27 @@ final class DeviceProtectionCoverage: ObservableObject {
                 offset += pageSize
             }
 
-            protectedMediaCount = totalProtected
-
-            guard assets.count > 0, totalProtected > 0 else {
-                protectedOnDeviceCount = 0
-                return
-            }
-
-            // Compare the current Apple Photos library with the protected Libérons
-            // identifiers. This tells us how many protected originals still occupy
-            // space in this iPhone's photo library.
             var stillOnDevice = 0
-            for index in 0..<assets.count {
-                if protectedIdentifiers.contains(assets.object(at: index).localIdentifier) {
-                    stillOnDevice += 1
+            if nextDeviceMediaCount > 0 && totalProtected > 0 {
+                for index in 0..<assets.count {
+                    if protectedIdentifiers.contains(assets.object(at: index).localIdentifier) {
+                        stillOnDevice += 1
+                    }
                 }
             }
+
+            // Commit only a fully successful calculation. A transient failure on page
+            // 2, 8 or 20 can therefore never overwrite a valid previous result with 0%.
+            deviceMediaCount = nextDeviceMediaCount
+            protectedMediaCount = totalProtected
             protectedOnDeviceCount = stillOnDevice
+            hasLoadedCoverage = true
+            refreshFailed = false
+            saveCoverage(for: userID)
         } catch {
-            // A query failure must never produce a misleading coverage percentage.
-            protectedOnDeviceCount = 0
-            protectedMediaCount = 0
+            // Keep the last successful in-memory/cached snapshot. Zero is reserved for
+            // a genuine successful calculation that actually contains zero protected media.
+            refreshFailed = true
         }
     }
 }
