@@ -13,10 +13,9 @@ final class ProtectedMediaStore: ObservableObject {
     @Published private(set) var photoCount: Int64 = 0
     @Published private(set) var videoCount: Int64 = 0
 
-    // Supabase/PostgREST caps a single RPC response at 1,000 rows. Requesting
-    // 20,000 therefore still returned only 1,000 and made Select all incomplete.
-    // We deliberately page at the API cap and drain every page during refresh.
-    // Only metadata is kept in memory; thumbnails and originals remain lazy.
+    // Keep the backend page at its supported cap, but publish the first page
+    // immediately instead of draining the user's entire library before rendering.
+    // Additional metadata pages are fetched only as the grid approaches the end.
     private let pageSize = 1_000
     private var activeRefresh: Task<Void, Never>?
     private var activeLoadMore: Task<Void, Never>?
@@ -30,8 +29,8 @@ final class ProtectedMediaStore: ObservableObject {
     private struct CountsRow: Decodable { let all_count: Int64; let photo_count: Int64; let video_count: Int64 }
 
     func refresh(filter: String = "all", newestFirst: Bool = true) async {
-        // Category changes are local once metadata has been loaded. Never refetch
-        // 11k+ rows just because the user taps All / Photos / Videos.
+        // Category changes remain local for already-loaded metadata. Never throw
+        // away a loaded page merely because the user taps All / Photos / Videos.
         if !items.isEmpty && (filter != currentFilter || newestFirst != currentNewestFirst) {
             currentFilter = filter
             currentNewestFirst = newestFirst
@@ -49,8 +48,6 @@ final class ProtectedMediaStore: ObservableObject {
     }
 
     func loadMoreIfNeeded(currentItem item: ProtectedCloudMedia) async {
-        // performRefresh drains the complete metadata set. This remains as a safe
-        // fallback if a future backend chooses to stop a refresh early.
         guard hasMore, !isLoading, !isLoadingMore else { return }
         let threshold = max(items.count - 30, 0)
         guard let index = items.firstIndex(where: { $0.id == item.id }), index >= threshold else { return }
@@ -81,32 +78,21 @@ final class ProtectedMediaStore: ObservableObject {
             hasMore = true
             seenLocalIdentifiers.removeAll(keepingCapacity: true)
 
+            // Counts and the first metadata page are independent. Fetch them in
+            // parallel so the first visible gallery arrives with only one page of
+            // metadata regardless of whether the account has 3 or 100,000 items.
             async let countsTask = fetchCounts()
+            async let firstPageTask = fetchPage(after: nil, newestFirst: newestFirst)
 
-            var allItems: [ProtectedCloudMedia] = []
-            allItems.reserveCapacity(Int(max(totalCount, 1_000)))
-            var pageCursor: Cursor? = nil
-
-            while true {
-                try Task.checkCancellation()
-                let page = try await fetchPage(after: pageCursor, newestFirst: newestFirst)
-                guard !page.isEmpty else { break }
-
-                allItems.append(contentsOf: normalize(page))
-
-                guard page.count == pageSize, let last = page.last else { break }
-                let nextCursor = Cursor(sortDate: last.capturedAt ?? last.createdAt, id: last.id)
-                guard nextCursor != pageCursor else { break }
-                pageCursor = nextCursor
-            }
-
+            let firstPage = try await firstPageTask
             let counts = try await countsTask
-            items = allItems
+
+            items = normalize(firstPage)
             totalCount = counts.all_count
             photoCount = counts.photo_count
             videoCount = counts.video_count
-            cursor = pageCursor
-            hasMore = Int64(allItems.count) < counts.all_count
+            updateCursor(from: firstPage)
+            hasMore = !firstPage.isEmpty && Int64(firstPage.count) < counts.all_count
         } catch is CancellationError {
             // A cancelled refresh should not replace the current library with an error.
         } catch {
@@ -126,7 +112,7 @@ final class ProtectedMediaStore: ObservableObject {
             let unique = page.filter { !existing.contains($0.id) }
             items.append(contentsOf: normalize(unique))
             updateCursor(from: page)
-            hasMore = page.count == pageSize
+            hasMore = Int64(items.count) < totalCount && page.count == pageSize
         } catch {
             errorMessage = error.localizedDescription
         }
