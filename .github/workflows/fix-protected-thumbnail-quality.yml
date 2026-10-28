@@ -1,0 +1,38 @@
+name: Fix protected thumbnail quality
+
+on:
+  push:
+    branches:
+      - library-protected-media
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.head_commit.message != 'Fix cloud thumbnail quality globally'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: library-protected-media
+      - name: Patch protected library thumbnail pipeline
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('Liberons/ProtectedLibraryView.swift')
+          s = p.read_text()
+          old = '''if let preview=try? await SupabaseService.cloudPreviewURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:preview),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300,let decoded=ProtectedImageDecoder.downsample(data,maxPixelSize:900){ProtectedMediaCache.shared.storeThumbnail(decoded,for:item.id);image=decoded;return};if !isVideo,let original=try? await SupabaseService.cloudOriginalURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:original),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300,let decoded=ProtectedImageDecoder.downsample(data,maxPixelSize:900){ProtectedMediaCache.shared.storeThumbnail(decoded,for:item.id);image=decoded;return};'''
+          new = '''if let preview=try? await SupabaseService.cloudPreviewURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:preview),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300,let decoded=ProtectedImageDecoder.downsample(data,maxPixelSize:900){image=decoded;if isVideo{ProtectedMediaCache.shared.storeThumbnail(decoded,for:item.id);return}};if !isVideo,let original=try? await SupabaseService.cloudOriginalURL(assetID:item.id),let(data,response)=try? await URLSession.shared.data(from:original),(response as? HTTPURLResponse)?.statusCode ?? 500 < 300,let decoded=ProtectedImageDecoder.downsample(data,maxPixelSize:900){ProtectedMediaCache.shared.storeThumbnail(decoded,for:item.id);image=decoded;return};'''
+          if old not in s:
+              raise SystemExit('Expected thumbnail block not found; refusing unsafe edit')
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+          Path('.github/workflows/fix-protected-thumbnail-quality.yml').unlink()
+      - name: Commit exact patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Liberons/ProtectedLibraryView.swift .github/workflows/fix-protected-thumbnail-quality.yml
+          git commit -m "Fix cloud thumbnail quality globally"
+          git push origin HEAD:library-protected-media
