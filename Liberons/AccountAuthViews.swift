@@ -35,7 +35,7 @@ struct ForgotPasswordView: View {
             Section { TextField(language.text("Email", "E-mail"), text: $email).textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.emailAddress).textContentType(.emailAddress) } footer: { Text(language.text("We’ll email you a secure link to create a new password.", "Nous vous enverrons un lien sécurisé par e-mail pour créer un nouveau mot de passe.")) }
             if auth.infoMessage == "password_reset_sent" { Section { Label(language.text("Reset email sent. Check your inbox.", "E-mail de réinitialisation envoyé. Consultez votre boîte de réception."), systemImage: "checkmark.circle.fill").foregroundStyle(.green) } }
             if let error = auth.errorMessage { Section { Text(error).foregroundStyle(.red) } }
-            Section { Button { sending = true; Task { _ = await auth.sendPasswordReset(email: email.trimmingCharacters(in: .whitespacesAndNewlines), password: password); sending = false } } label: { HStack { Spacer(); if sending { ProgressView() } else { Text(language.text("Send reset link", "Envoyer le lien de réinitialisation")).fontWeight(.semibold) }; Spacer() } }.disabled(sending || !email.contains("@")) }
+            Section { Button { sending = true; Task { _ = await auth.sendPasswordReset(email: email.trimmingCharacters(in: .whitespacesAndNewlines)); sending = false } } label: { HStack { Spacer(); if sending { ProgressView() } else { Text(language.text("Send reset link", "Envoyer le lien de réinitialisation")).fontWeight(.semibold) }; Spacer() } }.disabled(sending || !email.contains("@")) }
         }.scrollContentBackground(.hidden).background(LiberonsTheme.canvas.ignoresSafeArea()).navigationTitle(language.text("Forgot password", "Mot de passe oublié")).navigationBarTitleDisplayMode(.inline)
     }
 }
@@ -96,9 +96,7 @@ struct AccountSecurityView: View {
             let data = try await SupabaseService.callFunction("account-deletion-status", json: Data("{}".utf8))
             let body = try JSONDecoder().decode(DeletionResponse.self, from: data)
             await MainActor.run { applyDeletion(body) }
-        } catch {
-            // Keep the screen usable if the status service is temporarily unavailable.
-        }
+        } catch { }
     }
 
     private func requestDeletion() {
@@ -118,7 +116,7 @@ struct AccountSecurityView: View {
     }
 
     private func cancelDeletion() {
-        guard !deletionBusy || deletionCancellable else { return }; deletionBusy = true; deletionMessage = nil
+        guard !deletionBusy && deletionCancellable else { return }; deletionBusy = true; deletionMessage = nil
         Task {
             defer { Task { @MainActor in deletionBusy = false } }
             do {
