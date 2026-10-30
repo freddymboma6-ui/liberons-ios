@@ -154,15 +154,127 @@ struct AccountSecurityView: View {
         }
         .scrollContentBackground(.hidden).background(LiberonsTheme.canvas.ignoresSafeArea()).navigationTitle(language.text("Privacy & security", "Confidentialité et sécurité")).navigationBarTitleDisplayMode(.inline)
         .task { await refreshDeletionStatus() }
-        .confirmationDialog(
-            language.text("Delete your Libérons account?", "Supprimer votre compte Libérons ?"),
-            isPresented: $showDeleteConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button(language.text("Delete my account", "Supprimer mon compte"), role: .destructive) { requestDeletion() }
-            Button(language.text("Keep my account", "Garder mon compte"), role: .cancel) { deletionMessage = nil }
-        } message: {
-            Text(language.text("Nothing is deleted now. If you confirm, deletion will be scheduled and you will have 3 days to cancel before your Libérons Cloud photos, videos and files are permanently deleted.", "Rien n’est supprimé maintenant. Si vous confirmez, la suppression sera programmée et vous disposerez de 3 jours pour l’annuler avant la suppression définitive de vos photos, vidéos et fichiers Libérons Cloud."))
+        .sheet(isPresented: $showDeleteConfirmation) {
+            LibéronsDeleteAccountSheet(
+                language: language,
+                isBusy: deletionBusy,
+                onKeep: {
+                    deletionMessage = nil
+                    showDeleteConfirmation = false
+                },
+                onDelete: requestDeletion
+            )
+            .presentationDetents([.height(520)])
+            .presentationDragIndicator(.visible)
+            .presentationCornerRadius(34)
+            .presentationBackground(.ultraThinMaterial)
         }
+    }
+}
+
+private struct LibéronsDeleteAccountSheet: View {
+    @ObservedObject var language: LanguageStore
+    let isBusy: Bool
+    let onKeep: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Spacer(minLength: 28)
+
+            ZStack {
+                Circle()
+                    .fill(Color.blue.opacity(0.10))
+                    .frame(width: 82, height: 82)
+                Circle()
+                    .stroke(Color.blue.opacity(0.18), lineWidth: 1)
+                    .frame(width: 82, height: 82)
+                Image(systemName: "cloud.fill")
+                    .font(.system(size: 34, weight: .semibold))
+                    .foregroundStyle(.blue)
+                    .overlay(alignment: .bottomTrailing) {
+                        Image(systemName: "shield.fill")
+                            .font(.system(size: 17, weight: .bold))
+                            .foregroundStyle(.white)
+                            .padding(5)
+                            .background(.blue, in: Circle())
+                            .offset(x: 10, y: 7)
+                    }
+            }
+            .padding(.bottom, 22)
+
+            Text(language.text("Your memories are protected", "Vos souvenirs sont protégés"))
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.blue)
+                .textCase(.uppercase)
+                .tracking(0.7)
+                .padding(.bottom, 8)
+
+            Text(language.text("Delete your Libérons account?", "Supprimer votre compte Libérons ?"))
+                .font(.system(size: 28, weight: .bold, design: .rounded))
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 28)
+
+            Text(language.text(
+                "Nothing is deleted today. Your Libérons Cloud memories remain protected for 3 days, giving you time to change your mind.",
+                "Rien n’est supprimé aujourd’hui. Vos souvenirs Libérons Cloud restent protégés pendant 3 jours, afin de vous laisser le temps de changer d’avis."
+            ))
+            .font(.system(size: 16))
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
+            .lineSpacing(3)
+            .padding(.horizontal, 30)
+            .padding(.top, 12)
+
+            HStack(spacing: 12) {
+                Image(systemName: "clock.badge.checkmark.fill")
+                    .font(.system(size: 21, weight: .semibold))
+                    .foregroundStyle(.blue)
+                    .frame(width: 38, height: 38)
+                    .background(Color.blue.opacity(0.10), in: Circle())
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(language.text("3-day protection period", "Protection pendant 3 jours"))
+                        .font(.system(size: 15, weight: .semibold))
+                    Text(language.text("You can cancel before permanent deletion begins.", "Vous pouvez annuler avant le début de la suppression définitive."))
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(14)
+            .background(Color.blue.opacity(0.055), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .padding(.horizontal, 24)
+            .padding(.top, 20)
+
+            Spacer(minLength: 22)
+
+            Button(action: onKeep) {
+                Text(language.text("Keep my account", "Garder mon compte"))
+                    .font(.system(size: 17, weight: .semibold))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 54)
+            }
+            .buttonStyle(.borderedProminent)
+            .buttonBorderShape(.roundedRectangle(radius: 18))
+            .tint(.blue)
+            .disabled(isBusy)
+            .padding(.horizontal, 24)
+
+            Button(role: .destructive, action: onDelete) {
+                HStack(spacing: 8) {
+                    if isBusy { ProgressView().controlSize(.small) }
+                    Text(isBusy ? language.text("Scheduling deletion…", "Programmation…") : language.text("Delete my account", "Supprimer mon compte"))
+                        .font(.system(size: 16, weight: .semibold))
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 48)
+            }
+            .disabled(isBusy)
+            .padding(.horizontal, 24)
+            .padding(.top, 6)
+            .padding(.bottom, 18)
+        }
+        .background(LiberonsTheme.canvas.opacity(0.78))
+        .interactiveDismissDisabled(isBusy)
     }
 }
