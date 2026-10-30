@@ -35,7 +35,7 @@ struct ForgotPasswordView: View {
             Section { TextField(language.text("Email", "E-mail"), text: $email).textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.emailAddress).textContentType(.emailAddress) } footer: { Text(language.text("We’ll email you a secure link to create a new password.", "Nous vous enverrons un lien sécurisé par e-mail pour créer un nouveau mot de passe.")) }
             if auth.infoMessage == "password_reset_sent" { Section { Label(language.text("Reset email sent. Check your inbox.", "E-mail de réinitialisation envoyé. Consultez votre boîte de réception."), systemImage: "checkmark.circle.fill").foregroundStyle(.green) } }
             if let error = auth.errorMessage { Section { Text(error).foregroundStyle(.red) } }
-            Section { Button { sending = true; Task { _ = await auth.sendPasswordReset(email: email.trimmingCharacters(in: .whitespacesAndNewlines)); sending = false } } label: { HStack { Spacer(); if sending { ProgressView() } else { Text(language.text("Send reset link", "Envoyer le lien de réinitialisation")).fontWeight(.semibold) }; Spacer() } }.disabled(sending || !email.contains("@")) }
+            Section { Button { sending = true; Task { _ = await auth.sendPasswordReset(email: email.trimmingCharacters(in: .whitespacesAndNewlines), password: password); sending = false } } label: { HStack { Spacer(); if sending { ProgressView() } else { Text(language.text("Send reset link", "Envoyer le lien de réinitialisation")).fontWeight(.semibold) }; Spacer() } }.disabled(sending || !email.contains("@")) }
         }.scrollContentBackground(.hidden).background(LiberonsTheme.canvas.ignoresSafeArea()).navigationTitle(language.text("Forgot password", "Mot de passe oublié")).navigationBarTitleDisplayMode(.inline)
     }
 }
@@ -64,26 +64,43 @@ struct AccountSecurityView: View {
     @State private var deletionBusy = false
     @State private var deletionDeadline: Date?
     @State private var deletionMessage: String?
+    @State private var deletionStatus: String?
+    @State private var deletionCancellable = false
 
     private struct DeletionResponse: Decodable {
+        let deletion_requested: Bool?
+        let status: String?
         let purge_after: String?
         let purgeAfter: String?
         let scheduled_for: String?
+        let cancellable: Bool?
+        let purge_started: Bool?
         let error: String?
         let message: String?
     }
 
-    private func fullRow(_ title: String, icon: String) -> some View {
-        Label(title, systemImage: icon).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
-    }
+    private func fullRow(_ title: String, icon: String) -> some View { Label(title, systemImage: icon).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle()) }
     private func webURL(_ destination: LiberonsWebDestination) -> URL { destination.url(for: language.language) ?? URL(string: "https://liberons.com")! }
-    private func parseDate(_ raw: String?) -> Date? {
-        guard let raw else { return nil }
-        let formatter = ISO8601DateFormatter(); formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = formatter.date(from: raw) { return date }
-        formatter.formatOptions = [.withInternetDateTime]
-        return formatter.date(from: raw)
+    private func parseDate(_ raw: String?) -> Date? { guard let raw else { return nil }; let formatter = ISO8601DateFormatter(); formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]; if let date = formatter.date(from: raw) { return date }; formatter.formatOptions = [.withInternetDateTime]; return formatter.date(from: raw) }
+
+    @MainActor private func applyDeletion(_ body: DeletionResponse) {
+        let active = body.deletion_requested ?? ["scheduled", "failed", "processing"].contains(body.status ?? "")
+        deletionStatus = active ? body.status : nil
+        deletionDeadline = active ? parseDate(body.purge_after ?? body.purgeAfter ?? body.scheduled_for) : nil
+        deletionCancellable = active && (body.cancellable ?? ((body.status == "scheduled" || body.status == "failed") && (deletionDeadline.map { $0 > Date() } ?? false)))
+        if active { showDeleteConfirmation = false }
     }
+
+    private func refreshDeletionStatus() async {
+        do {
+            let data = try await SupabaseService.callFunction("account-deletion-status", json: Data("{}".utf8))
+            let body = try JSONDecoder().decode(DeletionResponse.self, from: data)
+            await MainActor.run { applyDeletion(body) }
+        } catch {
+            // Keep the screen usable if the status service is temporarily unavailable.
+        }
+    }
+
     private func requestDeletion() {
         guard !deletionBusy else { return }; deletionBusy = true; deletionMessage = nil
         Task {
@@ -91,25 +108,25 @@ struct AccountSecurityView: View {
             do {
                 let data = try await SupabaseService.callFunction("request-account-deletion", json: Data("{}".utf8))
                 let body = try? JSONDecoder().decode(DeletionResponse.self, from: data)
-                let deadline = parseDate(body?.purge_after ?? body?.purgeAfter ?? body?.scheduled_for)
-                await MainActor.run { deletionDeadline = deadline; showDeleteConfirmation = false; deletionMessage = language.text("Your account deletion is scheduled.", "La suppression de votre compte est programmée.") }
+                await refreshDeletionStatus()
+                await MainActor.run { if deletionDeadline == nil, let body { applyDeletion(body) }; deletionMessage = language.text("Your account deletion is scheduled.", "La suppression de votre compte est programmée.") }
             } catch {
                 let raw = error.localizedDescription
-                await MainActor.run {
-                    if raw.contains("subscription_cancellation_required") { deletionMessage = language.text("Cancel your subscription renewal first, then return here to delete your account.", "Résiliez d’abord le renouvellement de votre abonnement, puis revenez ici pour supprimer votre compte.") }
-                    else { deletionMessage = language.text("Unable to schedule account deletion right now. Please try again.", "Impossible de programmer la suppression du compte pour le moment. Réessayez.") }
-                }
+                await MainActor.run { deletionMessage = raw.contains("subscription_cancellation_required") ? language.text("Cancel your subscription renewal first, then return here to delete your account.", "Résiliez d’abord le renouvellement de votre abonnement, puis revenez ici pour supprimer votre compte.") : language.text("Unable to schedule account deletion right now. Please try again.", "Impossible de programmer la suppression du compte pour le moment. Réessayez.") }
             }
         }
     }
+
     private func cancelDeletion() {
-        guard !deletionBusy else { return }; deletionBusy = true; deletionMessage = nil
+        guard !deletionBusy || deletionCancellable else { return }; deletionBusy = true; deletionMessage = nil
         Task {
             defer { Task { @MainActor in deletionBusy = false } }
             do {
                 _ = try await SupabaseService.callFunction("cancel-account-deletion", json: Data("{}".utf8))
-                await MainActor.run { deletionDeadline = nil; deletionMessage = language.text("Account deletion cancelled. Your subscription will not restart automatically.", "Suppression du compte annulée. Votre abonnement ne sera pas réactivé automatiquement.") }
+                await refreshDeletionStatus()
+                await MainActor.run { deletionMessage = language.text("Account deletion cancelled. Your subscription will not restart automatically.", "Suppression du compte annulée. Votre abonnement ne sera pas réactivé automatiquement.") }
             } catch {
+                await refreshDeletionStatus()
                 await MainActor.run { deletionMessage = language.text("This deletion can no longer be cancelled, or the service is temporarily unavailable.", "Cette suppression ne peut plus être annulée, ou le service est temporairement indisponible.") }
             }
         }
@@ -127,9 +144,10 @@ struct AccountSecurityView: View {
             Section {
                 if let deletionDeadline {
                     VStack(alignment: .leading, spacing: 8) {
-                        Label(language.text("Account deletion scheduled", "Suppression du compte programmée"), systemImage: "clock.badge.exclamationmark").foregroundStyle(.red).font(.headline)
+                        Label(deletionStatus == "processing" ? language.text("Permanent deletion in progress", "Suppression définitive en cours") : language.text("Account deletion scheduled", "Suppression du compte programmée"), systemImage: deletionStatus == "processing" ? "trash.fill" : "clock.badge.exclamationmark").foregroundStyle(.red).font(.headline)
                         Text(language.text("Your Libérons Cloud content will be permanently deleted starting \(deletionDeadline.formatted(date: .long, time: .shortened)).", "Vos contenus Libérons Cloud seront supprimés définitivement à partir du \(deletionDeadline.formatted(date: .long, time: .shortened)).")).font(.footnote).foregroundStyle(.secondary)
-                        Button(role: .destructive) { cancelDeletion() } label: { if deletionBusy { ProgressView() } else { Text(language.text("Cancel account deletion", "Annuler la suppression du compte")) } }.disabled(deletionBusy)
+                        if deletionCancellable { Button(role: .destructive) { cancelDeletion() } label: { if deletionBusy { ProgressView() } else { Text(language.text("Cancel account deletion", "Annuler la suppression du compte")) } }.disabled(deletionBusy) }
+                        else { Text(language.text("The cancellation window has ended. Permanent deletion can no longer be stopped.", "La période d’annulation est terminée. La suppression définitive ne peut plus être interrompue.")).font(.footnote).foregroundStyle(.red) }
                     }.padding(.vertical, 5)
                 } else if showDeleteConfirmation {
                     VStack(alignment: .leading, spacing: 10) {
@@ -137,13 +155,12 @@ struct AccountSecurityView: View {
                         Button(role: .destructive) { requestDeletion() } label: { if deletionBusy { ProgressView() } else { Text(language.text("Confirm account deletion", "Confirmer la suppression du compte")) } }.disabled(deletionBusy)
                         Button(language.text("Cancel", "Annuler")) { showDeleteConfirmation = false }.disabled(deletionBusy)
                     }.padding(.vertical, 5)
-                } else {
-                    Button(role: .destructive) { showDeleteConfirmation = true; deletionMessage = nil } label: { fullRow(language.text("Delete my account", "Supprimer mon compte"), icon: "trash.fill") }
-                }
+                } else { Button(role: .destructive) { showDeleteConfirmation = true; deletionMessage = nil } label: { fullRow(language.text("Delete my account", "Supprimer mon compte"), icon: "trash.fill") } }
                 if let deletionMessage { Text(deletionMessage).font(.footnote).foregroundStyle(.secondary) }
             } header: { Text(language.text("Danger zone", "Zone sensible")) } footer: { Text(language.text("You have 3 days to cancel. Once permanent deletion begins, your Libérons Cloud content cannot be recovered.", "Vous disposez de 3 jours pour annuler. Une fois la suppression définitive commencée, vos contenus Libérons Cloud ne peuvent plus être récupérés.")) }
             Section { Link(destination: webURL(.home)) { fullRow(language.text("Open liberons.com", "Ouvrir liberons.com"), icon: "safari.fill") } } footer: { Text(language.text("Review Libérons legal and privacy information whenever you need it.", "Consultez les informations juridiques et de confidentialité de Libérons à tout moment.")) }
         }
         .scrollContentBackground(.hidden).background(LiberonsTheme.canvas.ignoresSafeArea()).navigationTitle(language.text("Privacy & security", "Confidentialité et sécurité")).navigationBarTitleDisplayMode(.inline)
+        .task { await refreshDeletionStatus() }
     }
 }
