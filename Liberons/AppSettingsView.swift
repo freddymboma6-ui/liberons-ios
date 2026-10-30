@@ -48,6 +48,7 @@ struct AppSettingsView: View {
 struct LiberonsTutorialView: View {
     @ObservedObject var language: LanguageStore
     @State private var player: AVPlayer?
+    @State private var showingFullscreen = false
 
     private var tutorialURL: URL {
         let code = language.language == .english ? "en" : "fr"
@@ -63,7 +64,21 @@ struct LiberonsTutorialView: View {
                     Text(language.text("See how to protect your content, use Libérons Cloud and safely reclaim space on your iPhone.", "Découvrez comment protéger vos contenus, utiliser Libérons Cloud et récupérer de l’espace sur votre iPhone en toute sécurité.")).foregroundStyle(.secondary)
                 }
                 Group {
-                    if let player { VideoPlayer(player: player).aspectRatio(16/9, contentMode: .fit) }
+                    if let player {
+                        ZStack(alignment: .topTrailing) {
+                            VideoPlayer(player: player).aspectRatio(16/9, contentMode: .fit)
+                            Button { showingFullscreen = true } label: {
+                                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                    .font(.system(size: 16, weight: .bold))
+                                    .foregroundStyle(.white)
+                                    .frame(width: 44, height: 44)
+                                    .background(.black.opacity(0.68), in: Circle())
+                            }
+                            .buttonStyle(.plain)
+                            .padding(10)
+                            .accessibilityLabel(language.text("Full screen", "Plein écran"))
+                        }
+                    }
                     else { ZStack { RoundedRectangle(cornerRadius: 18).fill(Color.secondary.opacity(0.12)); ProgressView() }.aspectRatio(16/9, contentMode: .fit) }
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -76,5 +91,29 @@ struct LiberonsTutorialView: View {
         .onAppear { if player == nil { player = AVPlayer(url: tutorialURL) } }
         .onDisappear { player?.pause(); player = nil }
         .onChange(of: language.language) { _, _ in player?.pause(); player = AVPlayer(url: tutorialURL) }
+        .fullScreenCover(isPresented: $showingFullscreen) {
+            if let player {
+                ZStack {
+                    Color.black.ignoresSafeArea()
+                    VideoPlayer(player: player).ignoresSafeArea()
+                    VStack {
+                        HStack {
+                            Spacer()
+                            Button { showingFullscreen = false } label: {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 17, weight: .bold))
+                                    .foregroundStyle(.white)
+                                    .frame(width: 44, height: 44)
+                                    .background(.black.opacity(0.65), in: Circle())
+                            }
+                            .padding()
+                            .accessibilityLabel(language.text("Close full screen", "Fermer le plein écran"))
+                        }
+                        Spacer()
+                    }
+                }
+                .statusBarHidden(true)
+            }
+        }
     }
 }
