@@ -147,18 +147,22 @@ struct AccountSecurityView: View {
                         if deletionCancellable { Button(role: .destructive) { cancelDeletion() } label: { if deletionBusy { ProgressView() } else { Text(language.text("Cancel account deletion", "Annuler la suppression du compte")) } }.disabled(deletionBusy) }
                         else { Text(language.text("The cancellation window has ended. Permanent deletion can no longer be stopped.", "La période d’annulation est terminée. La suppression définitive ne peut plus être interrompue.")).font(.footnote).foregroundStyle(.red) }
                     }.padding(.vertical, 5)
-                } else if showDeleteConfirmation {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text(language.text("Your account will be scheduled for deletion. After 3 days, all photos, videos and files stored in your Libérons Cloud will be permanently deleted and cannot be recovered.", "Votre compte sera programmé pour suppression. Après 3 jours, toutes vos photos, vidéos et tous vos fichiers stockés dans Libérons Cloud seront supprimés définitivement et ne pourront plus être récupérés.")).font(.footnote).foregroundStyle(.secondary)
-                        Button(role: .destructive) { requestDeletion() } label: { if deletionBusy { ProgressView() } else { Text(language.text("Confirm account deletion", "Confirmer la suppression du compte")) } }.disabled(deletionBusy)
-                        Button(language.text("Cancel", "Annuler")) { showDeleteConfirmation = false }.disabled(deletionBusy)
-                    }.padding(.vertical, 5)
-                } else { Button(role: .destructive) { showDeleteConfirmation = true; deletionMessage = nil } label: { fullRow(language.text("Delete my account", "Supprimer mon compte"), icon: "trash.fill") } }
+                } else { Button(role: .destructive) { deletionMessage = nil; showDeleteConfirmation = true } label: { fullRow(language.text("Delete my account", "Supprimer mon compte"), icon: "trash.fill") } }
                 if let deletionMessage { Text(deletionMessage).font(.footnote).foregroundStyle(.secondary) }
             } header: { Text(language.text("Danger zone", "Zone sensible")) } footer: { Text(language.text("You have 3 days to cancel. Once permanent deletion begins, your Libérons Cloud content cannot be recovered.", "Vous disposez de 3 jours pour annuler. Une fois la suppression définitive commencée, vos contenus Libérons Cloud ne peuvent plus être récupérés.")) }
             Section { Link(destination: webURL(.home)) { fullRow(language.text("Open liberons.com", "Ouvrir liberons.com"), icon: "safari.fill") } } footer: { Text(language.text("Review Libérons legal and privacy information whenever you need it.", "Consultez les informations juridiques et de confidentialité de Libérons à tout moment.")) }
         }
         .scrollContentBackground(.hidden).background(LiberonsTheme.canvas.ignoresSafeArea()).navigationTitle(language.text("Privacy & security", "Confidentialité et sécurité")).navigationBarTitleDisplayMode(.inline)
         .task { await refreshDeletionStatus() }
+        .confirmationDialog(
+            language.text("Delete your Libérons account?", "Supprimer votre compte Libérons ?"),
+            isPresented: $showDeleteConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button(language.text("Delete my account", "Supprimer mon compte"), role: .destructive) { requestDeletion() }
+            Button(language.text("Keep my account", "Garder mon compte"), role: .cancel) { deletionMessage = nil }
+        } message: {
+            Text(language.text("Nothing is deleted now. If you confirm, deletion will be scheduled and you will have 3 days to cancel before your Libérons Cloud photos, videos and files are permanently deleted.", "Rien n’est supprimé maintenant. Si vous confirmez, la suppression sera programmée et vous disposerez de 3 jours pour l’annuler avant la suppression définitive de vos photos, vidéos et fichiers Libérons Cloud."))
+        }
     }
 }
