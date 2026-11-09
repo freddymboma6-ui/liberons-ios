@@ -144,6 +144,13 @@ final class PushNotificationManager: NSObject, UIApplicationDelegate, UNUserNoti
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         let info = response.notification.request.content.userInfo
         await MainActor.run {
+            // Same direct website-opening behavior as Aurora Public.
+            if let rawURL = info["url"] as? String,
+               let destination = URL(string: rawURL),
+               ["https", "http"].contains(destination.scheme?.lowercased() ?? ""),
+               destination.host != nil {
+                UIApplication.shared.open(destination)
+            }
             NotificationCenter.default.post(name: .liberonsPushOpened, object: nil, userInfo: info)
         }
     }
