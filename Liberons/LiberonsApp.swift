@@ -22,15 +22,15 @@ final class LiberonsPushNavigation: ObservableObject {
 
     func receive(_ userInfo: [AnyHashable: Any]) {
         let nested = userInfo["data"] as? [String: Any]
-        let raw = (nested?["url"] as? String)
-            ?? (nested?["link"] as? String)
-            ?? (userInfo["url"] as? String)
+        let raw = (userInfo["url"] as? String)
+            ?? (nested?["url"] as? String)
             ?? (userInfo["link"] as? String)
+            ?? (nested?["link"] as? String)
         guard let raw,
               let url = URL(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
-              url.scheme?.lowercased() == "https",
+              ["https", "http"].contains(url.scheme?.lowercased() ?? ""),
               url.host != nil, url.user == nil, url.password == nil else {
-            print("Libérons push: no valid HTTPS destination in notification")
+            print("Libérons push: no valid web destination in notification")
             return
         }
         destination = url
@@ -38,9 +38,10 @@ final class LiberonsPushNavigation: ObservableObject {
     }
 
     func openPendingIfPossible() {
-        // A notification tap can arrive while iOS is still activating the app.
-        // Match Aurora: request opening immediately, without waiting for .active.
         guard !opening, let url = destination else { return }
+        // The notification delegate may fire while the app is still inactive.
+        // Keep the URL queued until the app can actually present Safari.
+        guard UIApplication.shared.applicationState == .active else { return }
         opening = true
         UIApplication.shared.open(url, options: [:]) { [weak self] success in
             Task { @MainActor in
@@ -49,7 +50,8 @@ final class LiberonsPushNavigation: ObservableObject {
                 if success {
                     if self.destination == url { self.destination = nil }
                 } else {
-                    print("Libérons push: iOS could not open notification URL")
+                    // Preserve the pending URL for the next activation attempt.
+                    print("Libérons push: URL opening failed; retaining pending destination")
                 }
             }
         }
@@ -79,8 +81,8 @@ final class LiberonsNotificationDelegate: NSObject, UIApplicationDelegate, UNUse
         let payload = response.notification.request.content.userInfo
         Task { @MainActor in
             LiberonsPushNavigation.shared.receive(payload)
-            completionHandler()
         }
+        completionHandler()
     }
 }
 
