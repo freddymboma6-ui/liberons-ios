@@ -39,9 +39,8 @@ final class LiberonsPushNavigation: ObservableObject {
 
     func openPendingIfPossible() {
         guard !opening, let url = destination else { return }
-        // The notification delegate may fire while the app is still inactive.
-        // Keep the URL queued until the app can actually present Safari.
-        guard UIApplication.shared.applicationState == .active else { return }
+        // Open immediately when the notification is tapped, as Aurora does.
+        // If iOS declines during launch, keep the destination for the next activation.
         opening = true
         UIApplication.shared.open(url, options: [:]) { [weak self] success in
             Task { @MainActor in
