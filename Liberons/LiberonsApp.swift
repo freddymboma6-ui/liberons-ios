@@ -78,8 +78,28 @@ final class LiberonsNotificationDelegate: NSObject, UIApplicationDelegate, UNUse
             return
         }
         let payload = response.notification.request.content.userInfo
-        Task { @MainActor in
-            LiberonsPushNavigation.shared.receive(payload)
+        let data = payload["data"] as? [String: Any]
+        let rawURL = (payload["url"] as? String)
+            ?? (data?["url"] as? String)
+            ?? (payload["link"] as? String)
+            ?? (data?["link"] as? String)
+
+        // Match Aurora's notification tap path: open the URL directly on main.
+        if let rawURL,
+           let destination = URL(string: rawURL.trimmingCharacters(in: .whitespacesAndNewlines)),
+           ["https", "http"].contains(destination.scheme?.lowercased() ?? ""),
+           destination.host != nil,
+           destination.user == nil, destination.password == nil {
+            DispatchQueue.main.async {
+                UIApplication.shared.open(destination, options: [:]) { success in
+                    if !success {
+                        // Preserve the URL for a retry when iOS finishes launching.
+                        Task { @MainActor in
+                            LiberonsPushNavigation.shared.receive(payload)
+                        }
+                    }
+                }
+            }
         }
         completionHandler()
     }
