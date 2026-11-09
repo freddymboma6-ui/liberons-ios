@@ -13,11 +13,12 @@ private struct LibéronsStoreResult: Decodable {
 }
 
 
-// Keep notification navigation independent of authentication and app launch timing.
+// Notification links are delivered in APNs userInfo.data.url by Libérons Admin.
 @MainActor
 final class LiberonsPushNavigation: ObservableObject {
     static let shared = LiberonsPushNavigation()
-    @Published var destination: URL?
+    @Published private(set) var destination: URL?
+    private var opening = false
 
     func receive(_ userInfo: [AnyHashable: Any]) {
         let nested = userInfo["data"] as? [String: Any]
@@ -28,8 +29,29 @@ final class LiberonsPushNavigation: ObservableObject {
         guard let raw,
               let url = URL(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
               url.scheme?.lowercased() == "https",
-              url.host != nil, url.user == nil, url.password == nil else { return }
+              url.host != nil, url.user == nil, url.password == nil else {
+            print("Libérons push: no valid HTTPS destination in notification")
+            return
+        }
         destination = url
+        openPendingIfPossible()
+    }
+
+    func openPendingIfPossible() {
+        guard !opening, let url = destination,
+              UIApplication.shared.applicationState == .active else { return }
+        opening = true
+        UIApplication.shared.open(url, options: [:]) { [weak self] success in
+            Task { @MainActor in
+                guard let self else { return }
+                self.opening = false
+                if success {
+                    if self.destination == url { self.destination = nil }
+                } else {
+                    print("Libérons push: iOS could not open notification URL")
+                }
+            }
+        }
     }
 }
 
@@ -102,20 +124,15 @@ struct LiberonsApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .onReceive(pushNavigation.$destination) { destination in
-                    guard let destination else { return }
-                    UIApplication.shared.open(destination)
-                    pushNavigation.destination = nil
-                }
                 .task {
+                    pushNavigation.openPendingIfPossible()
                     await checkForUpdate()
-                    if let destination = pushNavigation.destination {
-                        UIApplication.shared.open(destination)
-                        pushNavigation.destination = nil
-                    }
                 }
                 .onChange(of: scenePhase) { _, phase in
-                    if phase == .active { Task { await checkForUpdate() } }
+                    if phase == .active {
+                        pushNavigation.openPendingIfPossible()
+                        Task { await checkForUpdate() }
+                    }
                 }
                 .alert(
                     Locale.current.language.languageCode?.identifier == "fr"
