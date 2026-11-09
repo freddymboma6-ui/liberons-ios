@@ -13,33 +13,58 @@ private struct LibéronsStoreResult: Decodable {
 }
 
 
-// Handle APNs taps in foreground, background, and after a cold launch.
-// Never open arbitrary schemes or links from untrusted notification payloads.
+// Keep notification navigation independent of authentication and app launch timing.
+@MainActor
+final class LiberonsPushNavigation: ObservableObject {
+    static let shared = LiberonsPushNavigation()
+    @Published var destination: URL?
+
+    func receive(_ userInfo: [AnyHashable: Any]) {
+        let nested = userInfo["data"] as? [String: Any]
+        let raw = (nested?["url"] as? String)
+            ?? (nested?["link"] as? String)
+            ?? (userInfo["url"] as? String)
+            ?? (userInfo["link"] as? String)
+        guard let raw,
+              let url = URL(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
+              url.scheme?.lowercased() == "https",
+              url.host != nil, url.user == nil, url.password == nil else { return }
+        destination = url
+    }
+}
+
 final class LiberonsNotificationDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         UNUserNotificationCenter.current().delegate = self
+        if let payload = launchOptions?[.remoteNotification] as? [AnyHashable: Any] {
+            Task { @MainActor in LiberonsPushNavigation.shared.receive(payload) }
+        }
         return true
     }
 
-    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
-        [.banner, .list, .sound, .badge]
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .list, .sound, .badge])
     }
 
-    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
-        guard response.actionIdentifier == UNNotificationDefaultActionIdentifier else { return }
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
+        guard response.actionIdentifier == UNNotificationDefaultActionIdentifier else {
+            completionHandler()
+            return
+        }
         let payload = response.notification.request.content.userInfo
-        let nested = payload["data"] as? [String: Any]
-        let raw = (nested?["url"] as? String) ?? (payload["url"] as? String)
-        guard let raw, let destination = URL(string: raw),
-              destination.scheme?.lowercased() == "https",
-              destination.host != nil, destination.user == nil, destination.password == nil else { return }
-        await MainActor.run { UIApplication.shared.open(destination) }
+        Task { @MainActor in
+            LiberonsPushNavigation.shared.receive(payload)
+            completionHandler()
+        }
     }
 }
 
 @main
 struct LiberonsApp: App {
     @UIApplicationDelegateAdaptor(LiberonsNotificationDelegate.self) private var notificationDelegate
+    @StateObject private var pushNavigation = LiberonsPushNavigation.shared
     @Environment(\.scenePhase) private var scenePhase
     @State private var showOptionalUpdate = false
     @State private var storeURL: URL?
@@ -77,7 +102,18 @@ struct LiberonsApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .task { await checkForUpdate() }
+                .onReceive(pushNavigation.$destination) { destination in
+                    guard let destination else { return }
+                    UIApplication.shared.open(destination)
+                    pushNavigation.destination = nil
+                }
+                .task {
+                    await checkForUpdate()
+                    if let destination = pushNavigation.destination {
+                        UIApplication.shared.open(destination)
+                        pushNavigation.destination = nil
+                    }
+                }
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .active { Task { await checkForUpdate() } }
                 }
