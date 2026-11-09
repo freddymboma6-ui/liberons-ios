@@ -1,4 +1,6 @@
 import SwiftUI
+import UserNotifications
+import UIKit
 
 private struct LibéronsStoreResult: Decodable {
     let resultCount: Int
@@ -10,8 +12,34 @@ private struct LibéronsStoreResult: Decodable {
     }
 }
 
+
+// Handle APNs taps in foreground, background, and after a cold launch.
+// Never open arbitrary schemes or links from untrusted notification payloads.
+final class LiberonsNotificationDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        UNUserNotificationCenter.current().delegate = self
+        return true
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
+        [.banner, .list, .sound, .badge]
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
+        guard response.actionIdentifier == UNNotificationDefaultActionIdentifier else { return }
+        let payload = response.notification.request.content.userInfo
+        let nested = payload["data"] as? [String: Any]
+        let raw = (nested?["url"] as? String) ?? (payload["url"] as? String)
+        guard let raw, let destination = URL(string: raw),
+              destination.scheme?.lowercased() == "https",
+              destination.host != nil, destination.user == nil, destination.password == nil else { return }
+        await MainActor.run { UIApplication.shared.open(destination) }
+    }
+}
+
 @main
 struct LiberonsApp: App {
+    @UIApplicationDelegateAdaptor(LiberonsNotificationDelegate.self) private var notificationDelegate
     @Environment(\.scenePhase) private var scenePhase
     @State private var showOptionalUpdate = false
     @State private var storeURL: URL?
