@@ -2,6 +2,7 @@ import SwiftUI
 import UIKit
 import Supabase
 import Auth
+import StoreKit
 
 extension Notification.Name {
     static let liberonsPullToRefresh = Notification.Name("liberons.pullToRefresh")
@@ -17,7 +18,49 @@ private enum RegistrationConfirmationResult: String, Identifiable {
 struct LiberonsApp: App {
     @UIApplicationDelegateAdaptor(LiberonsAppDelegate.self) private var appDelegate
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.requestReview) private var requestReview
     @State private var registrationConfirmation: RegistrationConfirmationResult?
+    @State private var availableUpdateURL: URL?
+    @State private var showingUpdateAlert = false
+    @AppStorage("liberons.review.launchCount") private var reviewLaunchCount = 0
+    @AppStorage("liberons.review.lastPromptAt") private var lastReviewPromptAt = 0.0
+    @AppStorage("liberons.update.lastCheckAt") private var lastUpdateCheckAt = 0.0
+
+    @MainActor private func checkForAppStoreUpdate() async {
+        let now = Date().timeIntervalSince1970
+        guard now - lastUpdateCheckAt >= 12 * 3600,
+              let bundleID = Bundle.main.bundleIdentifier,
+              let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
+              var lookup = URLComponents(string: "https://itunes.apple.com/lookup") else { return }
+        lastUpdateCheckAt = now
+        lookup.queryItems = [
+            URLQueryItem(name: "bundleId", value: bundleID),
+            URLQueryItem(name: "country", value: Locale.current.region?.identifier ?? "ca")
+        ]
+        guard let url = lookup.url else { return }
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let app = (json["results"] as? [[String: Any]])?.first,
+                  let latest = app["version"] as? String,
+                  let storeURL = app["trackViewUrl"] as? String,
+                  let destination = URL(string: storeURL),
+                  latest.compare(currentVersion, options: .numeric) == .orderedDescending else { return }
+            availableUpdateURL = destination
+            showingUpdateAlert = true
+        } catch {
+            // Store lookup failures must never block Libérons.
+        }
+    }
+
+    @MainActor private func considerNativeReviewPrompt() {
+        reviewLaunchCount += 1
+        let now = Date().timeIntervalSince1970
+        guard reviewLaunchCount >= 5, now - lastReviewPromptAt >= 90 * 86400 else { return }
+        lastReviewPromptAt = now
+        requestReview()
+    }
+
 
     init() {
         LocalStorageGuard.configure()
@@ -56,6 +99,18 @@ struct LiberonsApp: App {
                     Button(isFrench ? "Continuer vers Libérons" : "Continue to Libérons") { registrationConfirmation = nil }
                 } message: {
                     if let registrationConfirmation { Text(confirmationMessage(for: registrationConfirmation)) }
+                }
+                .alert(isFrench ? "Mise à jour disponible" : "Update available", isPresented: $showingUpdateAlert) {
+                    Button(isFrench ? "Plus tard" : "Later", role: .cancel) {}
+                    Button(isFrench ? "Mettre à jour" : "Update") {
+                        if let availableUpdateURL { UIApplication.shared.open(availableUpdateURL) }
+                    }
+                } message: {
+                    Text(isFrench ? "Une nouvelle version de Libérons est disponible sur l’App Store. Vous pouvez continuer à utiliser l’application." : "A new version of Libérons is available on the App Store. You can continue using the app.")
+                }
+                .onAppear {
+                    considerNativeReviewPrompt()
+                    Task { await checkForAppStoreUpdate() }
                 }
                 .refreshable {
                     NotificationCenter.default.post(name: .liberonsPullToRefresh, object: nil)
