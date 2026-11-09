@@ -38,8 +38,9 @@ final class LiberonsPushNavigation: ObservableObject {
     }
 
     func openPendingIfPossible() {
-        guard !opening, let url = destination,
-              UIApplication.shared.applicationState == .active else { return }
+        // A notification tap can arrive while iOS is still activating the app.
+        // Match Aurora: request opening immediately, without waiting for .active.
+        guard !opening, let url = destination else { return }
         opening = true
         UIApplication.shared.open(url, options: [:]) { [weak self] success in
             Task { @MainActor in
