@@ -65,7 +65,7 @@ private struct AccountView: View {
                   let app=(json["results"] as? [[String:Any]])?.first,
                   let trackID=app["trackId"] as? Int,
                   let reviewURL=URL(string:"https://apps.apple.com/app/id\(trackID)?action=write-review") else { return }
-            UIApplication.shared.open(reviewURL)
+            await UIApplication.shared.open(reviewURL)
         } catch {
             // App Store lookup failures must not affect cloud storage or the account.
         }
