@@ -109,6 +109,7 @@ struct LiberonsApp: App {
                     Text(isFrench ? "Une nouvelle version de Libérons est disponible sur l’App Store. Vous pouvez continuer à utiliser l’application." : "A new version of Libérons is available on the App Store. You can continue using the app.")
                 }
                 .onAppear {
+                    PushNotificationManager.shared.openPendingDestination()
                     considerNativeReviewPrompt()
                     Task { await checkForAppStoreUpdate() }
                 }
@@ -171,6 +172,7 @@ struct LiberonsApp: App {
                 ImmediateBackgroundExecution.shared.begin()
                 BackgroundBackupScheduler.shared.schedule()
             } else if phase == .active {
+                PushNotificationManager.shared.openPendingDestination()
                 ImmediateBackgroundExecution.shared.end()
                 Task {
                     if (try? await SupabaseService.client.auth.session) != nil {
