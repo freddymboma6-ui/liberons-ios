@@ -136,7 +136,7 @@ private struct AccountView: View {
             guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let first = (json["results"] as? [[String: Any]])?.first,
                   let trackID = first["trackId"] as? Int,
-                  let reviewURL = URL(string: "https://apps.apple.com/app/id\\(trackID)?action=write-review") else { return }
+                  let reviewURL = URL(string: "https://apps.apple.com/app/id\(trackID)?action=write-review") else { return }
             UIApplication.shared.open(reviewURL)
         } catch {
             // No account or backup behavior depends on this external link.
