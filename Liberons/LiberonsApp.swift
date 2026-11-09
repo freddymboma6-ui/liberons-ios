@@ -73,34 +73,18 @@ final class LiberonsNotificationDelegate: NSObject, UIApplicationDelegate, UNUse
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                 withCompletionHandler completionHandler: @escaping () -> Void) {
-        guard response.actionIdentifier == UNNotificationDefaultActionIdentifier else {
-            completionHandler()
-            return
-        }
-        let payload = response.notification.request.content.userInfo
-        let data = payload["data"] as? [String: Any]
-        let rawURL = (payload["url"] as? String)
-            ?? (data?["url"] as? String)
-            ?? (payload["link"] as? String)
-            ?? (data?["link"] as? String)
+        let userInfo = response.notification.request.content.userInfo
 
-        // Match Aurora's notification tap path: open the URL directly on main.
-        if let rawURL,
-           let destination = URL(string: rawURL.trimmingCharacters(in: .whitespacesAndNewlines)),
+        // Mirror Aurora Public: only a notification with a top-level URL opens a website.
+        if let rawURL = userInfo["url"] as? String,
+           let destination = URL(string: rawURL),
            ["https", "http"].contains(destination.scheme?.lowercased() ?? ""),
-           destination.host != nil,
-           destination.user == nil, destination.password == nil {
+           destination.host != nil {
             DispatchQueue.main.async {
-                UIApplication.shared.open(destination, options: [:]) { success in
-                    if !success {
-                        // Preserve the URL for a retry when iOS finishes launching.
-                        Task { @MainActor in
-                            LiberonsPushNavigation.shared.receive(payload)
-                        }
-                    }
-                }
+                UIApplication.shared.open(destination)
             }
         }
+
         completionHandler()
     }
 }
