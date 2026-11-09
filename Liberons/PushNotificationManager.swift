@@ -8,7 +8,6 @@ final class PushNotificationManager: NSObject, UIApplicationDelegate, UNUserNoti
     static let shared = PushNotificationManager()
     private let cachedTokenKey = "liberons.apns-device-token"
     private var languageObserver: NSObjectProtocol?
-    private var pendingDestination: URL?
 
     private override init() { super.init() }
 
@@ -138,41 +137,33 @@ final class PushNotificationManager: NSObject, UIApplicationDelegate, UNUserNoti
         return id
     }
 
-    // Admin-supplied HTTPS links are navigation data, never executable instructions.
-    private func destination(from userInfo: [AnyHashable: Any]) -> URL? {
-        let data = userInfo["data"] as? [String: Any]
-        let raw = (data?["url"] as? String) ?? (userInfo["url"] as? String)
-        guard let raw, raw.count <= 2048,
-              let url = URL(string: raw),
-              url.scheme?.lowercased() == "https",
-              let host = url.host, !host.isEmpty,
-              url.user == nil, url.password == nil else { return nil }
-        return url
-    }
-
-    func handleNotificationTap(_ userInfo: [AnyHashable: Any]) {
-        guard let url = destination(from: userInfo) else { return }
-        pendingDestination = url
-        openPendingDestination()
-    }
-
-    func openPendingDestination() {
-        guard let url = pendingDestination,
-              UIApplication.shared.applicationState == .active else { return }
-        pendingDestination = nil
-        Task { _ = await UIApplication.shared.open(url) }
-    }
-
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
         [.banner, .list, .sound, .badge]
     }
 
-    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
-        let info = response.notification.request.content.userInfo
-        await MainActor.run {
-            PushNotificationManager.shared.handleNotificationTap(info)
-            NotificationCenter.default.post(name: .liberonsPushOpened, object: nil, userInfo: info)
+    // Same notification tap handler as Aurora Public: read top-level URL and open on main.
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        let userInfo = response.notification.request.content.userInfo
+
+        if let rawURL = userInfo["url"] as? String,
+           let destination = URL(string: rawURL),
+           ["https", "http"].contains(destination.scheme?.lowercased() ?? ""),
+           destination.host != nil {
+            DispatchQueue.main.async {
+                UIApplication.shared.open(destination)
+            }
         }
+
+        NotificationCenter.default.post(
+            name: .liberonsPushOpened,
+            object: nil,
+            userInfo: userInfo
+        )
+        completionHandler()
     }
 }
 
