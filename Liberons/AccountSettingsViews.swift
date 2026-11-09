@@ -200,7 +200,7 @@ struct LiberonsAboutView: View {
                     Text(language.text("Libérons online", "Libérons en ligne")).font(.headline)
                     LiberonsExternalRow(icon: "globe", title: language.text("Visit Libérons", "Découvrir Libérons"), subtitle: language.text("Official website", "Site officiel")) { open(.home) }
                 }
-                aboutCard { HStack { Text(language.text("App version", "Version de l’app")); Spacer(); Text(version).foregroundStyle(.secondary) }; Divider(); HStack { Text(language.text("Service operator", "Exploitant du service")); Spacer(); Text("Freddy Mboma").foregroundStyle(.secondary) }; Divider(); HStack { Text(language.text("Based in", "Établi au")); Spacer(); Text("Canada").foregroundStyle(.secondary) } }
+                aboutCard { HStack { Text(language.text("App version", "Version de l’app")); Spacer(); Text(version).foregroundStyle(.secondary) }; Divider(); HStack { Text(language.text("Service operator", "Exploitant du service")); Spacer(); Text("Libérons Cloud").foregroundStyle(.secondary) }; Divider(); HStack { Text(language.text("Based in", "Établi au")); Spacer(); Text("Canada").foregroundStyle(.secondary) } }
                 Text(language.text("Libérons · Built to protect what matters and give your space back.", "Libérons · Protéger ce qui compte. Retrouver votre espace.")).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 Text("© 2026 Libérons").font(.caption).foregroundStyle(.secondary).padding(.bottom, 12)
             }.padding(24)
