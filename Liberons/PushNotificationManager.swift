@@ -141,28 +141,34 @@ final class PushNotificationManager: NSObject, UIApplicationDelegate, UNUserNoti
         [.banner, .list, .sound, .badge]
     }
 
-    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
+    // Match Aurora's completion-handler delegate path and main-queue URL opening.
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
         let info = response.notification.request.content.userInfo
-        await MainActor.run {
-            // Follow Aurora's direct-open behavior for notification URLs.
-            // Do not dispatch the same web link through a second in-app handler.
-            // Libérons send-push puts custom fields inside the APNs "data" dictionary.
-            let payload = info["data"] as? [String: Any] ?? [:]
-            let rawURL = (info["url"] as? String)
-                ?? (info["link"] as? String)
-                ?? (info["deep_link"] as? String)
-                ?? (payload["url"] as? String)
-                ?? (payload["link"] as? String)
-                ?? (payload["deep_link"] as? String)
-            if let rawURL,
-               let destination = URL(string: rawURL),
-               ["https", "http"].contains(destination.scheme?.lowercased() ?? ""),
-               destination.host != nil {
+        // Our APNs sender nests custom fields under "data"; Aurora sends "url" at root.
+        let data = info["data"] as? [String: Any] ?? [:]
+        let rawURL = (info["url"] as? String)
+            ?? (data["url"] as? String)
+            ?? (info["link"] as? String)
+            ?? (data["link"] as? String)
+            ?? (info["deep_link"] as? String)
+            ?? (data["deep_link"] as? String)
+        if let rawURL,
+           let destination = URL(string: rawURL),
+           ["https", "http"].contains(destination.scheme?.lowercased() ?? ""),
+           destination.host != nil {
+            DispatchQueue.main.async {
                 UIApplication.shared.open(destination)
-            } else {
+            }
+        } else {
+            DispatchQueue.main.async {
                 NotificationCenter.default.post(name: .liberonsPushOpened, object: nil, userInfo: info)
             }
         }
+        completionHandler()
     }
 }
 
