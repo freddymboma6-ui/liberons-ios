@@ -146,9 +146,14 @@ final class PushNotificationManager: NSObject, UIApplicationDelegate, UNUserNoti
         await MainActor.run {
             // Follow Aurora's direct-open behavior for notification URLs.
             // Do not dispatch the same web link through a second in-app handler.
+            // Libérons send-push puts custom fields inside the APNs "data" dictionary.
+            let payload = info["data"] as? [String: Any] ?? [:]
             let rawURL = (info["url"] as? String)
                 ?? (info["link"] as? String)
                 ?? (info["deep_link"] as? String)
+                ?? (payload["url"] as? String)
+                ?? (payload["link"] as? String)
+                ?? (payload["deep_link"] as? String)
             if let rawURL,
                let destination = URL(string: rawURL),
                ["https", "http"].contains(destination.scheme?.lowercased() ?? ""),
