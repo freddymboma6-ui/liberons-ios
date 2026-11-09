@@ -1,6 +1,7 @@
 import SwiftUI
 import Photos
 import Supabase
+import StoreKit
 
 struct ContentView: View {
     @StateObject private var auth = AuthStore()
@@ -35,6 +36,17 @@ private struct SignInView: View {
 }
 
 private struct MainAppView: View {
+    @Environment(\.requestReview) private var requestReview
+    @AppStorage("liberons.review.launchCount") private var reviewLaunchCount = 0
+    @AppStorage("liberons.review.lastPromptAt") private var lastReviewPromptAt = 0.0
+
+    private func considerReview() {
+        reviewLaunchCount += 1
+        guard reviewLaunchCount >= 5,
+              Date().timeIntervalSince1970 - lastReviewPromptAt > 90 * 86400 else { return }
+        lastReviewPromptAt = Date().timeIntervalSince1970
+        requestReview()
+    }
     @ObservedObject var auth: AuthStore; @ObservedObject var language: LanguageStore
     @StateObject private var analyzer = PhotoLibraryAnalyzer(); @StateObject private var preferences = BackupPreferences()
     var body: some View { TabView {
@@ -42,7 +54,8 @@ private struct MainAppView: View {
         BackupView(analyzer: analyzer, preferences: preferences, language: language).tabItem { Label(language.text("Backup", "Sauvegarde"), systemImage: "icloud.and.arrow.up.fill") }
         CloudLibraryView(language: language).tabItem { Label(language.text("Library", "Bibliothèque"), systemImage: "photo.on.rectangle.angled") }
         AccountView(auth: auth, language: language).tabItem { Label(language.text("Account", "Compte"), systemImage: "person.crop.circle.fill") }
-    }.task { await analyzer.refreshIfNeeded() } }
+    }.task { await analyzer.refreshIfNeeded() }
+     .onAppear { considerReview() } }
 }
 
 private struct DashboardView: View {
@@ -106,11 +119,42 @@ private struct CloudLibraryView: View { @ObservedObject var language: LanguageSt
 private struct AccountView: View {
     @ObservedObject var auth: AuthStore
     @ObservedObject var language: LanguageStore
+    @State private var openingReview = false
+
+    @MainActor private func openReviewPage() async {
+        guard !openingReview, let bundleID = Bundle.main.bundleIdentifier,
+              var components = URLComponents(string: "https://itunes.apple.com/lookup") else { return }
+        openingReview = true
+        defer { openingReview = false }
+        components.queryItems = [
+            URLQueryItem(name: "bundleId", value: bundleID),
+            URLQueryItem(name: "country", value: Locale.current.region?.identifier ?? "ca")
+        ]
+        guard let url = components.url else { return }
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let first = (json["results"] as? [[String: Any]])?.first,
+                  let trackID = first["trackId"] as? Int,
+                  let reviewURL = URL(string: "https://apps.apple.com/app/id\\(trackID)?action=write-review") else { return }
+            UIApplication.shared.open(reviewURL)
+        } catch {
+            // No account or backup behavior depends on this external link.
+        }
+    }
     var body: some View {
         NavigationStack {
             Form {
                 Section(language.text("Storage plan", "Forfait de stockage")) { HStack { Text(language.text("Current plan", "Forfait actuel")); Spacer(); Text("2 GB Free") } }
                 Section(language.text("Language", "Langue")) { Picker(language.text("Language", "Langue"), selection: $language.language) { ForEach(LanguageStore.Language.allCases) { Text($0.title).tag($0) } } }
+                Section(language.text("Rate Libérons", "Noter Libérons")) {
+                    Button {
+                        Task { await openReviewPage() }
+                    } label: {
+                        Label(language.text("Leave a review", "Laisser un avis"), systemImage: "star.bubble")
+                    }
+                    .disabled(openingReview)
+                }
                 Section { Button(language.text("Sign out", "Se déconnecter"), role: .destructive) { Task { await auth.signOut() } } }
             }
             .navigationTitle(language.text("Account", "Compte"))
