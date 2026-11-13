@@ -98,6 +98,8 @@ struct ProtectedLibraryView: View {
     @StateObject private var store = ProtectedMediaStore()
     @StateObject private var billing = CloudStorageSummary()
     @State private var viewerItem: ProtectedCloudMedia?
+    @State private var selectingAll = false
+    @State private var selectAllFailed = false
     @State private var selectedIDs: Set<UUID> = []
     @State private var isSelecting = false
     @State private var showBulkDelete = false
@@ -173,18 +175,27 @@ struct ProtectedLibraryView: View {
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if isSelecting {
                     HStack(spacing: 10) {
-                        Button { let visible = Set(displayItems.map(\.id)); if !visible.isEmpty && selectedIDs == visible { selectedIDs.removeAll() } else { selectedIDs = visible } } label: {
-                            let visible = Set(displayItems.map(\.id)); Text(!visible.isEmpty && selectedIDs == visible ? language.text("Deselect all", "Tout désélectionner") : language.text("Select all", "Tout sélectionner")).font(.subheadline.weight(.semibold))
-                        }
+                        Button {
+                            if allItemsSelected { selectedIDs.removeAll() }
+                            else { Task { await selectAllItems() } }
+                        } label: {
+                            if selectingAll { ProgressView() }
+                            else { Text(allItemsSelected ? language.text("Deselect all", "Tout désélectionner") : language.text("Select all", "Tout sélectionner")).font(.subheadline.weight(.semibold)) }
+                        }.disabled(selectingAll || restoringSelection || deletingSelection || store.isLoading)
                         Spacer(minLength: 4)
                         Button { showBulkRestore = true } label: {
                             if restoringSelection { ProgressView() } else { Label(language.text("Restore", "Remettre"), systemImage: "square.and.arrow.down").font(.subheadline.weight(.semibold)) }
-                        }.disabled(selectedIDs.isEmpty || restoringSelection || deletingSelection || billing.isPaymentRestricted)
+                        }.disabled(selectingAll || selectedIDs.isEmpty || restoringSelection || deletingSelection || billing.isPaymentRestricted)
                         Button(role: .destructive) { showBulkDelete = true } label: {
                             if deletingSelection { ProgressView() } else { Label(language.text("Delete from Libérons", "Supprimer de Libérons"), systemImage: "trash").font(.subheadline.weight(.semibold)) }
-                        }.disabled(selectedIDs.isEmpty || deletingSelection || restoringSelection)
+                        }.disabled(selectingAll || selectedIDs.isEmpty || deletingSelection || restoringSelection)
                     }.padding(.horizontal, 18).padding(.vertical, 12).background(.ultraThinMaterial)
                 }
+            }
+            .alert(language.text("Selection incomplete", "Sélection incomplète"), isPresented: $selectAllFailed) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(language.text("The full library could not be loaded. Please try again.", "Impossible de charger toute la bibliothèque. Réessayez."))
             }
             .task { await refreshLibrary() }
             .fullScreenCover(item: $viewerItem) { item in ProtectedGalleryViewer(items: displayItems, initialID: item.id, language: language, billing: billing).navigationTransition(.zoom(sourceID: item.id, in: photoTransition)).onDisappear { ProtectedMediaCache.shared.clearFullResolution() } }
@@ -226,6 +237,30 @@ struct ProtectedLibraryView: View {
     }
 
     private func resultRow(icon:String,value:Int,text:String,color:Color)->some View { HStack(spacing:12){Image(systemName:icon).foregroundStyle(color).frame(width:24);Text("\(value)").font(.headline.monospacedDigit());Text(text).font(.subheadline);Spacer()}.padding(12).background(color.opacity(0.07),in:RoundedRectangle(cornerRadius:14)) }
+    private var allItemsSelected: Bool {
+        !store.hasMore && !displayItems.isEmpty && selectedIDs.count == displayItems.count &&
+            displayItems.allSatisfy { selectedIDs.contains($0.id) }
+    }
+
+    @MainActor private func selectAllItems() async {
+        guard !selectingAll else { return }
+        let filter = mediaFilter
+        let newestFirst = sortNewestFirst
+        selectingAll = true
+        defer { selectingAll = false }
+        while store.hasMore {
+            let previousCount = store.items.count
+            await store.loadMore()
+            guard isSelecting, mediaFilter == filter, sortNewestFirst == newestFirst else { return }
+            if store.items.count == previousCount && store.hasMore {
+                selectAllFailed = true
+                return
+            }
+        }
+        rebuildDisplayItems()
+        selectedIDs = Set(displayItems.map(\.id))
+    }
+
     private func toggle(_ id: UUID) { if selectedIDs.contains(id) { selectedIDs.remove(id) } else { selectedIDs.insert(id) } }
     @MainActor private func selectFilter(_ filter: ProtectedLibraryFilter) { guard mediaFilter != filter else { return }; withAnimation(.snappy(duration: 0.24)) { mediaFilter = filter }; selectedIDs.removeAll(); Task { await store.refresh(filter: filter.rawValue, newestFirst: sortNewestFirst); rebuildDisplayItems() } }
     @MainActor private func setSort(newestFirst: Bool) { guard sortNewestFirst != newestFirst else { return }; sortNewestFirst = newestFirst; selectedIDs.removeAll(); Task { await store.refresh(filter: mediaFilter.rawValue, newestFirst: newestFirst); rebuildDisplayItems() } }
