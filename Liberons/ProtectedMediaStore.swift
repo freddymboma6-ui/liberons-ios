@@ -31,13 +31,13 @@ final class ProtectedMediaStore: ObservableObject {
     func refresh(filter: String = "all", newestFirst: Bool = true) async {
         // Category changes remain local for already-loaded metadata. Never throw
         // away a loaded page merely because the user taps All / Photos / Videos.
-        if !items.isEmpty && (filter != currentFilter || newestFirst != currentNewestFirst) {
+        if !items.isEmpty && filter != currentFilter && newestFirst == currentNewestFirst {
             currentFilter = filter
-            currentNewestFirst = newestFirst
             return
         }
 
         if let activeRefresh { await activeRefresh.value; return }
+        if let activeLoadMore { await activeLoadMore.value }
         let task = Task<Void, Never> { @MainActor [weak self] in
             guard let self else { return }
             await self.performRefresh(requestedFilter: filter, newestFirst: newestFirst)
