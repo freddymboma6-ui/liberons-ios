@@ -78,7 +78,7 @@ struct BackupQueueView: View {
         .sheet(isPresented:$showPostBackupCleanup){premiumProtectedCleanupReview}
         .sheet(isPresented:$showRecentlyDeletedGuide){recentlyDeletedGuide}
         .sheet(isPresented:$showStopConfirmation){premiumStopConfirmation.presentationDetents([.height(470)]).presentationDragIndicator(.visible).presentationCornerRadius(32)}
-        .onChange(of:backup.protectionBatchID){_,_ in hideFinishedTask=false;if !backup.newlyProtectedLocalIdentifiers.isEmpty && backup.queueRemaining == 0 && backup.queueFailed == 0 && !backup.isStopping{showPostBackupCleanup=true}}
+        .onChange(of:backup.protectionBatchID){_,_ in hideFinishedTask=false;if !protectedStillOnDevice.isEmpty{showPostBackupCleanup=true}}
     }
 
     private var premiumStopConfirmation: some View {
