@@ -78,7 +78,7 @@ struct BackupQueueView: View {
         .sheet(isPresented:$showPostBackupCleanup){premiumProtectedCleanupReview}
         .sheet(isPresented:$showRecentlyDeletedGuide){recentlyDeletedGuide}
         .sheet(isPresented:$showStopConfirmation){premiumStopConfirmation.presentationDetents([.height(470)]).presentationDragIndicator(.visible).presentationCornerRadius(32)}
-        .onChange(of:backup.protectionBatchID){_,_ in hideFinishedTask=false;if !protectedStillOnDevice.isEmpty{showPostBackupCleanup=true}}
+        .onChange(of:backup.protectionBatchID){_,_ in hideFinishedTask=false;if !backup.newlyProtectedLocalIdentifiers.isEmpty && backup.queueRemaining == 0 && !backup.isStopping{showPostBackupCleanup=true}}
     }
 
     private var premiumStopConfirmation: some View {
@@ -98,12 +98,6 @@ struct BackupQueueView: View {
         VStack(alignment:.leading,spacing:12){
             Label(taskFullyCompleted ? language.text("Protection complete","Protection terminée") : taskWasStopped ? language.text("Protection stopped","Protection arrêtée") : language.text("Task finished","Tâche terminée"),systemImage:taskFullyCompleted && backup.queueFailed==0 ? "checkmark.circle.fill":"checkmark.shield.fill").font(.headline).foregroundStyle(taskFullyCompleted && backup.queueFailed==0 ? .green:.orange)
             Text(taskFullyCompleted ? language.text("This task is finished. Here is the final result.","Cette tâche est terminée. Voici le résultat final.") : language.text("The task has ended. Items already protected remain safely in Libérons.","La tâche est terminée. Les éléments déjà protégés restent en sécurité dans Libérons.")).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
-            if let reason = backup.lastFailureReason, backup.queueFailed > 0 {
-                Text(language.text("Last error: ", "Dernière erreur : ") + reason)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
             if taskWasStopped{
                 VStack(spacing:10){
                     HStack(spacing:0){resultMetric(value:backup.queueCompleted,label:language.text("Protected","Protégés"),icon:"checkmark.shield.fill",tint:.green);Divider().frame(height:42);resultMetric(value:backup.queueFailed,label:language.text("Failed","Échoués"),icon:"exclamationmark.triangle.fill",tint:backup.queueFailed>0 ? .orange:.secondary)}
@@ -112,7 +106,7 @@ struct BackupQueueView: View {
             }else{
                 HStack(spacing:0){resultMetric(value:backup.queueCompleted,label:language.text("Protected","Protégés"),icon:"checkmark.shield.fill",tint:.green);Divider().frame(height:42);resultMetric(value:backup.queueFailed,label:language.text("Failed","Échoués"),icon:"exclamationmark.triangle.fill",tint:backup.queueFailed>0 ? .orange:.secondary)}
             }
-            if taskFullyCompleted && backup.queueFailed==0{Label(language.text("Everything selected for this task was protected successfully.","Tout ce qui était sélectionné pour cette tâche a été protégé avec succès."),systemImage:"checkmark.seal.fill").font(.caption.bold()).foregroundStyle(.green).fixedSize(horizontal:false,vertical:true)}else if backup.queueFailed>0{Text(language.text("Some items could not be protected. You can start another task to try again.","Certains éléments n’ont pas pu être protégés. Vous pouvez lancer une autre tâche pour réessayer.")).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)}else if taskWasStopped{Text(language.text("The backup stopped before processing the whole selection. You can restart it to protect the remaining items.","La sauvegarde s’est arrêtée avant la fin de la sélection. Vous pouvez protéger davantage quand vous voulez.")).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)}
+            if taskFullyCompleted && backup.queueFailed==0{Label(language.text("Everything selected for this task was protected successfully.","Tout ce qui était sélectionné pour cette tâche a été protégé avec succès."),systemImage:"checkmark.seal.fill").font(.caption.bold()).foregroundStyle(.green).fixedSize(horizontal:false,vertical:true)}else if backup.queueFailed>0{Text(language.text("Some items could not be protected. You can start another task to try again.","Certains éléments n’ont pas pu être protégés. Vous pouvez lancer une autre tâche pour réessayer.")).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)}else if taskWasStopped{Text(language.text("You stopped before the whole selection was processed. You can protect more whenever you want.","Vous avez arrêté avant la fin de la sélection. Vous pouvez protéger davantage quand vous voulez.")).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)}
         }.frame(maxWidth:.infinity,alignment:.leading).padding(16).background(Color(uiColor:.secondarySystemGroupedBackground),in:RoundedRectangle(cornerRadius:20,style:.continuous)).clipped()
     }
 
