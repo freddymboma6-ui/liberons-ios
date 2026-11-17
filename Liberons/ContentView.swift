@@ -246,13 +246,13 @@ private struct StorageSharingView: View {
                             Text(share.owner_id == SupabaseService.client.auth.currentUser?.id ? language.text("Shared by you","Partagé par vous") : language.text("Shared with you","Partagé avec vous")).font(.subheadline.weight(.semibold))
                             Text("\(capacity(share.limit_bytes)) · \(share.status)").font(.caption).foregroundStyle(.secondary)
                             Text(language.text("Used","Utilisé") + ": " + capacity(usages[share.id] ?? 0)).font(.caption)
-                            if share.status == "pending" {
+                            if share.status == "pending" && share.recipient_id == SupabaseService.client.auth.currentUser?.id {
                                 HStack {
                                     Button(language.text("Accept","Accepter")) { respond(share.id,true) }.buttonStyle(.borderedProminent)
                                     Button(language.text("Decline","Refuser")) { respond(share.id,false) }.buttonStyle(.bordered)
                                 }.disabled(busy)
                             }
-                            if share.status == "accepted" {
+                            if share.status == "accepted" && share.owner_id == SupabaseService.client.auth.currentUser?.id {
                                 Button(language.text("Stop sharing","Arrêter le partage"),role:.destructive) { cancel(share.id) }.disabled(busy)
                             }
                         }
