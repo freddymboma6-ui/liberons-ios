@@ -95,7 +95,14 @@ enum SupabaseService {
             default:
                 if ["initiate-upload","verify-upload","upload-media-thumbnail"].contains(name) {
                     let french=UserDefaults.standard.string(forKey:"liberons.language") == "fr"
-                    message = http.statusCode == 413 ? (french ? "Votre espace Libérons est plein. Choisissez un forfait supérieur pour continuer." : "Your Libérons storage is full. Choose a larger plan to continue.") : (french ? "Libérons poursuit la vérification de votre sauvegarde. Vous pouvez continuer à utiliser l’application." : "Libérons is checking your backup. You can continue using the app.")
+                    let serverReason = payload?.error ?? payload?.message ?? "HTTP \(http.statusCode)"
+                    if http.statusCode == 413 {
+                        message = french ? "Votre espace Libérons est plein. Choisissez un forfait supérieur pour continuer." : "Your Libérons storage is full. Choose a larger plan to continue."
+                    } else if http.statusCode == 409 && serverReason == "UPLOAD_RECONCILIATION_REQUIRED" {
+                        message = "UPLOAD_RECONCILIATION_REQUIRED"
+                    } else {
+                        message = "\(name) HTTP \(http.statusCode): \(serverReason)"
+                    }
                 } else { message=payload?.message ?? payload?.error ?? "La demande n’a pas pu être effectuée." }
             }
             throw NSError(domain:"LiberonsCloud",code:http.statusCode,userInfo:[NSLocalizedDescriptionKey:message,"LiberonsTier":payload?.tier ?? "","RetryAfterSeconds":payload?.retry_after_seconds ?? 0,"LiberonsDiagnostic":payload?.error ?? payload?.message ?? ""])
