@@ -52,8 +52,21 @@ struct FreeSpaceView: View {
             } else {
                 VStack(alignment: .leading, spacing: 5) {
                     Text("\(cleaner.selectedLocalIdentifiers.count) " + language.text("item(s)", "élément(s)")).font(.title3.bold())
-                    Text(language.text("About \(selectedSize) can be freed", "Environ \(selectedSize) peuvent être libérés")).foregroundStyle(.green).fontWeight(.semibold)
+                    Text(language.text("\(selectedSize) of photos and videos protected in Libérons (cloud size)", "\(selectedSize) de photos et vidéos protégées dans Libérons (taille cloud)")).foregroundStyle(.secondary).fontWeight(.semibold)
+                    Text(language.text("Actual local space reclaimable: not reliably measurable before removal, especially with iCloud Photos optimization.", "Espace local réellement libérable : non mesurable de façon fiable avant suppression, notamment avec l’optimisation Photos iCloud.")).font(.caption).foregroundStyle(.secondary)
                 }
+            }
+
+            if cleaner.lastRemovedCount > 0 {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(language.text("Observed iPhone storage change", "Variation du stockage iPhone observée")).font(.headline)
+                    if let bytes = cleaner.measuredFreedBytes {
+                        Text(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)).font(.title2.bold()).foregroundStyle(.green)
+                    } else {
+                        Text(language.text("Measurement unavailable", "Mesure indisponible")).foregroundStyle(.secondary)
+                    }
+                    Text(language.text("Measured shortly after removing \(cleaner.lastRemovedCount) photo(s) and/or video(s). iOS and Recently Deleted may delay freeing space. This is not a guarantee of permanent space reclaimed.", "Mesuré peu après le retrait de \(cleaner.lastRemovedCount) photo(s) et/ou vidéo(s). iOS et l’album Supprimés récemment peuvent retarder la libération. Ce résultat ne garantit pas un gain définitif.")).font(.caption).foregroundStyle(.secondary)
+                }.padding(12).background(LiberonsTheme.insetCard, in: RoundedRectangle(cornerRadius: 14))
             }
 
             if !cleaner.message.isEmpty {
@@ -76,7 +89,7 @@ struct FreeSpaceView: View {
             }
             .buttonStyle(.borderedProminent).controlSize(.large).disabled(cleaner.isLoading || cleaner.isDeleting)
 
-            Label(language.text("Libérons never deletes the cloud copy here. Apple Photos asks for its own confirmation before removing local originals.", "Libérons ne supprime jamais la copie cloud ici. Photos demande sa propre confirmation avant de retirer les originaux locaux."), systemImage: "lock.shield.fill")
+            Label(language.text("Libérons never deletes the cloud copy here. Apple Photos asks for confirmation; with iCloud Photos enabled, deleting also affects synced iCloud devices.", "Libérons ne supprime jamais la copie cloud ici. Photos demande confirmation ; si Photos iCloud est activé, la suppression concerne aussi les appareils synchronisés."), systemImage: "lock.shield.fill")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .padding(20)
@@ -94,7 +107,9 @@ struct FreeSpaceView: View {
                     VStack(spacing: 0) {
                         reviewRow(language.text("Selected", "Sélection"), "\(cleaner.selectedLocalIdentifiers.count) " + language.text("items", "élément(s)"))
                         Divider()
-                        reviewRow(language.text("Space to free", "Espace à libérer"), selectedSize)
+                        reviewRow(language.text("Protected photo & video size", "Taille des photos et vidéos protégées"), selectedSize)
+                        Divider()
+                        reviewRow(language.text("Local space to free", "Espace local à libérer"), language.text("Not measurable in advance", "Non mesurable à l’avance"))
                         Divider()
                         reviewRow(language.text("Cloud copies", "Copies cloud"), language.text("Remain protected", "Restent protégées"))
                     }
@@ -119,7 +134,7 @@ struct FreeSpaceView: View {
                             }
                         }
                     } label: {
-                        Text(language.text("Free \(selectedSize)", "Libérer \(selectedSize)")).fontWeight(.bold).frame(maxWidth: .infinity).frame(height: 48)
+                        Text(language.text("Remove selected photos and videos", "Retirer les photos et vidéos sélectionnées")).fontWeight(.bold).frame(maxWidth: .infinity).frame(height: 48)
                     }
                     .buttonStyle(.borderedProminent).controlSize(.large).disabled(cleaner.isDeleting)
                     Button(language.text("Cancel", "Annuler")) { showReview = false }.frame(maxWidth: .infinity)
