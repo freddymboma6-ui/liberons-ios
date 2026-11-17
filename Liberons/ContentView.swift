@@ -246,6 +246,15 @@ private struct StorageSharingView: View {
                             Text(share.owner_id == SupabaseService.client.auth.currentUser?.id ? language.text("Shared by you","Partagé par vous") : language.text("Shared with you","Partagé avec vous")).font(.subheadline.weight(.semibold))
                             Text("\(capacity(share.limit_bytes)) · \(share.status)").font(.caption).foregroundStyle(.secondary)
                             Text(language.text("Used","Utilisé") + ": " + capacity(usages[share.id] ?? 0)).font(.caption)
+                            if share.status == "accepted" && share.recipient_id == SupabaseService.client.auth.currentUser?.id {
+                                let selected = UserDefaults.standard.string(forKey:"liberons_active_share_\(share.recipient_id.uuidString)") == share.id.uuidString
+                                Button(selected ? language.text("Use my own storage","Utiliser mon stockage") : language.text("Use this shared storage","Utiliser ce stockage partagé")) {
+                                    let key="liberons_active_share_\(share.recipient_id.uuidString)"
+                                    if selected { UserDefaults.standard.removeObject(forKey:key) }
+                                    else { UserDefaults.standard.set(share.id.uuidString,forKey:key) }
+                                    Task { await refreshShares() }
+                                }.buttonStyle(.bordered)
+                            }
                             if share.status == "pending" && share.recipient_id == SupabaseService.client.auth.currentUser?.id {
                                 HStack {
                                     Button(language.text("Accept","Accepter")) { respond(share.id,true) }.buttonStyle(.borderedProminent)
