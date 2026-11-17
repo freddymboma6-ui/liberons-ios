@@ -368,7 +368,7 @@ private enum ProtectedOfflineFiles {
         try fm.createDirectory(at:directory,withIntermediateDirectories:true)
         let ext=URL(fileURLWithPath:item.originalFilename ?? "").pathExtension.lowercased()
         let safeExt=ext.isEmpty ? (item.mediaType.lowercased().contains("video") ? "mov":"jpg"):ext
-        let target=directory.appendingPathComponent(item.id.uuidString).appendingPathExtension(safeExt)
+        var target=directory.appendingPathComponent(item.id.uuidString).appendingPathExtension(safeExt)
         try fm.moveItem(at:downloaded,to:target)
         var values=URLResourceValues();values.isExcludedFromBackup=true
         try? target.setResourceValues(values)
