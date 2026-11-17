@@ -128,6 +128,7 @@ final class AuthStore: ObservableObject {
             startRestrictionRealtime()
             if isRestricted { errorMessage = "account_restricted"; return }
             await validateDeviceAndFreeTier()
+            await PushNotificationManager.shared.requestAuthorizationAndRegister()
         } catch { errorMessage = friendlyAuthError(error) }
     }
 
