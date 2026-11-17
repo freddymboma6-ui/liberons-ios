@@ -73,8 +73,128 @@ private struct AccountView: View {
     }
     private var email:String{auth.session?.user.email ?? "Libérons"};private var initials:String{String(email.prefix(1)).uppercased()};private var used:Int64{cloud.usedBytes};private var effectiveQuota:Int64{cloud.quotaBytes>0 ? cloud.quotaBytes:2_000_000_000};private var planDisplay:String{effectiveQuota<=2_050_000_000 ? language.text("Free · 2 GB","Gratuit · 2 Go"):storageName(effectiveQuota)}
     private var localDisplay:String{localBytes==0 ? language.text("0 KB","0 Ko"):ByteCountFormatter.string(fromByteCount:localBytes,countStyle:.file)}
-    var body: some View {NavigationStack{ZStack{ScrollView{VStack(alignment:.leading,spacing:16){Text(language.text("Account","Compte")).font(.system(size:38,weight:.bold,design:.rounded));HStack(spacing:14){ZStack{Circle().fill(Color.blue.gradient).frame(width:58,height:58);Text(initials).font(.title2.bold()).foregroundStyle(.white)};VStack(alignment:.leading){Text(email).font(.headline).lineLimit(1);Text(language.text("Libérons account","Compte Libérons")).foregroundStyle(.secondary)};Spacer()}.card();VStack(alignment:.leading,spacing:14){HStack{Label(language.text("Libérons storage","Stockage Libérons"),systemImage:"icloud.fill").font(.headline).foregroundStyle(.blue);Spacer();Text(planDisplay).fontWeight(.bold)};ProgressView(value:min(1,Double(used)/Double(effectiveQuota))).tint(.blue);HStack{Text(language.text("Used","Utilisé"));Spacer();Text(used==0 ? language.text("0 KB","0 Ko"):storageName(used)).fontWeight(.semibold)};NavigationLink{StoragePlanView(cloud:cloud,language:language)}label:{HStack{Text(language.text("Manage Libérons plan","Gérer le forfait Libérons"));Spacer();Image(systemName:"chevron.right")}}.foregroundStyle(.blue)}.card();VStack(alignment:.leading,spacing:13){HStack{Label(language.text("On-device storage","Stockage sur cet iPhone"),systemImage:"iphone").font(.headline);Spacer();Text(localDisplay).fontWeight(.semibold)};Text(language.text("Temporary cache used by Libérons on this iPhone. Your protected cloud originals are not stored here.","Cache temporaire utilisé par Libérons sur cet iPhone. Vos originaux protégés dans le cloud ne sont pas stockés ici.")).font(.caption).foregroundStyle(.secondary);Button{guard !clearingCache else{return};clearingCache=true;cacheMessage=nil;LocalStorageGuard.purgeTransientStorage();localBytes=LocalStorageGuard.reclaimableBytes();withAnimation(.easeInOut(duration:0.18)){cacheMessage=language.text("Cache cleared.","Cache vidé.")};clearingCache=false;Task{try? await Task.sleep(for:.seconds(3));await MainActor.run{withAnimation(.easeOut(duration:0.2)){cacheMessage=nil}}}}label:{HStack{if clearingCache{ProgressView().controlSize(.small)};Label(language.text("Clear cache","Vider le cache"),systemImage:"trash")}.frame(maxWidth:.infinity).frame(height:38)}.buttonStyle(.bordered).disabled(clearingCache||localBytes==0);if let cacheMessage{Text(cacheMessage).font(.caption).foregroundStyle(.green).transition(.opacity.combined(with:.move(edge:.top)))}}.card();VStack(spacing:0){Button{withAnimation(.spring(response:0.28,dampingFraction:0.88)){showingLanguagePicker=true}}label:{SettingRow(icon:"globe",title:language.text("Language","Langue"),trailing:language.language.title)}.buttonStyle(.plain);Divider();NavigationLink{LiberonsNotificationSettingsView(language:language)}label:{SettingRow(icon:"bell.fill",title:language.text("Notifications","Notifications"))}.buttonStyle(.plain);Divider();NavigationLink{AccountSecurityView(auth:auth,language:language)}label:{SettingRow(icon:"lock.shield.fill",title:language.text("Privacy & security","Confidentialité et sécurité"))}.buttonStyle(.plain)}.card();VStack(spacing:0){NavigationLink{LiberonsTutorialView(language:language)}label:{SettingRow(icon:"play.rectangle.fill",title:language.text("How to use Libérons","Comment utiliser Libérons"))}.buttonStyle(.plain);Divider();NavigationLink{LiberonsHelpSupportView(language:language)}label:{SettingRow(icon:"questionmark.circle.fill",title:language.text("Help & support","Aide et support"))}.buttonStyle(.plain);Divider();NavigationLink{LiberonsAboutView(language:language)}label:{SettingRow(icon:"info.circle.fill",title:language.text("About Libérons","À propos de Libérons"))}.buttonStyle(.plain);Divider();Button{Task{await openReviewPage()}}label:{SettingRow(icon:"star.bubble.fill",title:language.text("Rate Libérons","Noter Libérons"))}.buttonStyle(.plain).disabled(openingReview)}.card();Button(role:.destructive){Task{await auth.signOut()}}label:{Label(language.text("Sign out","Se déconnecter"),systemImage:"rectangle.portrait.and.arrow.right").fontWeight(.semibold).frame(maxWidth:.infinity).frame(height:48)}.buttonStyle(.bordered).tint(.red)}.padding(20).padding(.bottom,100)}.scrollDisabled(showingLanguagePicker).task{localBytes=LocalStorageGuard.reclaimableBytes()};if showingLanguagePicker{Color.black.opacity(0.28).ignoresSafeArea().onTapGesture{withAnimation(.easeOut(duration:0.18)){showingLanguagePicker=false}}.transition(.opacity);VStack(spacing:0){Text(language.text("Choose language","Choisir la langue")).font(.headline).padding(.top,20).padding(.bottom,12);Divider();ForEach(LanguageStore.Language.allCases){item in Button{language.language=item;withAnimation(.easeOut(duration:0.18)){showingLanguagePicker=false}}label:{HStack{Text(item.title).foregroundStyle(.primary);Spacer();if item==language.language{Image(systemName:"checkmark.circle.fill").foregroundStyle(.blue)}}.padding(.horizontal,20).frame(height:54)}.buttonStyle(.plain);if item.id != LanguageStore.Language.allCases.last?.id{Divider().padding(.leading,20)}};Divider();Button(language.text("Cancel","Annuler")){withAnimation(.easeOut(duration:0.18)){showingLanguagePicker=false}}.fontWeight(.semibold).frame(maxWidth:.infinity).frame(height:54)}.background(.regularMaterial,in:RoundedRectangle(cornerRadius:24,style:.continuous)).overlay(RoundedRectangle(cornerRadius:24,style:.continuous).stroke(Color.white.opacity(0.35),lineWidth:0.5)).shadow(radius:30,y:12).padding(.horizontal,34).transition(.scale(scale:0.92).combined(with:.opacity)).zIndex(10)}}.background(LiberonsTheme.canvas).toolbar(.hidden,for:.navigationBar)}}
+    var body: some View {NavigationStack{ZStack{ScrollView{VStack(alignment:.leading,spacing:16){Text(language.text("Account","Compte")).font(.system(size:38,weight:.bold,design:.rounded));HStack(spacing:14){ZStack{Circle().fill(Color.blue.gradient).frame(width:58,height:58);Text(initials).font(.title2.bold()).foregroundStyle(.white)};VStack(alignment:.leading){Text(email).font(.headline).lineLimit(1);Text(language.text("Libérons account","Compte Libérons")).foregroundStyle(.secondary)};Spacer()}.card();VStack(alignment:.leading,spacing:14){HStack{Label(language.text("Libérons storage","Stockage Libérons"),systemImage:"icloud.fill").font(.headline).foregroundStyle(.blue);Spacer();Text(planDisplay).fontWeight(.bold)};ProgressView(value:min(1,Double(used)/Double(effectiveQuota))).tint(.blue);HStack{Text(language.text("Used","Utilisé"));Spacer();Text(used==0 ? language.text("0 KB","0 Ko"):storageName(used)).fontWeight(.semibold)};NavigationLink{StorageSharingView(cloud:cloud,language:language)}label:{HStack{Image(systemName:"person.2.fill").foregroundStyle(.blue);Text(language.text("Share my storage","Partager mon stockage"));Spacer();Image(systemName:"chevron.right")}}.foregroundStyle(.primary).padding(.top,8);NavigationLink{StoragePlanView(cloud:cloud,language:language)}label:{HStack{Text(language.text("Manage Libérons plan","Gérer le forfait Libérons"));Spacer();Image(systemName:"chevron.right")}}.foregroundStyle(.blue)}.card();VStack(alignment:.leading,spacing:13){HStack{Label(language.text("On-device storage","Stockage sur cet iPhone"),systemImage:"iphone").font(.headline);Spacer();Text(localDisplay).fontWeight(.semibold)};Text(language.text("Temporary cache used by Libérons on this iPhone. Your protected cloud originals are not stored here.","Cache temporaire utilisé par Libérons sur cet iPhone. Vos originaux protégés dans le cloud ne sont pas stockés ici.")).font(.caption).foregroundStyle(.secondary);Button{guard !clearingCache else{return};clearingCache=true;cacheMessage=nil;LocalStorageGuard.purgeTransientStorage();localBytes=LocalStorageGuard.reclaimableBytes();withAnimation(.easeInOut(duration:0.18)){cacheMessage=language.text("Cache cleared.","Cache vidé.")};clearingCache=false;Task{try? await Task.sleep(for:.seconds(3));await MainActor.run{withAnimation(.easeOut(duration:0.2)){cacheMessage=nil}}}}label:{HStack{if clearingCache{ProgressView().controlSize(.small)};Label(language.text("Clear cache","Vider le cache"),systemImage:"trash")}.frame(maxWidth:.infinity).frame(height:38)}.buttonStyle(.bordered).disabled(clearingCache||localBytes==0);if let cacheMessage{Text(cacheMessage).font(.caption).foregroundStyle(.green).transition(.opacity.combined(with:.move(edge:.top)))}}.card();VStack(spacing:0){Button{withAnimation(.spring(response:0.28,dampingFraction:0.88)){showingLanguagePicker=true}}label:{SettingRow(icon:"globe",title:language.text("Language","Langue"),trailing:language.language.title)}.buttonStyle(.plain);Divider();NavigationLink{LiberonsNotificationSettingsView(language:language)}label:{SettingRow(icon:"bell.fill",title:language.text("Notifications","Notifications"))}.buttonStyle(.plain);Divider();NavigationLink{AccountSecurityView(auth:auth,language:language)}label:{SettingRow(icon:"lock.shield.fill",title:language.text("Privacy & security","Confidentialité et sécurité"))}.buttonStyle(.plain)}.card();VStack(spacing:0){NavigationLink{LiberonsTutorialView(language:language)}label:{SettingRow(icon:"play.rectangle.fill",title:language.text("How to use Libérons","Comment utiliser Libérons"))}.buttonStyle(.plain);Divider();NavigationLink{LiberonsHelpSupportView(language:language)}label:{SettingRow(icon:"questionmark.circle.fill",title:language.text("Help & support","Aide et support"))}.buttonStyle(.plain);Divider();NavigationLink{LiberonsAboutView(language:language)}label:{SettingRow(icon:"info.circle.fill",title:language.text("About Libérons","À propos de Libérons"))}.buttonStyle(.plain);Divider();Button{Task{await openReviewPage()}}label:{SettingRow(icon:"star.bubble.fill",title:language.text("Rate Libérons","Noter Libérons"))}.buttonStyle(.plain).disabled(openingReview)}.card();Button(role:.destructive){Task{await auth.signOut()}}label:{Label(language.text("Sign out","Se déconnecter"),systemImage:"rectangle.portrait.and.arrow.right").fontWeight(.semibold).frame(maxWidth:.infinity).frame(height:48)}.buttonStyle(.bordered).tint(.red)}.padding(20).padding(.bottom,100)}.scrollDisabled(showingLanguagePicker).task{localBytes=LocalStorageGuard.reclaimableBytes()};if showingLanguagePicker{Color.black.opacity(0.28).ignoresSafeArea().onTapGesture{withAnimation(.easeOut(duration:0.18)){showingLanguagePicker=false}}.transition(.opacity);VStack(spacing:0){Text(language.text("Choose language","Choisir la langue")).font(.headline).padding(.top,20).padding(.bottom,12);Divider();ForEach(LanguageStore.Language.allCases){item in Button{language.language=item;withAnimation(.easeOut(duration:0.18)){showingLanguagePicker=false}}label:{HStack{Text(item.title).foregroundStyle(.primary);Spacer();if item==language.language{Image(systemName:"checkmark.circle.fill").foregroundStyle(.blue)}}.padding(.horizontal,20).frame(height:54)}.buttonStyle(.plain);if item.id != LanguageStore.Language.allCases.last?.id{Divider().padding(.leading,20)}};Divider();Button(language.text("Cancel","Annuler")){withAnimation(.easeOut(duration:0.18)){showingLanguagePicker=false}}.fontWeight(.semibold).frame(maxWidth:.infinity).frame(height:54)}.background(.regularMaterial,in:RoundedRectangle(cornerRadius:24,style:.continuous)).overlay(RoundedRectangle(cornerRadius:24,style:.continuous).stroke(Color.white.opacity(0.35),lineWidth:0.5)).shadow(radius:30,y:12).padding(.horizontal,34).transition(.scale(scale:0.92).combined(with:.opacity)).zIndex(10)}}.background(LiberonsTheme.canvas).toolbar(.hidden,for:.navigationBar)}}
     private func storageName(_ bytes:Int64)->String{if bytes>=999_000_000_000{return String(format:"%.0f %@",Double(bytes)/1_000_000_000_000,language.text("TB","To"))};if bytes>=1_000_000_000{return String(format:bytes%1_000_000_000==0 ? "%.0f %@":"%.2f %@",Double(bytes)/1_000_000_000,language.text("GB","Go"))};return ByteCountFormatter.string(fromByteCount:bytes,countStyle:.file)}
+}
+
+
+private struct StorageSharingView: View {
+    @ObservedObject var cloud: CloudStorageSummary
+    @ObservedObject var language: LanguageStore
+    private var isPaid: Bool { cloud.billedPlanPriceCents > 0 && cloud.billedPlanQuotaBytes > 2_050_000_000 }
+    private var planCapacity: Int64 { max(0, cloud.billedPlanQuotaBytes) }
+    private var paidRemaining: Int64 { max(0, planCapacity - cloud.usedBytes) }
+    private func capacity(_ value: Int64) -> String {
+        if value >= 1_000_000_000_000 {
+            return String(format: "%.2f %@", Double(value) / 1_000_000_000_000, language.text("TB", "To"))
+        }
+        return String(format: "%.1f %@", Double(value) / 1_000_000_000, language.text("GB", "Go"))
+    }
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Image(systemName: "person.2.circle.fill")
+                        .font(.system(size: 44, weight: .light))
+                        .foregroundStyle(.blue)
+                    Text(language.text("More space, together.", "Plus d’espace, ensemble."))
+                        .font(.system(size: 29, weight: .bold, design: .rounded))
+                    Text(language.text(
+                        "Share part or all of the storage you pay for with someone you trust. Your photos and files always remain private.",
+                        "Partagez une partie ou la totalité de votre stockage payé avec une personne de confiance. Vos photos et fichiers restent toujours privés."
+                    ))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(22)
+                .background(LiberonsTheme.card, in: RoundedRectangle(cornerRadius: 26))
+                VStack(alignment: .leading, spacing: 14) {
+                    Label(language.text("Your paid storage", "Votre stockage payé"), systemImage: "icloud.fill")
+                        .font(.headline)
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(isPaid ? capacity(planCapacity) : language.text("No paid plan", "Aucun forfait payé"))
+                            .font(.title2.bold())
+                        Spacer()
+                        if isPaid {
+                            Text(language.text("PAID", "PAYÉ"))
+                                .font(.caption2.bold())
+                                .foregroundStyle(.blue)
+                        }
+                    }
+                    if isPaid {
+                        ProgressView(value: planCapacity > 0 ? min(1, Double(cloud.usedBytes) / Double(planCapacity)) : 0)
+                            .tint(.blue)
+                        HStack {
+                            Text(language.text("Currently available", "Actuellement disponible"))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text(capacity(paidRemaining)).fontWeight(.semibold)
+                        }
+                        .font(.subheadline)
+                    }
+                    Text(language.text(
+                        "Storage offered by Libérons is personal and cannot be shared.",
+                        "L’espace offert par Libérons est personnel et ne peut pas être partagé."
+                    ))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+                .padding(20)
+                .background(LiberonsTheme.card, in: RoundedRectangle(cornerRadius: 24))
+                VStack(alignment: .leading, spacing: 14) {
+                    Label(language.text("How sharing works", "Comment fonctionne le partage"), systemImage: "shield.lefthalf.filled")
+                        .font(.headline)
+                    sharingRule("person.crop.circle.badge.checkmark",
+                        language.text("An invitation, your choice", "Une invitation, votre choix"),
+                        language.text("The person you invite can accept or decline.", "La personne invitée peut accepter ou refuser."))
+                    Divider()
+                    sharingRule("externaldrive",
+                        language.text("One shared capacity", "Un seul espace partagé"),
+                        language.text("Both people use the same paid storage. No extra capacity is created.", "Les deux personnes utilisent le même stockage payé. Aucun espace supplémentaire n’est créé."))
+                    Divider()
+                    sharingRule("slider.horizontal.3",
+                        language.text("Stay in control", "Gardez le contrôle"),
+                        language.text("Increase the shared amount whenever your plan allows. You can reduce it without affecting files already protected.", "Augmentez le partage selon votre forfait. Vous pouvez le réduire sans toucher aux fichiers déjà protégés."))
+                    Divider()
+                    sharingRule("lock.shield",
+                        language.text("Your memories stay yours", "Vos souvenirs restent privés"),
+                        language.text("Neither person can see the other's photos or files.", "Aucune des deux personnes ne peut consulter les photos ou fichiers de l’autre."))
+                }
+                .padding(20)
+                .background(LiberonsTheme.card, in: RoundedRectangle(cornerRadius: 24))
+                VStack(alignment: .leading, spacing: 10) {
+                    Label(language.text("Sharing is being prepared", "Le partage arrive bientôt"), systemImage: "sparkles")
+                        .font(.headline)
+                    Text(language.text(
+                        "Invitations will be available once the shared-capacity safeguards are fully verified. Your current backups remain unchanged.",
+                        "Les invitations seront disponibles après la vérification complète des protections du stockage partagé. Vos sauvegardes actuelles restent inchangées."
+                    ))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                }
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.blue.opacity(0.07), in: RoundedRectangle(cornerRadius: 24))
+            }
+            .padding(20)
+        }
+        .background(LiberonsTheme.canvas)
+        .navigationTitle(language.text("Share storage", "Partager le stockage"))
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await cloud.refresh() }
+    }
+    private func sharingRule(_ symbol: String, _ title: String, _ detail: String) -> some View {
+        HStack(alignment: .top, spacing: 13) {
+            Image(systemName: symbol).font(.title3).foregroundStyle(.blue).frame(width: 28)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(title).font(.subheadline.weight(.semibold))
+                Text(detail).font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
 }
 
 private struct StoragePlanView: View {
