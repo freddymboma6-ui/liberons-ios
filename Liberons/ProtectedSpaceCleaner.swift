@@ -10,6 +10,17 @@ final class ProtectedSpaceCleaner: ObservableObject {
     @Published private(set) var protectedLocalIdentifiers: [String] = []
     @Published private(set) var selectedLocalIdentifiers: [String] = []
     @Published private(set) var selectedBytes: Int64 = 0
+    @Published private(set) var measuredFreedBytes: Int64?
+    @Published private(set) var availableBeforeRemovalBytes: Int64?
+    @Published private(set) var availableAfterRemovalBytes: Int64?
+    @Published private(set) var lastRemovedCount = 0
+
+    private func deviceAvailableBytes() -> Int64? {
+        let url = URL(fileURLWithPath: NSHomeDirectory())
+        guard let values = try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]),
+              let available = values.volumeAvailableCapacityForImportantUsage else { return nil }
+        return max(0, available)
+    }
     @Published private(set) var message = ""
 
     private struct ProtectedRow: Decodable {
@@ -59,7 +70,7 @@ final class ProtectedSpaceCleaner: ObservableObject {
     }
 
     func prepare(removalPercent: Int) async {
-        guard !isLoading && !isDeleting else { return }; isLoading = true; message = ""; defer { isLoading = false }
+        guard !isLoading && !isDeleting else { return }; isLoading = true; message = ""; measuredFreedBytes = nil; defer { isLoading = false }
         do {
             let rows = try await protectedRows()
             let resolved = await resolveLocalAssets(for: rows)
@@ -90,16 +101,23 @@ final class ProtectedSpaceCleaner: ObservableObject {
     }
 
     func deletePreparedFromIPhone() async {
-        guard !isDeleting, !selectedLocalIdentifiers.isEmpty else { return }; isDeleting = true; message = ""; defer { isDeleting = false }
+        guard !isDeleting, !selectedLocalIdentifiers.isEmpty else { return }; isDeleting = true; message = ""; measuredFreedBytes = nil; availableBeforeRemovalBytes = deviceAvailableBytes(); availableAfterRemovalBytes = nil; lastRemovedCount = 0; defer { isDeleting = false }
         let result = PHAsset.fetchAssets(withLocalIdentifiers: selectedLocalIdentifiers, options: nil); var assets: [PHAsset] = []; result.enumerateObjects { asset, _, _ in assets.append(asset) }
         guard !assets.isEmpty else { message = "Les originaux sélectionnés ne sont plus présents sur cet iPhone."; return }
         do {
             try await PHPhotoLibrary.shared().performChanges { PHAssetChangeRequest.deleteAssets(assets as NSArray) }
-            let removed = assets.count; protectedLocalIdentifiers.removeAll { selectedLocalIdentifiers.contains($0) }; selectedLocalIdentifiers = []; selectedBytes = 0
-            message = "\(removed) original(aux) retiré(s) de cet iPhone. Les copies Libérons restent protégées."
+            let removed = assets.count; lastRemovedCount = removed; protectedLocalIdentifiers.removeAll { selectedLocalIdentifiers.contains($0) }; selectedLocalIdentifiers = []; selectedBytes = 0
+            // iOS may defer reclaiming Photos storage (Recently Deleted / iCloud Photos).
+            // Report only the observed capacity delta, never the logical cloud file sizes.
+            try? await Task.sleep(for: .seconds(1))
+            availableAfterRemovalBytes = deviceAvailableBytes()
+            if let before = availableBeforeRemovalBytes, let after = availableAfterRemovalBytes {
+                measuredFreedBytes = max(0, after - before)
+            }
+            message = "\(removed) photo(s) et/ou vidéo(s) retirée(s) de la photothèque Apple. L’espace récupéré peut évoluer après traitement par iOS et les éléments Supprimés récemment. Les copies Libérons restent protégées."
             NotificationCenter.default.post(name: .liberonsCloudDidChange, object: nil)
         } catch let error as NSError {
-            if error.domain == "PHPhotosErrorDomain" && error.code == 3072 { message = "" } else { message = "La suppression n’a pas pu être effectuée. Vos photos sont restées sur cet iPhone." }
+            if error.domain == "PHPhotosErrorDomain" && error.code == 3072 { message = "" } else { message = "La suppression n’a pas pu être effectuée. Vos photos et vidéos sont restées dans la photothèque Apple." }
         }
     }
 }
