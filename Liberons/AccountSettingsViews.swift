@@ -151,7 +151,7 @@ struct LiberonsHelpSupportView: View {
                 + (keywords.contains(query) ? 60 : 0)
                 + tokens.reduce(0) { $0 + (question.contains($1) ? 12 : 0) + (keywords.contains($1) ? 8 : 0) + (answers.contains($1) ? 2 : 0) }
             return (entry, score)
-        }.sorted { $0.1 == $1.1 ? $0.0.id < $1.0.id : $0.1 > $1.1 }.map(\.0)
+        }.sorted { $0.1 == $1.1 ? $0.0.id < $1.0.id : $0.1 > $1.1 }.map { $0.0 }
     }
 
     var body:some View {
