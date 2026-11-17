@@ -101,6 +101,7 @@ private struct StorageSharingView: View {
     @State private var gigabytes = "50"
     @State private var shares: [Share] = []
     @State private var usages: [UUID: Int64] = [:]
+    @State private var sharedUsage: Int64 = 0
     @State private var busy = false
     @State private var message: String?
     private func refreshShares() async {
@@ -108,6 +109,7 @@ private struct StorageSharingView: View {
             let response: [Share] = try await SupabaseService.client.rpc("liberons_my_storage_shares").execute().value
             let usageRows: [ShareUsage] = try await SupabaseService.client.from("liberons_storage_share_usage").select("share_id,protected_bytes,pending_bytes,trash_bytes").execute().value
             shares = response
+            sharedUsage = response.filter { $0.owner_id == SupabaseService.client.auth.currentUser?.id && $0.status == "accepted" }.reduce(Int64(0)) { $0 + $1.used_bytes }
             usages = Dictionary(uniqueKeysWithValues: usageRows.map { ($0.share_id,$0.protected_bytes+$0.pending_bytes+$0.trash_bytes) })
         } catch { message = error.localizedDescription }
     }
@@ -143,7 +145,16 @@ private struct StorageSharingView: View {
     }
     private var isPaid: Bool { cloud.billedPlanPriceCents > 0 && cloud.billedPlanQuotaBytes > 2_050_000_000 }
     private var planCapacity: Int64 { max(0, cloud.billedPlanQuotaBytes) }
-    private var paidRemaining: Int64 { max(0, planCapacity - cloud.usedBytes) }
+    private var paidRemaining: Int64 { max(0, planCapacity - cloud.usedBytes - sharedUsage) }
+    private func preciseCapacity(_ bytes: Int64) -> String {
+        if bytes >= 999_000_000_000 {
+            return String(format: "%.0f %@", Double(bytes) / 1_000_000_000_000, language.text("TB","To"))
+        }
+        if bytes >= 1_000_000_000 {
+            return String(format: bytes % 1_000_000_000 == 0 ? "%.0f %@" : "%.2f %@", Double(bytes) / 1_000_000_000, language.text("GB","Go"))
+        }
+        return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
     private func capacity(_ value: Int64) -> String {
         if value >= 1_000_000_000_000 {
             return String(format: "%.2f %@", Double(value) / 1_000_000_000_000, language.text("TB", "To"))
@@ -184,13 +195,13 @@ private struct StorageSharingView: View {
                         }
                     }
                     if isPaid {
-                        ProgressView(value: planCapacity > 0 ? min(1, Double(cloud.usedBytes) / Double(planCapacity)) : 0)
+                        ProgressView(value: planCapacity > 0 ? min(1, Double(cloud.usedBytes + sharedUsage) / Double(planCapacity)) : 0)
                             .tint(.blue)
                         HStack {
                             Text(language.text("Currently available", "Actuellement disponible"))
                                 .foregroundStyle(.secondary)
                             Spacer()
-                            Text(capacity(paidRemaining)).fontWeight(.semibold)
+                            Text(preciseCapacity(paidRemaining)).fontWeight(.semibold)
                         }
                         .font(.subheadline)
                     }
