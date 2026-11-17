@@ -74,6 +74,7 @@ extension Notification.Name{
 enum SupabaseService {
     static let projectURL = URL(string: "https://kzwyweglrzcnxcpxnfuf.supabase.co")!
     static let client = SupabaseClient(supabaseURL: projectURL,supabaseKey: "sb_publishable_taO9kxbl5rYmZiFvWlI75g_JZNGzv5b")
+    static var currentAccountID: String? { client.auth.currentUser?.id.uuidString }
 
     private struct FunctionErrorBody:Decodable{let error:String?;let message:String?;let tier:String?;let retry_after_seconds:Int?}
 
