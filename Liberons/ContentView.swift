@@ -81,6 +81,63 @@ private struct AccountView: View {
 private struct StorageSharingView: View {
     @ObservedObject var cloud: CloudStorageSummary
     @ObservedObject var language: LanguageStore
+    private struct Share: Decodable, Identifiable {
+        let id: UUID
+        let owner_id: UUID
+        let recipient_id: UUID
+        let limit_bytes: Int64
+        let status: String
+    }
+    private struct ShareUsage: Decodable {
+        let share_id: UUID
+        let protected_bytes: Int64
+        let pending_bytes: Int64
+        let trash_bytes: Int64
+    }
+    @State private var email = ""
+    @State private var gigabytes = "50"
+    @State private var shares: [Share] = []
+    @State private var usages: [UUID: Int64] = [:]
+    @State private var busy = false
+    @State private var message: String?
+    private func refreshShares() async {
+        do {
+            let response: [Share] = try await SupabaseService.client.from("liberons_storage_shares").select("id,owner_id,recipient_id,limit_bytes,status").order("created_at",ascending:false).execute().value
+            let usageRows: [ShareUsage] = try await SupabaseService.client.from("liberons_storage_share_usage").select("share_id,protected_bytes,pending_bytes,trash_bytes").execute().value
+            shares = response
+            usages = Dictionary(uniqueKeysWithValues: usageRows.map { ($0.share_id,$0.protected_bytes+$0.pending_bytes+$0.trash_bytes) })
+        } catch { message = error.localizedDescription }
+    }
+    private func perform(_ action: @escaping () async throws -> Void) {
+        busy = true
+        Task {
+            do { try await action(); message = nil; await refreshShares() }
+            catch { message = error.localizedDescription }
+            busy = false
+        }
+    }
+    private func invite() {
+        guard let gb = Int64(gigabytes), gb > 0, gb <= planCapacity / 1_000_000_000 else {
+            message = language.text("Enter a valid amount within your paid plan.","Saisissez une capacité valide dans votre forfait payé.")
+            return
+        }
+        let recipient = email.trimmingCharacters(in:.whitespacesAndNewlines)
+        guard recipient.contains("@") else { message = language.text("Enter an email address.","Saisissez une adresse e-mail."); return }
+        perform {
+            _ = try await SupabaseService.client.rpc("liberons_share_invite",params:["p_email":recipient,"p_limit_bytes":String(gb*1_000_000_000)]).execute()
+            email = ""
+        }
+    }
+    private func respond(_ id: UUID,_ accept: Bool) {
+        perform {
+            _ = try await SupabaseService.client.rpc("liberons_share_respond",params:["p_share_id":id.uuidString,"p_accept":accept ? "true":"false"]).execute()
+        }
+    }
+    private func cancel(_ id: UUID) {
+        perform {
+            _ = try await SupabaseService.client.rpc("liberons_share_cancel",params:["p_share_id":id.uuidString]).execute()
+        }
+    }
     private var isPaid: Bool { cloud.billedPlanPriceCents > 0 && cloud.billedPlanQuotaBytes > 2_050_000_000 }
     private var planCapacity: Int64 { max(0, cloud.billedPlanQuotaBytes) }
     private var paidRemaining: Int64 { max(0, planCapacity - cloud.usedBytes) }
@@ -164,26 +221,53 @@ private struct StorageSharingView: View {
                 }
                 .padding(20)
                 .background(LiberonsTheme.card, in: RoundedRectangle(cornerRadius: 24))
-                VStack(alignment: .leading, spacing: 10) {
-                    Label(language.text("Sharing is being prepared", "Le partage arrive bientôt"), systemImage: "sparkles")
-                        .font(.headline)
-                    Text(language.text(
-                        "Invitations will be available once the shared-capacity safeguards are fully verified. Your current backups remain unchanged.",
-                        "Les invitations seront disponibles après la vérification complète des protections du stockage partagé. Vos sauvegardes actuelles restent inchangées."
-                    ))
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                }
-                .padding(20)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.blue.opacity(0.07), in: RoundedRectangle(cornerRadius: 24))
+                VStack(alignment: .leading, spacing: 12) {
+                    Label(language.text("Invite someone", "Inviter une personne"),systemImage:"envelope.fill").font(.headline)
+                    TextField(language.text("Their account email", "E-mail de son compte"),text:$email)
+                        .keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .textFieldStyle(.roundedBorder)
+                    HStack {
+                        TextField(language.text("GB", "Go"),text:$gigabytes).keyboardType(.numberPad).textFieldStyle(.roundedBorder)
+                        Text(language.text("GB maximum", "Go maximum")).font(.caption).foregroundStyle(.secondary)
+                    }
+                    Button(language.text("Send invitation", "Envoyer l’invitation")) { invite() }
+                        .buttonStyle(.borderedProminent).disabled(!isPaid || busy)
+                    if !isPaid { Text(language.text("An active paid plan is required to invite someone.","Un forfait payé actif est nécessaire pour inviter quelqu’un.")).font(.caption).foregroundStyle(.secondary) }
+                }.padding(20).background(LiberonsTheme.card,in:RoundedRectangle(cornerRadius:24))
+                VStack(alignment:.leading,spacing:14) {
+                    HStack {
+                        Label(language.text("Invitations and shares","Invitations et partages"),systemImage:"person.2.fill").font(.headline)
+                        Spacer()
+                        Button { Task { await refreshShares() } } label: { Image(systemName:"arrow.clockwise") }.disabled(busy)
+                    }
+                    if shares.isEmpty { Text(language.text("No invitations yet.","Aucune invitation pour le moment.")).foregroundStyle(.secondary) }
+                    ForEach(shares) { share in
+                        VStack(alignment:.leading,spacing:8) {
+                            Text(share.owner_id == SupabaseService.client.auth.currentUser?.id ? language.text("Shared by you","Partagé par vous") : language.text("Shared with you","Partagé avec vous")).font(.subheadline.weight(.semibold))
+                            Text("\(capacity(share.limit_bytes)) · \(share.status)").font(.caption).foregroundStyle(.secondary)
+                            Text(language.text("Used","Utilisé") + ": " + capacity(usages[share.id] ?? 0)).font(.caption)
+                            if share.status == "pending" {
+                                HStack {
+                                    Button(language.text("Accept","Accepter")) { respond(share.id,true) }.buttonStyle(.borderedProminent)
+                                    Button(language.text("Decline","Refuser")) { respond(share.id,false) }.buttonStyle(.bordered)
+                                }.disabled(busy)
+                            }
+                            if share.status == "accepted" {
+                                Button(language.text("Stop sharing","Arrêter le partage"),role:.destructive) { cancel(share.id) }.disabled(busy)
+                            }
+                        }
+                        Divider()
+                    }
+                    if let message { Text(message).font(.caption).foregroundStyle(.red) }
+                    if busy { ProgressView() }
+                }.padding(20).background(LiberonsTheme.card,in:RoundedRectangle(cornerRadius:24))
             }
             .padding(20)
         }
         .background(LiberonsTheme.canvas)
         .navigationTitle(language.text("Share storage", "Partager le stockage"))
         .navigationBarTitleDisplayMode(.inline)
-        .task { await cloud.refresh() }
+        .task { await cloud.refresh(); await refreshShares() }
     }
     private func sharingRule(_ symbol: String, _ title: String, _ detail: String) -> some View {
         HStack(alignment: .top, spacing: 13) {
