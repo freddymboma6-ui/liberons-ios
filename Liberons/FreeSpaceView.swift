@@ -6,6 +6,7 @@ struct FreeSpaceView: View {
     @ObservedObject var backup: BackupEngine
     @StateObject private var cleaner = ProtectedSpaceCleaner()
     @State private var showReview = false
+    @State private var acknowledgesICloudDeletion = false
 
     private var selectedSize: String {
     let bytes = cleaner.selectedBytes
@@ -45,6 +46,12 @@ struct FreeSpaceView: View {
             }
             .buttonStyle(.plain)
 
+            VStack(alignment: .leading, spacing: 9) {
+                Label(language.text("Keep iCloud or remove from Apple Photos?", "Conserver iCloud ou supprimer de Photos Apple ?"), systemImage: "icloud").font(.headline)
+                Text(language.text("Keep iCloud: use Settings > Photos > Optimize iPhone Storage. Libérons cannot remove only a synced local copy while keeping its iCloud original.", "Conserver iCloud : utilisez Réglages > Photos > Optimiser le stockage de l’iPhone. Libérons ne peut pas supprimer uniquement la copie locale synchronisée en conservant l’original iCloud.")).font(.subheadline).foregroundStyle(.secondary)
+                Text(language.text("Remove from Apple Photos: after verifying Libérons backups, iOS will ask for confirmation. If iCloud Photos is enabled, deletion also syncs to iCloud and your other Apple devices.", "Supprimer de Photos Apple : après vérification des sauvegardes Libérons, iOS demandera confirmation. Si Photos iCloud est activé, la suppression se répercute aussi sur iCloud et vos autres appareils Apple.")).font(.subheadline).foregroundStyle(.secondary)
+            }.padding(14).background(LiberonsTheme.insetCard, in: RoundedRectangle(cornerRadius: 16))
+
             if cleaner.isLoading {
                 ProgressView(language.text("Calculating what can be freed…", "Calcul de l’espace réellement libérable…"))
             } else if cleaner.selectedLocalIdentifiers.isEmpty {
@@ -82,7 +89,7 @@ struct FreeSpaceView: View {
             Button {
                 Task {
                     await cleaner.prepare(removalPercent: preferences.removalPercent)
-                    if !cleaner.selectedLocalIdentifiers.isEmpty { showReview = true }
+                    if !cleaner.selectedLocalIdentifiers.isEmpty { acknowledgesICloudDeletion = false; showReview = true }
                 }
             } label: {
                 HStack { Spacer(); if cleaner.isLoading { ProgressView() }; Label(language.text("Continue", "Continuer"), systemImage: "arrow.right.circle.fill"); Spacer() }.frame(height: 34)
@@ -118,6 +125,9 @@ struct FreeSpaceView: View {
                     Label(language.text("Photos will display the final iOS confirmation. If you cancel there, nothing changes.", "Photos affichera ensuite la confirmation finale d’iOS. Si vous refusez, rien ne change."), systemImage: "checkmark.shield.fill")
                         .font(.footnote).foregroundStyle(.secondary)
                     Spacer()
+                    Toggle(isOn: $acknowledgesICloudDeletion) {
+                        Text(language.text("I understand that removing photos and videos from Apple Photos also removes them from synced iCloud Photos and other Apple devices when iCloud Photos is enabled.", "Je comprends que supprimer des photos et vidéos de Photos Apple les supprime également de Photos iCloud et des autres appareils Apple synchronisés si Photos iCloud est activé.")).font(.footnote)
+                    }.tint(.orange)
                     Button(role: .destructive) {
                         showReview = false
                         Task {
@@ -136,7 +146,7 @@ struct FreeSpaceView: View {
                     } label: {
                         Text(language.text("Remove selected photos and videos", "Retirer les photos et vidéos sélectionnées")).fontWeight(.bold).frame(maxWidth: .infinity).frame(height: 48)
                     }
-                    .buttonStyle(.borderedProminent).controlSize(.large).disabled(cleaner.isDeleting)
+                    .buttonStyle(.borderedProminent).controlSize(.large).disabled(cleaner.isDeleting || !acknowledgesICloudDeletion)
                     Button(language.text("Cancel", "Annuler")) { showReview = false }.frame(maxWidth: .infinity)
                 }
                 .padding(24)
