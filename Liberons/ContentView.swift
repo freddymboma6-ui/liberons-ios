@@ -155,7 +155,7 @@ private struct StorageSharingView: View {
         }
         editingShare = nil
         perform {
-            _ = try await SupabaseService.client.rpc("liberons_share_change_limit", params: ["p_share_id":share.id.uuidString, "p_limit_bytes":String(bytes)]).execute()
+            _ = try await SupabaseService.client.rpc("liberons_share_change_limit", params: ["p_share_id":share.id.uuidString, "p_new_limit_bytes":String(bytes)]).execute()
         }
     }
     private func cancel(_ id: UUID) {
