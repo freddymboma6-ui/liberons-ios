@@ -4,6 +4,7 @@ import Photos
 import CryptoKit
 import UniformTypeIdentifiers
 import UIKit
+import Auth
 
 private final class PhotoExportRequestBox: @unchecked Sendable {
     private let lock=NSLock()
