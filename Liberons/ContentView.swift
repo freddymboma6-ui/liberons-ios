@@ -102,6 +102,8 @@ private struct StorageSharingView: View {
     @State private var shares: [Share] = []
     @State private var usages: [UUID: Int64] = [:]
     @State private var sharedUsage: Int64 = 0
+    @State private var editingShare: Share?
+    @State private var editedGigabytes = ""
     @State private var busy = false
     @State private var message: String?
     private func refreshShares() async {
@@ -136,6 +138,24 @@ private struct StorageSharingView: View {
     private func respond(_ id: UUID,_ accept: Bool) {
         perform {
             _ = try await SupabaseService.client.rpc("liberons_share_respond",params:["p_share_id":id.uuidString,"p_accept":accept ? "true":"false"]).execute()
+        }
+    }
+    private func changeLimit(_ share: Share) {
+        guard let gb = Int64(editedGigabytes), gb > 0,
+              gb <= planCapacity / 1_000_000_000,
+              gb <= Int64.max / 1_000_000_000 else {
+            message = language.text("Enter a valid limit within your paid plan.", "Saisissez une limite valide dans votre forfait payé.")
+            return
+        }
+        let bytes = gb * 1_000_000_000
+        let occupied = usages[share.id] ?? share.used_bytes
+        guard bytes >= occupied else {
+            message = language.text("The limit cannot be below already stored data.", "La limite ne peut pas être inférieure aux fichiers déjà stockés.")
+            return
+        }
+        editingShare = nil
+        perform {
+            _ = try await SupabaseService.client.rpc("liberons_share_change_limit", params: ["p_share_id":share.id.uuidString, "p_limit_bytes":String(bytes)]).execute()
         }
     }
     private func cancel(_ id: UUID) {
@@ -310,6 +330,15 @@ private struct StorageSharingView: View {
                                 }.disabled(busy)
                             }
                             if share.status == "accepted" && owner {
+                                Button {
+                                    editedGigabytes = String(share.limit_bytes / 1_000_000_000)
+                                    editingShare = share
+                                } label: {
+                                    Label(language.text("Adjust shared limit", "Modifier la limite partagée"), systemImage: "slider.horizontal.3")
+                                        .font(.subheadline.weight(.semibold))
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(busy)
                                 Button(language.text("Stop sharing","Arrêter le partage"),role:.destructive) { cancel(share.id) }.disabled(busy)
                             }
                         }
@@ -323,6 +352,16 @@ private struct StorageSharingView: View {
             .padding(20)
         }
         .background(LiberonsTheme.canvas)
+        .alert(language.text("Shared storage limit", "Limite du stockage partagé"), isPresented: Binding(get: { editingShare != nil }, set: { if !$0 { editingShare = nil } })) {
+            TextField(language.text("Maximum GB", "Maximum en Go"), text: $editedGigabytes)
+                .keyboardType(.numberPad)
+            Button(language.text("Cancel", "Annuler"), role: .cancel) { editingShare = nil }
+            Button(language.text("Save", "Enregistrer")) {
+                if let share = editingShare { changeLimit(share) }
+            }
+        } message: {
+            Text(language.text("Enter the maximum storage this person can use. Existing files remain protected.", "Indiquez le stockage maximal autorisé. Les fichiers existants restent protégés."))
+        }
         .navigationTitle(language.text("Share storage", "Partager le stockage"))
         .navigationBarTitleDisplayMode(.inline)
         .task { await cloud.refresh(); await refreshShares() }
