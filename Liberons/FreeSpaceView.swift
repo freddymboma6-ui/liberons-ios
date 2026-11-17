@@ -48,6 +48,18 @@ struct FreeSpaceView: View {
 
             Label(language.text("Libérons protects photos and videos. If iCloud Photos is enabled, deleting from Apple Photos also deletes from synced iCloud devices.", "Libérons protège les photos et les vidéos. Si Photos iCloud est activé, supprimer dans Photos Apple supprime aussi des appareils synchronisés."), systemImage: "info.circle").font(.caption).foregroundStyle(.secondary)
 
+            VStack(alignment: .leading, spacing: 9) {
+                Label(language.text("Using iCloud Photos?", "Vous utilisez Photos iCloud ?"), systemImage: "icloud").font(.subheadline.bold())
+                Text(language.text("You can protect photos and videos in Libérons without turning off iCloud Photos. If iCloud optimizes your iPhone storage, the total library size may be much larger than the space you can free on this device.", "Vous pouvez protéger vos photos et vidéos dans Libérons sans désactiver Photos iCloud. Si iCloud optimise le stockage de votre iPhone, la taille totale de la photothèque peut dépasser largement l’espace libérable sur cet appareil.")).font(.caption).foregroundStyle(.secondary)
+                DisclosureGroup(language.text("How to check iCloud Photos settings", "Comment vérifier les réglages Photos iCloud")) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(language.text("1. Open iPhone Settings. 2. Tap Apps, then Photos. 3. Check iCloud Photos and storage optimization. On some iOS versions, use Settings > your name > iCloud > Photos.", "1. Ouvrez Réglages sur l’iPhone. 2. Touchez Apps, puis Photos. 3. Vérifiez Photos iCloud et l’optimisation du stockage. Sur certaines versions d’iOS, passez par Réglages > votre nom > iCloud > Photos.")).font(.caption)
+                        Text(language.text("You do NOT need to disable iCloud Photos to back up with Libérons. Before changing synchronization, make sure your originals are safely saved. Turning it off may remove optimized copies from the iPhone; it does not automatically download all originals.", "Vous n’avez PAS besoin de désactiver Photos iCloud pour sauvegarder avec Libérons. Avant de modifier la synchronisation, vérifiez que vos originaux sont sauvegardés. La désactivation peut retirer des copies optimisées de l’iPhone ; elle ne télécharge pas automatiquement tous les originaux.")).font(.caption).foregroundStyle(.orange)
+                        Text(language.text("Important: when iCloud Photos is enabled, deleting a photo or video from Apple Photos also deletes it from iCloud and synced Apple devices. Libérons cloud backups are separate.", "Important : lorsque Photos iCloud est activé, supprimer une photo ou vidéo de Photos Apple la supprime également d’iCloud et des appareils Apple synchronisés. Les sauvegardes cloud Libérons sont indépendantes.")).font(.caption).foregroundStyle(.secondary)
+                    }.padding(.top, 6)
+                }.font(.subheadline)
+            }.padding(14).background(LiberonsTheme.insetCard, in: RoundedRectangle(cornerRadius: 16))
+
             if cleaner.isLoading {
                 ProgressView(language.text("Calculating what can be freed…", "Calcul de l’espace réellement libérable…"))
             } else if cleaner.selectedLocalIdentifiers.isEmpty {
