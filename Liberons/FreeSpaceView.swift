@@ -46,11 +46,7 @@ struct FreeSpaceView: View {
             }
             .buttonStyle(.plain)
 
-            VStack(alignment: .leading, spacing: 9) {
-                Label(language.text("Keep iCloud or remove from Apple Photos?", "Conserver iCloud ou supprimer de Photos Apple ?"), systemImage: "icloud").font(.headline)
-                Text(language.text("Keep iCloud: use Settings > Photos > Optimize iPhone Storage. Libérons cannot remove only a synced local copy while keeping its iCloud original.", "Conserver iCloud : utilisez Réglages > Photos > Optimiser le stockage de l’iPhone. Libérons ne peut pas supprimer uniquement la copie locale synchronisée en conservant l’original iCloud.")).font(.subheadline).foregroundStyle(.secondary)
-                Text(language.text("Remove from Apple Photos: after verifying Libérons backups, iOS will ask for confirmation. If iCloud Photos is enabled, deletion also syncs to iCloud and your other Apple devices.", "Supprimer de Photos Apple : après vérification des sauvegardes Libérons, iOS demandera confirmation. Si Photos iCloud est activé, la suppression se répercute aussi sur iCloud et vos autres appareils Apple.")).font(.subheadline).foregroundStyle(.secondary)
-            }.padding(14).background(LiberonsTheme.insetCard, in: RoundedRectangle(cornerRadius: 16))
+            Label(language.text("Libérons protects photos and videos. If iCloud Photos is enabled, deleting from Apple Photos also deletes from synced iCloud devices.", "Libérons protège les photos et les vidéos. Si Photos iCloud est activé, supprimer dans Photos Apple supprime aussi des appareils synchronisés."), systemImage: "info.circle").font(.caption).foregroundStyle(.secondary)
 
             if cleaner.isLoading {
                 ProgressView(language.text("Calculating what can be freed…", "Calcul de l’espace réellement libérable…"))
