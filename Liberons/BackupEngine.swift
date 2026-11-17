@@ -15,8 +15,9 @@ final class BackupEngine: ObservableObject {
             let headers: [String: String]
         }
         let asset_id: String
-        let upload_session_id: String
-        let upload: Upload
+        let upload_session_id: String?
+        let upload: Upload?
+        let already_protected: Bool?
     }
 
     func backupOneNewestAsset() async {
@@ -66,22 +67,35 @@ final class BackupEngine: ObservableObject {
             let requestData = try JSONSerialization.data(withJSONObject: body)
             let initiateData = try await SupabaseService.callFunction("initiate-upload", json: requestData)
             let initiated = try JSONDecoder().decode(InitiateResponse.self, from: initiateData)
-            guard let signedURL = URL(string: initiated.upload.url) else {
+            if initiated.already_protected == true {
+                message = "Protected ✓"
+                if let temporaryURL { try? FileManager.default.removeItem(at: temporaryURL) }
+                return
+            }
+            guard let upload = initiated.upload,
+                  let sessionID = initiated.upload_session_id,
+                  let signedURL = URL(string: upload.url) else {
                 throw NSError(domain: "LiberonsBackup", code: 4, userInfo: [NSLocalizedDescriptionKey: "Invalid signed upload URL"])
             }
 
             message = "Uploading…"
-            try await SupabaseService.putFile(temp, to: signedURL, headers: initiated.upload.headers)
+            try await SupabaseService.putFile(temp, to: signedURL, headers: upload.headers)
 
             message = "Verifying…"
-            let verifiedData = try await SupabaseService.verifyUpload(assetID: initiated.asset_id, uploadSessionID: initiated.upload_session_id)
+            let verifiedData = try await SupabaseService.verifyUpload(assetID: initiated.asset_id, uploadSessionID: sessionID)
             let verifiedObject = try JSONSerialization.jsonObject(with: verifiedData) as? [String: Any]
             guard verifiedObject?["protected"] as? Bool == true else {
                 throw NSError(domain: "LiberonsBackup", code: 5, userInfo: [NSLocalizedDescriptionKey: "Cloud copy was not marked protected"])
             }
             message = "Protected ✓"
         } catch {
-            message = error.localizedDescription
+            let nsError = error as NSError
+            if nsError.domain == "LiberonsCloud", nsError.code == 409,
+               error.localizedDescription.contains("UPLOAD_RECONCILIATION_REQUIRED") {
+                message = "Existing backup is being checked. Please retry later."
+            } else {
+                message = error.localizedDescription
+            }
         }
         if let temporaryURL { try? FileManager.default.removeItem(at: temporaryURL) }
     }
