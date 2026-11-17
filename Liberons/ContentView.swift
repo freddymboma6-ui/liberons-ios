@@ -87,6 +87,9 @@ private struct StorageSharingView: View {
         let recipient_id: UUID
         let limit_bytes: Int64
         let status: String
+        let owner_email: String
+        let recipient_email: String
+        let used_bytes: Int64
     }
     private struct ShareUsage: Decodable {
         let share_id: UUID
@@ -102,7 +105,7 @@ private struct StorageSharingView: View {
     @State private var message: String?
     private func refreshShares() async {
         do {
-            let response: [Share] = try await SupabaseService.client.from("liberons_storage_shares").select("id,owner_id,recipient_id,limit_bytes,status").order("created_at",ascending:false).execute().value
+            let response: [Share] = try await SupabaseService.client.rpc("liberons_my_storage_shares").execute().value
             let usageRows: [ShareUsage] = try await SupabaseService.client.from("liberons_storage_share_usage").select("share_id,protected_bytes,pending_bytes,trash_bytes").execute().value
             shares = response
             usages = Dictionary(uniqueKeysWithValues: usageRows.map { ($0.share_id,$0.protected_bytes+$0.pending_bytes+$0.trash_bytes) })
@@ -242,11 +245,45 @@ private struct StorageSharingView: View {
                     }
                     if shares.isEmpty { Text(language.text("No invitations yet.","Aucune invitation pour le moment.")).foregroundStyle(.secondary) }
                     ForEach(shares) { share in
-                        VStack(alignment:.leading,spacing:8) {
-                            Text(share.owner_id == SupabaseService.client.auth.currentUser?.id ? language.text("Shared by you","Partagé par vous") : language.text("Shared with you","Partagé avec vous")).font(.subheadline.weight(.semibold))
-                            Text("\(capacity(share.limit_bytes)) · \(share.status)").font(.caption).foregroundStyle(.secondary)
-                            Text(language.text("Used","Utilisé") + ": " + capacity(usages[share.id] ?? 0)).font(.caption)
-                            if share.status == "accepted" && share.recipient_id == SupabaseService.client.auth.currentUser?.id {
+                        let owner = share.owner_id == SupabaseService.client.auth.currentUser?.id
+                        let used = usages[share.id] ?? share.used_bytes
+                        let remaining = max(0, share.limit_bytes - used)
+                        VStack(alignment:.leading,spacing:14) {
+                            HStack(spacing:12) {
+                                Image(systemName:owner ? "person.crop.circle.badge.checkmark" : "person.2.fill")
+                                    .font(.title2).foregroundStyle(.blue)
+                                    .frame(width:44,height:44)
+                                    .background(Color.blue.opacity(0.10),in:RoundedRectangle(cornerRadius:14))
+                                VStack(alignment:.leading,spacing:4) {
+                                    Text(owner ? language.text("Shared with","Partagé avec") : language.text("Invitation from","Invitation de"))
+                                        .font(.caption).foregroundStyle(.secondary)
+                                    Text(owner ? share.recipient_email : share.owner_email)
+                                        .font(.subheadline.weight(.semibold)).lineLimit(2)
+                                        .textSelection(.enabled)
+                                }
+                                Spacer(minLength:0)
+                            }
+                            HStack {
+                                Text(share.status == "accepted" ? language.text("Active sharing","Partage actif") : share.status == "pending" ? language.text("Pending invitation","Invitation en attente") : share.status.capitalized)
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(share.status == "accepted" ? .green : .orange)
+                                Spacer()
+                                Text(capacity(share.limit_bytes)).font(.subheadline.bold())
+                            }
+                            ProgressView(value:share.limit_bytes > 0 ? min(1,Double(used)/Double(share.limit_bytes)) : 0)
+                                .tint(.blue)
+                            HStack {
+                                VStack(alignment:.leading,spacing:3) {
+                                    Text(language.text("Used by recipient","Utilisé par le bénéficiaire")).font(.caption2).foregroundStyle(.secondary)
+                                    Text(capacity(used)).font(.subheadline.weight(.semibold))
+                                }
+                                Spacer()
+                                VStack(alignment:.trailing,spacing:3) {
+                                    Text(language.text("Remaining within limit","Reste sur la limite")).font(.caption2).foregroundStyle(.secondary)
+                                    Text(capacity(remaining)).font(.subheadline.weight(.semibold))
+                                }
+                            }
+                            if share.status == "accepted" && !owner {
                                 let selected = UserDefaults.standard.string(forKey:"liberons_active_share_\(share.recipient_id.uuidString)") == share.id.uuidString
                                 Button(selected ? language.text("Use my own storage","Utiliser mon stockage") : language.text("Use this shared storage","Utiliser ce stockage partagé")) {
                                     let key="liberons_active_share_\(share.recipient_id.uuidString)"
@@ -255,17 +292,18 @@ private struct StorageSharingView: View {
                                     Task { await refreshShares() }
                                 }.buttonStyle(.bordered)
                             }
-                            if share.status == "pending" && share.recipient_id == SupabaseService.client.auth.currentUser?.id {
+                            if share.status == "pending" && !owner {
                                 HStack {
                                     Button(language.text("Accept","Accepter")) { respond(share.id,true) }.buttonStyle(.borderedProminent)
                                     Button(language.text("Decline","Refuser")) { respond(share.id,false) }.buttonStyle(.bordered)
                                 }.disabled(busy)
                             }
-                            if share.status == "accepted" && share.owner_id == SupabaseService.client.auth.currentUser?.id {
+                            if share.status == "accepted" && owner {
                                 Button(language.text("Stop sharing","Arrêter le partage"),role:.destructive) { cancel(share.id) }.disabled(busy)
                             }
                         }
-                        Divider()
+                        .padding(16)
+                        .background(Color.blue.opacity(0.045),in:RoundedRectangle(cornerRadius:20))
                     }
                     if let message { Text(message).font(.caption).foregroundStyle(.red) }
                     if busy { ProgressView() }
