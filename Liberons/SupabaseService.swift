@@ -55,7 +55,7 @@ final class LiberonsBackgroundUploader:NSObject,URLSessionDataDelegate,URLSessio
             return
         }
         if let error{continuation.resume(throwing:error);return}
-        guard let response=task.response else{continuation.resume(throwing:NSError(domain:"LiberonsCloud",code:-1,userInfo:[NSLocalizedDescriptionKey:"B2 returned an invalid response"]));return}
+        guard let response=task.response else{continuation.resume(throwing:NSError(domain:"LiberonsCloud",code:-1,userInfo:[NSLocalizedDescriptionKey:(UserDefaults.standard.string(forKey:"liberons.language") == "fr" ? "Libérons n’a pas pu confirmer le transfert. Une nouvelle tentative sera nécessaire." : "Libérons could not confirm this transfer. Another attempt will be needed.")]));return}
         continuation.resume(returning:(data,response))
     }
 
@@ -91,9 +91,13 @@ enum SupabaseService {
             case "payment_restricted": message="Votre paiement doit être régularisé avant de pouvoir restaurer des originaux dans Photos. Vos souvenirs restent protégés et visibles dans Libérons."
             case "payment_grace_limit": message="La limite de récupération disponible pendant votre période de grâce a été atteinte. Vos souvenirs restent protégés dans Libérons."
             case "cooldown": message="Utilisation intensive détectée. Les restaurations sont temporairement ralenties. Vos fichiers restent protégés dans Libérons."
-            default: message=payload?.message ?? payload?.error ?? "La demande n’a pas pu être effectuée."
+            default:
+                if ["initiate-upload","verify-upload","upload-media-thumbnail"].contains(name) {
+                    let french=UserDefaults.standard.string(forKey:"liberons.language") == "fr"
+                    message = http.statusCode == 413 ? (french ? "Votre espace Libérons est plein. Choisissez un forfait supérieur pour continuer." : "Your Libérons storage is full. Choose a larger plan to continue.") : (french ? "Libérons poursuit la vérification de votre sauvegarde. Vous pouvez continuer à utiliser l’application." : "Libérons is checking your backup. You can continue using the app.")
+                } else { message=payload?.message ?? payload?.error ?? "La demande n’a pas pu être effectuée." }
             }
-            throw NSError(domain:"LiberonsCloud",code:http.statusCode,userInfo:[NSLocalizedDescriptionKey:message,"LiberonsTier":payload?.tier ?? "","RetryAfterSeconds":payload?.retry_after_seconds ?? 0])
+            throw NSError(domain:"LiberonsCloud",code:http.statusCode,userInfo:[NSLocalizedDescriptionKey:message,"LiberonsTier":payload?.tier ?? "","RetryAfterSeconds":payload?.retry_after_seconds ?? 0,"LiberonsDiagnostic":payload?.error ?? payload?.message ?? ""])
         }
         return data
     }
@@ -138,7 +142,7 @@ enum SupabaseService {
         var request = URLRequest(url: signedURL);request.httpMethod = "PUT";for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
         let (data,response)=try await LiberonsBackgroundUploader.shared.upload(fileURL:fileURL,request:request)
         guard let http=response as? HTTPURLResponse else{throw NSError(domain:"LiberonsCloud",code:-1,userInfo:[NSLocalizedDescriptionKey:"B2 returned an invalid response"])}
-        guard (200..<300).contains(http.statusCode) else{let rawBody=String(data:data,encoding:.utf8) ?? "";throw NSError(domain:"LiberonsCloud",code:http.statusCode,userInfo:[NSLocalizedDescriptionKey:"B2 upload failed — HTTP \(http.statusCode) — \(rawBody)"])}
+        guard (200..<300).contains(http.statusCode) else{let rawBody=String(data:data,encoding:.utf8) ?? "";throw NSError(domain:"LiberonsCloud",code:http.statusCode,userInfo:[NSLocalizedDescriptionKey:(UserDefaults.standard.string(forKey:"liberons.language") == "fr" ? "Le transfert vers Libérons a été interrompu. Réessayez lorsque votre connexion est stable." : "Your Libérons transfer was interrupted. Please try again when your connection is stable."),"LiberonsDiagnostic":"HTTP \(http.statusCode): \(rawBody)"])}
     }
 
     static func verifyUpload(assetID: String, uploadSessionID: String) async throws -> Data {
