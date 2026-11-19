@@ -43,27 +43,36 @@ final class LiberonsBackgroundUploader:NSObject,URLSessionDataDelegate,URLSessio
         lock.unlock()
         resumePendingVerifications()
     }
-    private func resumePendingVerifications() {
-        lock.lock()
-        guard !verificationInProgress else{lock.unlock();return}
+    private func beginVerificationPass()->Bool {
+        lock.lock();defer{lock.unlock()}
+        guard !verificationInProgress else{return false}
         verificationInProgress=true
-        lock.unlock()
+        return true
+    }
+    private func endVerificationPass() {
+        lock.lock();verificationInProgress=false;lock.unlock()
+    }
+    private func pendingForAccount(_ accountID:String)->[TransferIdentity] {
+        lock.lock();defer{lock.unlock()}
+        return pendingVerifications().filter{$0.accountID.lowercased() == accountID.lowercased()}
+    }
+    private func clearPendingVerification(_ identity:TransferIdentity) {
+        lock.lock();defer{lock.unlock()}
+        var pending=pendingVerifications()
+        pending.removeAll{$0.accountID == identity.accountID && $0.uploadSessionID == identity.uploadSessionID}
+        savePendingVerifications(pending)
+    }
+    private func resumePendingVerifications() {
+        guard beginVerificationPass() else{return}
         Task {
-            defer {lock.lock();verificationInProgress=false;lock.unlock()}
+            defer {endVerificationPass()}
             guard let accountID=SupabaseService.currentAccountID else{return}
-            lock.lock()
-            let entries=pendingVerifications().filter{$0.accountID.lowercased() == accountID.lowercased()}
-            lock.unlock()
-            for identity in entries {
+            for identity in pendingForAccount(accountID) {
                 do {
                     let data=try await SupabaseService.verifyUpload(assetID:identity.assetID,uploadSessionID:identity.uploadSessionID)
                     let object=try JSONSerialization.jsonObject(with:data) as? [String:Any]
                     guard object?["protected"] as? Bool == true else{continue}
-                    lock.lock()
-                    var pending=pendingVerifications()
-                    pending.removeAll{$0.accountID == identity.accountID && $0.uploadSessionID == identity.uploadSessionID}
-                    savePendingVerifications(pending)
-                    lock.unlock()
+                    clearPendingVerification(identity)
                     NotificationCenter.default.post(name:.liberonsCloudDidChange,object:nil)
                     print("[BackgroundUpload] recovered cloud verification")
                 } catch {
