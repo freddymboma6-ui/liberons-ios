@@ -24,6 +24,40 @@ final class ProtectedMediaStore: ObservableObject {
     private var currentNewestFirst = true
     private var seenLocalIdentifiers = Set<String>()
 
+
+    // Metadata is stored per signed-in account; original media remains in the
+    // existing offline directory. Never show cached metadata for another account.
+    private var offlineMetadataURL: URL? {
+        guard let userID = SupabaseService.client.auth.currentUser?.id else { return nil }
+        let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("LiberonsOfflineMetadata", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder.appendingPathComponent(userID.uuidString + ".json")
+    }
+
+    private func locallyAvailable(_ item: ProtectedCloudMedia) -> Bool {
+        let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("LiberonsOfflineMedia", isDirectory: true)
+        let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+        return files.contains { $0.deletingPathExtension().lastPathComponent == item.id.uuidString }
+    }
+
+    private func savedOfflineItems() -> [ProtectedCloudMedia] {
+        guard let url = offlineMetadataURL, let data = try? Data(contentsOf: url),
+              let saved = try? JSONDecoder().decode([ProtectedCloudMedia].self, from: data) else { return [] }
+        return saved.filter { locallyAvailable($0) }
+    }
+
+    private func persistOfflineMetadata(_ page: [ProtectedCloudMedia]) {
+        guard let url = offlineMetadataURL else { return }
+        let old = savedOfflineItems()
+        var byID = Dictionary(uniqueKeysWithValues: old.map { ($0.id, $0) })
+        for item in page where locallyAvailable(item) { byID[item.id] = item }
+        if let data = try? JSONEncoder().encode(Array(byID.values)) {
+            try? data.write(to: url, options: .atomic)
+        }
+    }
+
     private struct Cursor: Equatable { let sortDate: Date; let id: UUID }
     private struct PageParams: Encodable { let p_cursor_at: String?; let p_cursor_id: String?; let p_limit: Int; let p_media_kind: String; let p_newest_first: Bool }
     private struct CountsRow: Decodable { let all_count: Int64; let photo_count: Int64; let video_count: Int64 }
@@ -67,6 +101,10 @@ final class ProtectedMediaStore: ObservableObject {
     }
 
     private func performRefresh(requestedFilter: String, newestFirst: Bool) async {
+        if items.isEmpty {
+            let offline = savedOfflineItems()
+            if !offline.isEmpty { items = offline; totalCount = Int64(offline.count); photoCount = Int64(offline.filter { !$0.mediaType.lowercased().contains("video") }.count); videoCount = totalCount - photoCount }
+        }
         isLoading = true
         errorMessage = nil
         defer { isLoading = false }
@@ -88,6 +126,7 @@ final class ProtectedMediaStore: ObservableObject {
             let counts = try await countsTask
 
             items = normalize(firstPage)
+            persistOfflineMetadata(items)
             totalCount = counts.all_count
             photoCount = counts.photo_count
             videoCount = counts.video_count
@@ -96,7 +135,16 @@ final class ProtectedMediaStore: ObservableObject {
         } catch is CancellationError {
             // A cancelled refresh should not replace the current library with an error.
         } catch {
-            errorMessage = error.localizedDescription
+            // A failed cloud refresh must not hide media explicitly kept offline.
+            let offline = savedOfflineItems()
+            if !offline.isEmpty && items.isEmpty {
+                items = offline
+                totalCount = Int64(offline.count)
+                photoCount = Int64(offline.filter { !$0.mediaType.lowercased().contains("video") }.count)
+                videoCount = totalCount - photoCount
+            }
+            errorMessage = offline.isEmpty ? error.localizedDescription : nil
+            if !offline.isEmpty { hasMore = false }
         }
     }
 
@@ -111,6 +159,7 @@ final class ProtectedMediaStore: ObservableObject {
             let existing = Set(items.map(\.id))
             let unique = page.filter { !existing.contains($0.id) }
             items.append(contentsOf: normalize(unique))
+            persistOfflineMetadata(items)
             updateCursor(from: page)
             hasMore = Int64(items.count) < totalCount && page.count == pageSize
         } catch {
