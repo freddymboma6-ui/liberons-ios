@@ -35,26 +35,31 @@ final class ProtectedMediaStore: ObservableObject {
         return folder.appendingPathComponent(userID.uuidString + ".json")
     }
 
-    private func locallyAvailable(_ item: ProtectedCloudMedia) -> Bool {
+    // Scan the offline directory once per metadata operation. Previously every
+    // item triggered a full directory enumeration, causing quadratic work for
+    // large offline libraries and visible stalls on the main actor.
+    private func availableOfflineIDs() -> Set<String> {
         let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("LiberonsOfflineMedia", isDirectory: true)
         let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
-        return files.contains { $0.deletingPathExtension().lastPathComponent == item.id.uuidString }
+        return Set(files.map { $0.deletingPathExtension().lastPathComponent })
     }
 
-    private func savedOfflineItems() -> [ProtectedCloudMedia] {
+    private func savedOfflineItems(availableIDs: Set<String>? = nil) -> [ProtectedCloudMedia] {
         guard let url = offlineMetadataURL, let data = try? Data(contentsOf: url),
               let saved = try? JSONDecoder().decode([ProtectedCloudMedia].self, from: data) else { return [] }
-        return saved.filter { locallyAvailable($0) }
+        let ids = availableIDs ?? availableOfflineIDs()
+        return saved.filter { ids.contains($0.id.uuidString) }
     }
 
     func recordOfflineItem(_ item: ProtectedCloudMedia) { persistOfflineMetadata([item]) }
 
     private func persistOfflineMetadata(_ page: [ProtectedCloudMedia]) {
         guard let url = offlineMetadataURL else { return }
-        let old = savedOfflineItems()
+        let availableIDs = availableOfflineIDs()
+        let old = savedOfflineItems(availableIDs: availableIDs)
         var byID = Dictionary(uniqueKeysWithValues: old.map { ($0.id, $0) })
-        for item in page where locallyAvailable(item) { byID[item.id] = item }
+        for item in page where availableIDs.contains(item.id.uuidString) { byID[item.id] = item }
         if let data = try? JSONEncoder().encode(Array(byID.values)) {
             try? data.write(to: url, options: .atomic)
         }
