@@ -48,6 +48,8 @@ final class ProtectedMediaStore: ObservableObject {
         return saved.filter { locallyAvailable($0) }
     }
 
+    func recordOfflineItem(_ item: ProtectedCloudMedia) { persistOfflineMetadata([item]) }
+
     private func persistOfflineMetadata(_ page: [ProtectedCloudMedia]) {
         guard let url = offlineMetadataURL else { return }
         let old = savedOfflineItems()
