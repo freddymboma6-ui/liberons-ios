@@ -1,5 +1,6 @@
 import Foundation
 import Supabase
+import UIKit
 
 final class LiberonsBackgroundUploader:NSObject,URLSessionDataDelegate,URLSessionTaskDelegate,@unchecked Sendable{
     static let shared=LiberonsBackgroundUploader()
@@ -8,6 +9,79 @@ final class LiberonsBackgroundUploader:NSObject,URLSessionDataDelegate,URLSessio
     private var continuations:[Int:CheckedContinuation<(Data,URLResponse),Error>]=[:]
     private var responseData:[Int:Data]=[:]
     private var backgroundCompletionHandler:(()->Void)?
+    private let pendingVerificationKey="liberons.background-upload.pending-verifications.v1"
+    private var verificationInProgress=false
+    private var foregroundObserver:NSObjectProtocol?
+    // Task descriptions are persisted by the background URLSession service.
+    // Store identifiers only: never signed URLs, credentials or media paths.
+    private struct TransferIdentity:Codable {
+        let accountID:String
+        let assetID:String
+        let uploadSessionID:String
+    }
+    private func transferIdentity(for task:URLSessionTask)->TransferIdentity? {
+        guard let description=task.taskDescription,
+              let data=Data(base64Encoded:description) else{return nil}
+        return try? JSONDecoder().decode(TransferIdentity.self,from:data)
+    }
+
+    private func pendingVerifications()->[TransferIdentity] {
+        guard let data=UserDefaults.standard.data(forKey:pendingVerificationKey) else{return []}
+        return (try? JSONDecoder().decode([TransferIdentity].self,from:data)) ?? []
+    }
+    private func savePendingVerifications(_ entries:[TransferIdentity]) {
+        guard let data=try? JSONEncoder().encode(entries) else{return}
+        UserDefaults.standard.set(data,forKey:pendingVerificationKey)
+    }
+    private func enqueueVerification(_ identity:TransferIdentity) {
+        lock.lock()
+        var entries=pendingVerifications()
+        if !entries.contains(where:{$0.accountID == identity.accountID && $0.uploadSessionID == identity.uploadSessionID}) {
+            entries.append(identity)
+            savePendingVerifications(entries)
+        }
+        lock.unlock()
+        resumePendingVerifications()
+    }
+    private func beginVerificationPass()->Bool {
+        lock.lock();defer{lock.unlock()}
+        guard !verificationInProgress else{return false}
+        verificationInProgress=true
+        return true
+    }
+    private func endVerificationPass() {
+        lock.lock();verificationInProgress=false;lock.unlock()
+    }
+    private func pendingForAccount(_ accountID:String)->[TransferIdentity] {
+        lock.lock();defer{lock.unlock()}
+        return pendingVerifications().filter{$0.accountID.lowercased() == accountID.lowercased()}
+    }
+    private func clearPendingVerification(_ identity:TransferIdentity) {
+        lock.lock();defer{lock.unlock()}
+        var pending=pendingVerifications()
+        pending.removeAll{$0.accountID == identity.accountID && $0.uploadSessionID == identity.uploadSessionID}
+        savePendingVerifications(pending)
+    }
+    private func resumePendingVerifications() {
+        guard beginVerificationPass() else{return}
+        Task {
+            defer {endVerificationPass()}
+            guard let accountID=SupabaseService.currentAccountID else{return}
+            for identity in pendingForAccount(accountID) {
+                do {
+                    let data=try await SupabaseService.verifyUpload(assetID:identity.assetID,uploadSessionID:identity.uploadSessionID)
+                    let object=try JSONSerialization.jsonObject(with:data) as? [String:Any]
+                    guard object?["protected"] as? Bool == true else{continue}
+                    clearPendingVerification(identity)
+                    NotificationCenter.default.post(name:.liberonsCloudDidChange,object:nil)
+                    print("[BackgroundUpload] recovered cloud verification")
+                } catch {
+                    let ns=error as NSError
+                    print("[BackgroundUpload] deferred verification failed \(ns.domain)/\(ns.code)")
+                }
+            }
+        }
+    }
 
     private lazy var session:URLSession=makeSession()
 
@@ -22,10 +96,19 @@ final class LiberonsBackgroundUploader:NSObject,URLSessionDataDelegate,URLSessio
         return URLSession(configuration:config,delegate:self,delegateQueue:nil)
     }
 
-    func reconnect(){_ = session;session.getAllTasks{tasks in
-        let active=tasks.filter{$0.state == .running || $0.state == .suspended}.count
-        print("[BackgroundUpload] Reconnected to \(active) active transfer(s)")
-    }}
+    func reconnect(){
+        _ = session
+        if foregroundObserver == nil {
+            foregroundObserver=NotificationCenter.default.addObserver(forName:UIApplication.didBecomeActiveNotification,object:nil,queue:nil){[weak self] _ in
+                self?.resumePendingVerifications()
+            }
+        }
+        resumePendingVerifications()
+        session.getAllTasks{tasks in
+            let active=tasks.filter{$0.state == .running || $0.state == .suspended}.count
+            print("[BackgroundUpload] Reconnected to \(active) active transfer(s)")
+        }
+    }
 
     func handleEvents(identifier:String,completionHandler:@escaping()->Void){
         guard identifier == Self.sessionIdentifier else{completionHandler();return}
@@ -33,9 +116,14 @@ final class LiberonsBackgroundUploader:NSObject,URLSessionDataDelegate,URLSessio
         reconnect()
     }
 
-    func upload(fileURL:URL,request:URLRequest)async throws->(Data,URLResponse){
-        try await withCheckedThrowingContinuation{continuation in
+    func upload(fileURL:URL,request:URLRequest,assetID:String?=nil,uploadSessionID:String?=nil)async throws->(Data,URLResponse){
+        resumePendingVerifications()
+        return try await withCheckedThrowingContinuation{continuation in
             let task=session.uploadTask(with:request,fromFile:fileURL)
+            if let assetID,let uploadSessionID,let accountID=SupabaseService.currentAccountID {
+                let identity=TransferIdentity(accountID:accountID,assetID:assetID,uploadSessionID:uploadSessionID)
+                if let data=try? JSONEncoder().encode(identity){task.taskDescription=data.base64EncodedString()}
+            }
             lock.lock();continuations[task.taskIdentifier]=continuation;responseData[task.taskIdentifier]=Data();lock.unlock();task.resume()
         }
     }
@@ -49,9 +137,27 @@ final class LiberonsBackgroundUploader:NSObject,URLSessionDataDelegate,URLSessio
 
     func urlSession(_ session:URLSession,task:URLSessionTask,didCompleteWithError error:Error?){
         lock.lock();let continuation=continuations.removeValue(forKey:task.taskIdentifier);let data=responseData.removeValue(forKey:task.taskIdentifier) ?? Data();lock.unlock()
-        NotificationCenter.default.post(name:.liberonsBackgroundUploadCompleted,object:nil,userInfo:["task_id":task.taskIdentifier,"success":error == nil])
+        // Only a successful HTTP PUT followed by verify-upload can mark media protected.
+        // Never log signed URLs, authorization headers, file paths, or media contents.
+        let httpStatus=(task.response as? HTTPURLResponse)?.statusCode
+        let nsError=error.map{$0 as NSError}
+        let responseSummary=httpStatus.map{String($0)} ?? "none"
+        let errorSummary=nsError.map{"\($0.domain)/\($0.code)"} ?? "none"
+        let bytesSent=task.countOfBytesSent
+        let expectedBytes=task.countOfBytesExpectedToSend
+        print("[BackgroundUpload] task=\(task.taskIdentifier) http=\(responseSummary) error=\(errorSummary) bytes=\(bytesSent)/\(expectedBytes) resumedWithoutContinuation=\(continuation == nil)")
+        NotificationCenter.default.post(name:.liberonsBackgroundUploadCompleted,object:nil,userInfo:["task_id":task.taskIdentifier,"success":error == nil && (httpStatus.map{(200..<300).contains($0)} ?? false)])
         guard let continuation else{
-            if let error{print("[BackgroundUpload] Relaunched task \(task.taskIdentifier) failed: \(error.localizedDescription)")}else{print("[BackgroundUpload] Relaunched task \(task.taskIdentifier) completed")}
+            // A successful B2 PUT after process relaunch still requires server verification.
+            // Never mark protected from an HTTP response alone.
+            if error == nil,let httpStatus,(200..<300).contains(httpStatus),
+               let identity=transferIdentity(for:task) {
+                // Persist before any authenticated request: a missing session or process
+                // termination must not lose the verification obligation.
+                enqueueVerification(identity)
+            } else {
+                print("[BackgroundUpload] orphan task=\(task.taskIdentifier) not verified; server reconciliation required")
+            }
             return
         }
         if let error{continuation.resume(throwing:error);return}
@@ -146,9 +252,9 @@ enum SupabaseService {
         _ = try await client.from("media_assets").update(Patch(ios_local_identifier: localIdentifier)).eq("id", value: assetID.uuidString).execute()
     }
 
-    static func putFile(_ fileURL: URL, to signedURL: URL, headers: [String: String]) async throws {
+    static func putFile(_ fileURL: URL, to signedURL: URL, headers: [String: String], assetID:String?=nil, uploadSessionID:String?=nil) async throws {
         var request = URLRequest(url: signedURL);request.httpMethod = "PUT";for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
-        let (data,response)=try await LiberonsBackgroundUploader.shared.upload(fileURL:fileURL,request:request)
+        let (data,response)=try await LiberonsBackgroundUploader.shared.upload(fileURL:fileURL,request:request,assetID:assetID,uploadSessionID:uploadSessionID)
         guard let http=response as? HTTPURLResponse else{throw NSError(domain:"LiberonsCloud",code:-1,userInfo:[NSLocalizedDescriptionKey:"B2 returned an invalid response"])}
         guard (200..<300).contains(http.statusCode) else{let rawBody=String(data:data,encoding:.utf8) ?? "";throw NSError(domain:"LiberonsCloud",code:http.statusCode,userInfo:[NSLocalizedDescriptionKey:(UserDefaults.standard.string(forKey:"liberons.language") == "fr" ? "Le transfert vers Libérons a été interrompu. Réessayez lorsque votre connexion est stable." : "Your Libérons transfer was interrupted. Please try again when your connection is stable."),"LiberonsDiagnostic":"HTTP \(http.statusCode): \(rawBody)"])}
     }
