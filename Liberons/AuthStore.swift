@@ -162,6 +162,34 @@ final class AuthStore: ObservableObject {
         } catch { errorMessage = friendlyAuthError(error); return false }
     }
 
+    func resendConfirmationEmail() async -> Bool {
+        errorMessage = nil
+        guard let email = pendingConfirmationEmail, !email.isEmpty else {
+            errorMessage = "auth_invalid_email"
+            return false
+        }
+        do {
+            try await SupabaseService.client.auth.resend(
+                email: email,
+                type: .signup,
+                emailRedirectTo: URL(string: "liberons://auth/confirm")
+            )
+            infoMessage = "confirmation_resent"
+            return true
+        } catch {
+            errorMessage = friendlyAuthError(error)
+            return false
+        }
+    }
+
+    func dismissPendingConfirmation() {
+        pendingConfirmationEmail = nil
+        if infoMessage == "confirmation_required" || infoMessage == "confirmation_resent" {
+            infoMessage = nil
+        }
+        errorMessage = nil
+    }
+
     func refreshRestrictionState() async {
         guard let userID = session?.user.id else { isRestricted = false; return }
         struct RestrictionRow: Decodable { let restricted_at: String? }
@@ -209,6 +237,8 @@ final class AuthStore: ObservableObject {
             startRestrictionRealtime()
             if isRestricted { errorMessage = "account_restricted"; return false }
             await validateDeviceAndFreeTier()
+            pendingConfirmationEmail = nil
+            pendingConfirmationEmail = nil
             infoMessage = "email_confirmed"
             return true
         } catch { errorMessage = friendlyAuthError(error); return false }
@@ -224,7 +254,7 @@ final class AuthStore: ObservableObject {
         restrictionRealtimeTask?.cancel(); restrictionRealtimeTask = nil
         do {
             try await SupabaseService.client.auth.signOut()
-            session = nil; isRestricted = false; freeTierEligible = nil; appAttestVerified = nil; infoMessage = nil
+            session = nil; isRestricted = false; freeTierEligible = nil; appAttestVerified = nil; infoMessage = nil; pendingConfirmationEmail = nil
         } catch { errorMessage = friendlyAuthError(error) }
     }
 
