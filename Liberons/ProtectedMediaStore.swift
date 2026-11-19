@@ -90,9 +90,11 @@ final class ProtectedMediaStore: ObservableObject {
 
     func loadMoreIfNeeded(currentItem item: ProtectedCloudMedia) async {
         guard hasMore, !isLoading, !isLoadingMore else { return }
-        // Only the final 30 loaded items can trigger the next page.
-        // Avoid scanning the entire library for every appearing grid cell.
-        guard items.suffix(30).contains(where: { $0.id == item.id }) else { return }
+        // Start fetching before a fast-scrolling user reaches the page boundary.
+        // Checking a fixed-size tail avoids scanning the full loaded library.
+        // Keep a bounded window so regular scrolling does not eagerly fetch
+        // the entire cloud library.
+        guard items.suffix(120).contains(where: { $0.id == item.id }) else { return }
         await loadMore()
     }
 
