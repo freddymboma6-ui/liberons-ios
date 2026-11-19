@@ -90,8 +90,9 @@ final class ProtectedMediaStore: ObservableObject {
 
     func loadMoreIfNeeded(currentItem item: ProtectedCloudMedia) async {
         guard hasMore, !isLoading, !isLoadingMore else { return }
-        let threshold = max(items.count - 30, 0)
-        guard let index = items.firstIndex(where: { $0.id == item.id }), index >= threshold else { return }
+        // Only the final 30 loaded items can trigger the next page.
+        // Avoid scanning the entire library for every appearing grid cell.
+        guard items.suffix(30).contains(where: { $0.id == item.id }) else { return }
         await loadMore()
     }
 
