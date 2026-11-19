@@ -18,6 +18,7 @@ final class AuthStore: ObservableObject {
     @Published private(set) var isRestricted = false
     @Published var errorMessage: String?
     @Published var infoMessage: String?
+    @Published private(set) var pendingConfirmationEmail: String?
 
     private var restrictionRealtimeTask: Task<Void, Never>?
     private var foregroundObserver: NSObjectProtocol?
@@ -117,6 +118,7 @@ final class AuthStore: ObservableObject {
             return
         }
         await validateDeviceAndFreeTier()
+        pendingConfirmationEmail = nil
         infoMessage = "email_confirmed"
     }
 
@@ -129,7 +131,13 @@ final class AuthStore: ObservableObject {
             if isRestricted { errorMessage = "account_restricted"; return }
             await validateDeviceAndFreeTier()
             await PushNotificationManager.shared.requestAuthorizationAndRegister()
-        } catch { errorMessage = friendlyAuthError(error) }
+        } catch {
+            errorMessage = friendlyAuthError(error)
+            if errorMessage == "auth_email_not_confirmed" {
+                pendingConfirmationEmail = email.trimmingCharacters(in:.whitespacesAndNewlines)
+                infoMessage = "confirmation_required"
+            }
+        }
     }
 
     func signUp(email: String, password: String) async -> Bool {
@@ -148,6 +156,7 @@ final class AuthStore: ObservableObject {
                 await validateDeviceAndFreeTier()
                 return true
             }
+            pendingConfirmationEmail = email.trimmingCharacters(in:.whitespacesAndNewlines)
             infoMessage = "confirmation_required"
             return true
         } catch { errorMessage = friendlyAuthError(error); return false }
