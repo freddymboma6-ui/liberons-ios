@@ -8,6 +8,18 @@ final class LiberonsBackgroundUploader:NSObject,URLSessionDataDelegate,URLSessio
     private var continuations:[Int:CheckedContinuation<(Data,URLResponse),Error>]=[:]
     private var responseData:[Int:Data]=[:]
     private var backgroundCompletionHandler:(()->Void)?
+    // Task descriptions are persisted by the background URLSession service.
+    // Store identifiers only: never signed URLs, credentials or media paths.
+    private struct TransferIdentity:Codable {
+        let accountID:String
+        let assetID:String
+        let uploadSessionID:String
+    }
+    private func transferIdentity(for task:URLSessionTask)->TransferIdentity? {
+        guard let description=task.taskDescription,
+              let data=Data(base64Encoded:description) else{return nil}
+        return try? JSONDecoder().decode(TransferIdentity.self,from:data)
+    }
 
     private lazy var session:URLSession=makeSession()
 
@@ -33,9 +45,13 @@ final class LiberonsBackgroundUploader:NSObject,URLSessionDataDelegate,URLSessio
         reconnect()
     }
 
-    func upload(fileURL:URL,request:URLRequest)async throws->(Data,URLResponse){
+    func upload(fileURL:URL,request:URLRequest,assetID:String?=nil,uploadSessionID:String?=nil)async throws->(Data,URLResponse){
         try await withCheckedThrowingContinuation{continuation in
             let task=session.uploadTask(with:request,fromFile:fileURL)
+            if let assetID,let uploadSessionID,let accountID=SupabaseService.currentAccountID {
+                let identity=TransferIdentity(accountID:accountID,assetID:assetID,uploadSessionID:uploadSessionID)
+                if let data=try? JSONEncoder().encode(identity){task.taskDescription=data.base64EncodedString()}
+            }
             lock.lock();continuations[task.taskIdentifier]=continuation;responseData[task.taskIdentifier]=Data();lock.unlock();task.resume()
         }
     }
@@ -60,7 +76,32 @@ final class LiberonsBackgroundUploader:NSObject,URLSessionDataDelegate,URLSessio
         print("[BackgroundUpload] task=\(task.taskIdentifier) http=\(responseSummary) error=\(errorSummary) bytes=\(bytesSent)/\(expectedBytes) resumedWithoutContinuation=\(continuation == nil)")
         NotificationCenter.default.post(name:.liberonsBackgroundUploadCompleted,object:nil,userInfo:["task_id":task.taskIdentifier,"success":error == nil && (httpStatus.map{(200..<300).contains($0)} ?? false)])
         guard let continuation else{
-            if let error{print("[BackgroundUpload] Relaunched task \(task.taskIdentifier) failed: \(error.localizedDescription)")}else{print("[BackgroundUpload] Relaunched task \(task.taskIdentifier) completed")}
+            // A successful B2 PUT after process relaunch still requires server verification.
+            // Never mark protected from an HTTP response alone.
+            if error == nil,let httpStatus,(200..<300).contains(httpStatus),
+               let identity=transferIdentity(for:task) {
+                Task {
+                    guard SupabaseService.currentAccountID?.lowercased() == identity.accountID.lowercased() else {
+                        print("[BackgroundUpload] orphan task=\(task.taskIdentifier) account mismatch; left for server reconciliation")
+                        return
+                    }
+                    do {
+                        let verified=try await SupabaseService.verifyUpload(assetID:identity.assetID,uploadSessionID:identity.uploadSessionID)
+                        let object=try JSONSerialization.jsonObject(with:verified) as? [String:Any]
+                        guard object?["protected"] as? Bool == true else {
+                            print("[BackgroundUpload] orphan task=\(task.taskIdentifier) verification pending")
+                            return
+                        }
+                        print("[BackgroundUpload] orphan task=\(task.taskIdentifier) verified by server")
+                        NotificationCenter.default.post(name:.liberonsCloudDidChange,object:nil)
+                    } catch {
+                        let ns=error as NSError
+                        print("[BackgroundUpload] orphan task=\(task.taskIdentifier) verification failed \(ns.domain)/\(ns.code)")
+                    }
+                }
+            } else {
+                print("[BackgroundUpload] orphan task=\(task.taskIdentifier) not verified; server reconciliation required")
+            }
             return
         }
         if let error{continuation.resume(throwing:error);return}
@@ -155,9 +196,9 @@ enum SupabaseService {
         _ = try await client.from("media_assets").update(Patch(ios_local_identifier: localIdentifier)).eq("id", value: assetID.uuidString).execute()
     }
 
-    static func putFile(_ fileURL: URL, to signedURL: URL, headers: [String: String]) async throws {
+    static func putFile(_ fileURL: URL, to signedURL: URL, headers: [String: String], assetID:String?=nil, uploadSessionID:String?=nil) async throws {
         var request = URLRequest(url: signedURL);request.httpMethod = "PUT";for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
-        let (data,response)=try await LiberonsBackgroundUploader.shared.upload(fileURL:fileURL,request:request)
+        let (data,response)=try await LiberonsBackgroundUploader.shared.upload(fileURL:fileURL,request:request,assetID:assetID,uploadSessionID:uploadSessionID)
         guard let http=response as? HTTPURLResponse else{throw NSError(domain:"LiberonsCloud",code:-1,userInfo:[NSLocalizedDescriptionKey:"B2 returned an invalid response"])}
         guard (200..<300).contains(http.statusCode) else{let rawBody=String(data:data,encoding:.utf8) ?? "";throw NSError(domain:"LiberonsCloud",code:http.statusCode,userInfo:[NSLocalizedDescriptionKey:(UserDefaults.standard.string(forKey:"liberons.language") == "fr" ? "Le transfert vers Libérons a été interrompu. Réessayez lorsque votre connexion est stable." : "Your Libérons transfer was interrupted. Please try again when your connection is stable."),"LiberonsDiagnostic":"HTTP \(http.statusCode): \(rawBody)"])}
     }
