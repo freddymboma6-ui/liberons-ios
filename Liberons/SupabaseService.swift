@@ -49,7 +49,16 @@ final class LiberonsBackgroundUploader:NSObject,URLSessionDataDelegate,URLSessio
 
     func urlSession(_ session:URLSession,task:URLSessionTask,didCompleteWithError error:Error?){
         lock.lock();let continuation=continuations.removeValue(forKey:task.taskIdentifier);let data=responseData.removeValue(forKey:task.taskIdentifier) ?? Data();lock.unlock()
-        NotificationCenter.default.post(name:.liberonsBackgroundUploadCompleted,object:nil,userInfo:["task_id":task.taskIdentifier,"success":error == nil])
+        // Only a successful HTTP PUT followed by verify-upload can mark media protected.
+        // Never log signed URLs, authorization headers, file paths, or media contents.
+        let httpStatus=(task.response as? HTTPURLResponse)?.statusCode
+        let nsError=error.map{$0 as NSError}
+        let responseSummary=httpStatus.map{String($0)} ?? "none"
+        let errorSummary=nsError.map{"\($0.domain)/\($0.code)"} ?? "none"
+        let bytesSent=task.countOfBytesSent
+        let expectedBytes=task.countOfBytesExpectedToSend
+        print("[BackgroundUpload] task=\(task.taskIdentifier) http=\(responseSummary) error=\(errorSummary) bytes=\(bytesSent)/\(expectedBytes) resumedWithoutContinuation=\(continuation == nil)")
+        NotificationCenter.default.post(name:.liberonsBackgroundUploadCompleted,object:nil,userInfo:["task_id":task.taskIdentifier,"success":error == nil && (httpStatus.map{(200..<300).contains($0)} ?? false)])
         guard let continuation else{
             if let error{print("[BackgroundUpload] Relaunched task \(task.taskIdentifier) failed: \(error.localizedDescription)")}else{print("[BackgroundUpload] Relaunched task \(task.taskIdentifier) completed")}
             return
