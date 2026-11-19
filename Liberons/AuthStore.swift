@@ -19,6 +19,7 @@ final class AuthStore: ObservableObject {
     @Published var errorMessage: String?
     @Published var infoMessage: String?
     @Published private(set) var pendingConfirmationEmail: String?
+    private let pendingConfirmationStorageKey = "liberons.auth.pendingConfirmationEmail"
 
     private var restrictionRealtimeTask: Task<Void, Never>?
     private var foregroundObserver: NSObjectProtocol?
@@ -27,6 +28,8 @@ final class AuthStore: ObservableObject {
     var isAuthenticated: Bool { session != nil && !isRestricted }
 
     init() {
+        pendingConfirmationEmail = UserDefaults.standard.string(forKey: pendingConfirmationStorageKey)
+        if pendingConfirmationEmail != nil { infoMessage = "confirmation_required" }
         foregroundObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.didBecomeActiveNotification,
             object: nil,
@@ -118,7 +121,7 @@ final class AuthStore: ObservableObject {
             return
         }
         await validateDeviceAndFreeTier()
-        pendingConfirmationEmail = nil
+        clearPendingConfirmation()
         infoMessage = "email_confirmed"
     }
 
@@ -134,7 +137,7 @@ final class AuthStore: ObservableObject {
         } catch {
             errorMessage = friendlyAuthError(error)
             if errorMessage == "auth_email_not_confirmed" {
-                pendingConfirmationEmail = email.trimmingCharacters(in:.whitespacesAndNewlines)
+                setPendingConfirmation(email)
                 infoMessage = "confirmation_required"
             }
         }
@@ -156,7 +159,7 @@ final class AuthStore: ObservableObject {
                 await validateDeviceAndFreeTier()
                 return true
             }
-            pendingConfirmationEmail = email.trimmingCharacters(in:.whitespacesAndNewlines)
+            setPendingConfirmation(email)
             infoMessage = "confirmation_required"
             return true
         } catch { errorMessage = friendlyAuthError(error); return false }
@@ -182,8 +185,19 @@ final class AuthStore: ObservableObject {
         }
     }
 
-    func dismissPendingConfirmation() {
+    private func setPendingConfirmation(_ email: String) {
+        let normalized = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        pendingConfirmationEmail = normalized
+        UserDefaults.standard.set(normalized, forKey: pendingConfirmationStorageKey)
+    }
+
+    private func clearPendingConfirmation() {
         pendingConfirmationEmail = nil
+        UserDefaults.standard.removeObject(forKey: pendingConfirmationStorageKey)
+    }
+
+    func dismissPendingConfirmation() {
+        clearPendingConfirmation()
         if infoMessage == "confirmation_required" || infoMessage == "confirmation_resent" {
             infoMessage = nil
         }
@@ -238,7 +252,7 @@ final class AuthStore: ObservableObject {
             if isRestricted { errorMessage = "account_restricted"; return false }
             await validateDeviceAndFreeTier()
             pendingConfirmationEmail = nil
-            pendingConfirmationEmail = nil
+            clearPendingConfirmation()
             infoMessage = "email_confirmed"
             return true
         } catch { errorMessage = friendlyAuthError(error); return false }
@@ -254,7 +268,7 @@ final class AuthStore: ObservableObject {
         restrictionRealtimeTask?.cancel(); restrictionRealtimeTask = nil
         do {
             try await SupabaseService.client.auth.signOut()
-            session = nil; isRestricted = false; freeTierEligible = nil; appAttestVerified = nil; infoMessage = nil; pendingConfirmationEmail = nil
+            session = nil; isRestricted = false; freeTierEligible = nil; appAttestVerified = nil; infoMessage = nil; clearPendingConfirmation()
         } catch { errorMessage = friendlyAuthError(error) }
     }
 
