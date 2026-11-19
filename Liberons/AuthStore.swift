@@ -129,6 +129,7 @@ final class AuthStore: ObservableObject {
         errorMessage = nil; infoMessage = nil
         do {
             session = try await SupabaseService.client.auth.signIn(email: email, password: password)
+            clearPendingConfirmation()
             await refreshRestrictionState()
             startRestrictionRealtime()
             if isRestricted { errorMessage = "account_restricted"; return }
@@ -152,6 +153,7 @@ final class AuthStore: ObservableObject {
                 redirectTo: URL(string: "liberons://auth/confirm")
             )
             if let newSession = response.session {
+                clearPendingConfirmation()
                 session = newSession
                 await refreshRestrictionState()
                 startRestrictionRealtime()
